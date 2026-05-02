@@ -14,8 +14,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
+os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/sharephotos-matplotlib")
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+
 import cv2
 import numpy as np
+
+try:
+    from insightface.app import FaceAnalysis
+except Exception:
+    FaceAnalysis = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -64,14 +72,34 @@ def public_album(album):
     visible = dict(album)
     visible["folders"] = []
     for folder in album.get("folders", []):
-        item = {key: value for key, value in folder.items() if key not in {"embedding", "embeddingCount"}}
+        item = {key: value for key, value in folder.items() if key not in {"embedding", "embeddingCount", "embeddingEngine"}}
         visible["folders"].append(item)
     return visible
 
 
 FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
-FACE_MATCH_THRESHOLD = 0.46
+OPENCV_MATCH_THRESHOLD = 0.46
+INSIGHTFACE_MATCH_THRESHOLD = 0.55
+INSIGHTFACE_APP = None
+INSIGHTFACE_READY = False
+
+
+def get_insightface_app():
+    global INSIGHTFACE_APP, INSIGHTFACE_READY
+    if INSIGHTFACE_READY:
+        return INSIGHTFACE_APP
+    INSIGHTFACE_READY = True
+    if FaceAnalysis is None:
+        return None
+    try:
+        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        app.prepare(ctx_id=-1, det_size=(960, 960))
+        INSIGHTFACE_APP = app
+    except Exception as error:
+        print("InsightFace unavailable, falling back to OpenCV: %s" % error)
+        INSIGHTFACE_APP = None
+    return INSIGHTFACE_APP
 
 
 def cosine_distance(a, b):
@@ -83,10 +111,40 @@ def cosine_distance(a, b):
     return 1.0 - float(np.dot(left, right) / denom)
 
 
-def extract_face_embedding(image_path):
+def extract_insightface_embedding(image_path):
+    app = get_insightface_app()
+    if not app:
+        return None, "InsightFace 模型不可用", {}
     image = cv2.imread(str(image_path))
     if image is None:
-        return None, "图片无法读取"
+        return None, "图片无法读取", {}
+    faces = app.get(image)
+    if not faces:
+        return None, "未检测到人脸", {"engine": "insightface"}
+
+    # Pick the most confident primary face. This demo still assigns one photo
+    # to one folder; production can duplicate group photos into multiple people.
+    face = max(faces, key=lambda item: (float(getattr(item, "det_score", 0.0)), bbox_area(item.bbox)))
+    score = float(getattr(face, "det_score", 0.0))
+    if score < 0.42:
+        return None, "人脸置信度过低", {"engine": "insightface", "score": score}
+    embedding = np.asarray(face.normed_embedding, dtype=np.float32)
+    norm = float(np.linalg.norm(embedding)) + 1e-6
+    return (embedding / norm).round(6).tolist(), "", {
+        "engine": "insightface",
+        "score": round(score, 4),
+        "faces": len(faces),
+    }
+
+
+def bbox_area(bbox):
+    return max(0.0, float(bbox[2] - bbox[0])) * max(0.0, float(bbox[3] - bbox[1]))
+
+
+def extract_opencv_embedding(image_path):
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return None, "图片无法读取", {}
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     scan = gray
@@ -103,7 +161,7 @@ def extract_face_embedding(image_path):
         minSize=(32, 32),
     )
     if len(faces) == 0:
-        return None, "未检测到人脸"
+        return None, "未检测到人脸", {"engine": "opencv"}
 
     candidates = []
     image_area = scan.shape[0] * scan.shape[1]
@@ -129,7 +187,7 @@ def extract_face_embedding(image_path):
             candidates.append((x, y, w, h, len(eyes), face_ratio))
 
     if not candidates:
-        return None, "未通过人脸五官校验"
+        return None, "未通过人脸五官校验", {"engine": "opencv"}
 
     x, y, w, h, _, _ = max(candidates, key=lambda item: (item[4], item[2] * item[3]))
     pad = int(max(w, h) * 0.18)
@@ -143,10 +201,19 @@ def extract_face_embedding(image_path):
     vector = face.astype(np.float32).reshape(-1)
     vector = (vector - float(vector.mean())) / (float(vector.std()) + 1e-6)
     norm = float(np.linalg.norm(vector)) + 1e-6
-    return (vector / norm).round(6).tolist(), ""
+    return (vector / norm).round(6).tolist(), "", {"engine": "opencv"}
 
 
-def choose_face_folder(album, embedding):
+def extract_face_embedding(image_path):
+    embedding, note, meta = extract_insightface_embedding(image_path)
+    if embedding:
+        return embedding, note, meta
+    if meta.get("engine") == "insightface":
+        return embedding, note, meta
+    return extract_opencv_embedding(image_path)
+
+
+def choose_face_folder(album, embedding, engine):
     if not embedding:
         return None
 
@@ -154,32 +221,35 @@ def choose_face_folder(album, embedding):
     best_distance = 999.0
     for folder in album.get("folders", []):
         centroid = folder.get("embedding")
-        if not centroid:
+        if not centroid or folder.get("embeddingEngine") != engine:
             continue
         distance = cosine_distance(embedding, centroid)
         if distance < best_distance:
             best_distance = distance
             best_folder = folder
 
-    if best_folder and best_distance <= FACE_MATCH_THRESHOLD:
+    threshold = INSIGHTFACE_MATCH_THRESHOLD if engine == "insightface" else OPENCV_MATCH_THRESHOLD
+    if best_folder and best_distance <= threshold:
         return best_folder
     return None
 
 
-def update_folder_embedding(folder, embedding):
+def update_folder_embedding(folder, embedding, engine):
     current = folder.get("embedding")
     count = int(folder.get("embeddingCount") or 0)
     if not current or count <= 0:
         folder["embedding"] = embedding
+        folder["embeddingEngine"] = engine
         folder["embeddingCount"] = 1
         return
     updated = ((np.asarray(current, dtype=np.float32) * count) + np.asarray(embedding, dtype=np.float32)) / (count + 1)
     norm = float(np.linalg.norm(updated)) + 1e-6
     folder["embedding"] = (updated / norm).round(6).tolist()
+    folder["embeddingEngine"] = engine
     folder["embeddingCount"] = count + 1
 
 
-def create_folder(album, name, embedding=None, folder_id=None):
+def create_folder(album, name, embedding=None, folder_id=None, engine=None):
     folders = album.setdefault("folders", [])
     folder = {
         "id": folder_id or slugify(name),
@@ -188,6 +258,7 @@ def create_folder(album, name, embedding=None, folder_id=None):
     }
     if embedding:
         folder["embedding"] = embedding
+        folder["embeddingEngine"] = engine or "opencv"
         folder["embeddingCount"] = 1
     existing = {item["id"] for item in folders}
     base = folder["id"]
@@ -204,13 +275,43 @@ def get_no_face_folder(album):
     return folder or create_folder(album, "未识别人脸", folder_id="no-face")
 
 
+def get_group_folder(album):
+    folder = next((item for item in album.get("folders", []) if item["id"] == "group-photo" or item["name"] == "合照"), None)
+    return folder or create_folder(album, "合照", folder_id="group-photo")
+
+
+def photo_folder_ids(photo):
+    ids = photo.get("folderIds")
+    if isinstance(ids, list) and ids:
+        return ids
+    folder_id = photo.get("folderId")
+    return [folder_id] if folder_id else []
+
+
+def apply_photo_folders(photo, folders, classification):
+    unique = []
+    seen = set()
+    for folder in folders:
+        if folder["id"] in seen:
+            continue
+        seen.add(folder["id"])
+        unique.append(folder)
+    photo["folderIds"] = [folder["id"] for folder in unique]
+    photo["folderNames"] = [folder["name"] for folder in unique]
+    primary = unique[0] if unique else None
+    photo["folderId"] = primary["id"] if primary else ""
+    photo["folderName"] = primary["name"] if primary else ""
+    photo["classification"] = classification
+
+
 def merge_embeddings(target, source):
-    source_embedding = source.get("embedding")
-    if not source_embedding:
-        return
     if target["id"] == "no-face":
         target.pop("embedding", None)
         target.pop("embeddingCount", None)
+        target.pop("embeddingEngine", None)
+        return
+    source_embedding = source.get("embedding")
+    if not source_embedding or target.get("embeddingEngine") != source.get("embeddingEngine"):
         return
     target_embedding = target.get("embedding")
     source_count = int(source.get("embeddingCount") or 1)
@@ -231,21 +332,31 @@ def merge_embeddings(target, source):
 def merge_folder(album, source_id, target_id):
     if source_id == target_id:
         return None, "请选择不同的目标文件夹"
-    folders = album.get("folders", [])
-    source = next((item for item in folders if item["id"] == source_id), None)
-    target = next((item for item in folders if item["id"] == target_id), None)
+    all_folders = album.get("folders", [])
+    source = next((item for item in all_folders if item["id"] == source_id), None)
+    target = next((item for item in all_folders if item["id"] == target_id), None)
     if not source:
         return None, "源文件夹不存在"
     if not target:
         return None, "目标文件夹不存在"
 
     for photo in album.get("photos", []):
-        if photo["folderId"] == source["id"]:
-            photo["folderId"] = target["id"]
-            photo["folderName"] = target["name"]
-            photo["classification"] = "人工纠错"
+        ids = photo_folder_ids(photo)
+        if source["id"] in ids:
+            next_folders = []
+            for folder_id in ids:
+                if folder_id == source["id"]:
+                    if target["id"] not in [item["id"] for item in next_folders]:
+                        next_folders.append(target)
+                else:
+                    folder = next((item for item in next_folders if item["id"] == folder_id), None)
+                    if not folder:
+                        folder = next((item for item in album.get("folders", []) if item["id"] == folder_id), None)
+                    if folder:
+                        next_folders.append(folder)
+            apply_photo_folders(photo, next_folders, "人工纠错")
     merge_embeddings(target, source)
-    album["folders"] = [item for item in folders if item["id"] != source["id"]]
+    album["folders"] = [item for item in all_folders if item["id"] != source["id"]]
     return target, ""
 
 
@@ -259,9 +370,7 @@ def move_photo(album, photo_id, target_id):
         target = next((item for item in album.get("folders", []) if item["id"] == target_id), None)
     if not target:
         return None, "目标文件夹不存在"
-    photo["folderId"] = target["id"]
-    photo["folderName"] = target["name"]
-    photo["classification"] = "人工移动"
+    apply_photo_folders(photo, [target], "人工移动")
     return photo, ""
 
 
@@ -270,26 +379,61 @@ def reclassify_photo(album, photo_id):
     if not photo:
         return None, "照片不存在"
     image_path = UPLOADS / album["id"] / photo["storedName"]
-    folder, note = classify_photo(album, image_path)
-    photo["folderId"] = folder["id"]
-    photo["folderName"] = folder["name"]
-    photo["classification"] = "重新识别：%s" % note
+    folders, note = classify_photo(album, image_path)
+    apply_photo_folders(photo, folders, "重新识别：%s" % note)
     return photo, ""
 
 
-def classify_photo(album, image_path):
-    embedding, note = extract_face_embedding(image_path)
-    if not embedding:
-        return get_no_face_folder(album), note
+def reanalyze_album(album):
+    photos = sorted(album.get("photos", []), key=lambda item: item.get("createdAt", 0))
+    album["folders"] = []
+    for photo in photos:
+        image_path = UPLOADS / album["id"] / photo["storedName"]
+        folders, note = classify_photo(album, image_path)
+        apply_photo_folders(photo, folders, "全量重分析：%s" % note)
+    return album
 
-    folder = choose_face_folder(album, embedding)
+
+def assign_face_folder(album, embedding, engine):
+    folder = choose_face_folder(album, embedding, engine)
     if folder:
-        update_folder_embedding(folder, embedding)
-        return folder, "匹配到已有人物"
+        update_folder_embedding(folder, embedding, engine)
+        return folder, "匹配到已有人物（%s）" % engine
 
-    person_index = 1 + len([item for item in album.get("folders", []) if item["id"] != "no-face"])
-    folder = create_folder(album, "人物 %d" % person_index, embedding)
-    return folder, "创建新人物"
+    person_index = 1 + len([item for item in album.get("folders", []) if item["id"] not in {"no-face", "group-photo"}])
+    folder = create_folder(album, "人物 %d" % person_index, embedding, engine=engine)
+    return folder, "创建新人物（%s）" % engine
+
+
+def classify_photo(album, image_path):
+    app = get_insightface_app()
+    if app:
+        image = cv2.imread(str(image_path))
+        if image is None:
+            return [get_no_face_folder(album)], "图片无法读取"
+        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        if not faces:
+            return [get_no_face_folder(album)], "未检测到人脸"
+
+        faces = sorted(faces, key=lambda face: bbox_area(face.bbox), reverse=True)
+        person_folders = []
+        notes = []
+        for face in faces:
+            embedding = np.asarray(face.normed_embedding, dtype=np.float32)
+            norm = float(np.linalg.norm(embedding)) + 1e-6
+            folder, note = assign_face_folder(album, (embedding / norm).round(6).tolist(), "insightface")
+            if folder["id"] not in [item["id"] for item in person_folders]:
+                person_folders.append(folder)
+            notes.append(note)
+        if len(faces) > 1:
+            return [get_group_folder(album)] + person_folders, "合照：识别到 %d 张人脸，%d 个人物文件夹" % (len(faces), len(person_folders))
+        return person_folders, notes[0] if notes else "匹配到已有人物（insightface）"
+
+    embedding, note, meta = extract_opencv_embedding(image_path)
+    if not embedding:
+        return [get_no_face_folder(album)], note
+    folder, folder_note = assign_face_folder(album, embedding, meta.get("engine") or "opencv")
+    return [folder], folder_note
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -363,6 +507,9 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
             return self.upload_photos(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/reanalyze$", path)
+        if match:
+            return self.reanalyze_album_request(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/merge$", path)
         if match:
             return self.merge_folder_request(match.group(1), match.group(2))
@@ -416,18 +563,16 @@ class AppHandler(BaseHTTPRequestHandler):
                 with target.open("wb") as out:
                     shutil.copyfileobj(item.file, out)
 
-                folder, classification_note = classify_photo(album, target)
+                photo_folders, classification_note = classify_photo(album, target)
                 photo = {
                     "id": uuid.uuid4().hex[:12],
                     "originalName": original,
                     "storedName": stored_name,
                     "url": "/uploads/%s/%s" % (album_id, stored_name),
                     "uploader": uploader,
-                    "folderId": folder["id"],
-                    "folderName": folder["name"],
-                    "classification": classification_note,
                     "createdAt": int(time.time()),
                 }
+                apply_photo_folders(photo, photo_folders, classification_note)
                 album["photos"].append(photo)
                 created.append(photo)
             save_db(db)
@@ -440,6 +585,16 @@ class AppHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8") or "{}"), ""
         except json.JSONDecodeError:
             return None, "Invalid JSON"
+
+    def reanalyze_album_request(self, album_id):
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            reanalyze_album(album)
+            save_db(db)
+        return self.send_json({"album": public_album(album)})
 
     def merge_folder_request(self, album_id, source_folder_id):
         payload, error = self.read_json_body()
@@ -515,7 +670,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if not folder:
             return self.send_error_json("Folder not found", 404)
 
-        photos = [photo for photo in album["photos"] if photo["folderId"] == folder_id]
+        photos = [photo for photo in album["photos"] if folder_id in photo_folder_ids(photo)]
         zip_path = DATA / ("%s-%s.zip" % (album_id, folder_id))
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for photo in photos:

@@ -17,6 +17,7 @@ const uploadForm = $("#uploadForm");
 const photosInput = $("#photos");
 const selectedFiles = $("#selectedFiles");
 const uploadStatus = $("#uploadStatus");
+const reanalyzeButton = $("#reanalyzeButton");
 const allPhotos = $("#allPhotos");
 const folders = $("#folders");
 const folderDetail = $("#folderDetail");
@@ -61,6 +62,25 @@ async function refreshCurrentAlbum() {
 
 function getCurrentAlbum() {
   return state.albums.find((album) => album.id === state.currentAlbumId);
+}
+
+function photoFolderIds(photo) {
+  return Array.isArray(photo.folderIds) && photo.folderIds.length ? photo.folderIds : photo.folderId ? [photo.folderId] : [];
+}
+
+function photoFolderNames(photo) {
+  return Array.isArray(photo.folderNames) && photo.folderNames.length ? photo.folderNames : photo.folderName ? [photo.folderName] : [];
+}
+
+function photoInFolder(photo, folderId) {
+  return photoFolderIds(photo).includes(folderId);
+}
+
+function pickFolderCoverPhoto(folder, photos) {
+  if (folder.id === "group-photo" || folder.id === "no-face") {
+    return photos[0];
+  }
+  return photos.find((photo) => photoFolderIds(photo).length === 1) || photos[0];
 }
 
 function render() {
@@ -131,7 +151,11 @@ function renderFolders(album) {
     `<div class="section-heading"><h3>人物分类文件夹</h3><p>${album.folders.length} 个文件夹</p></div>`,
   );
   album.folders.forEach((folder) => {
-    const photos = album.photos.filter((photo) => photo.folderId === folder.id);
+    const photos = album.photos
+      .filter((photo) => photoInFolder(photo, folder.id))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    const coverPhoto = pickFolderCoverPhoto(folder, photos);
+    const previewPhotos = photos.filter((photo) => !coverPhoto || photo.id !== coverPhoto.id).slice(0, 4);
     const section = document.createElement("section");
     section.className = "folder";
     section.dataset.folderId = folder.id;
@@ -148,8 +172,21 @@ function renderFolders(album) {
           <button class="secondary" type="button">下载</button>
         </a>
       </div>
+      ${
+        coverPhoto
+          ? `
+            <figure class="folder-cover">
+              <img src="${coverPhoto.url}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" />
+              <figcaption>
+                <strong>${escapeHtml(coverPhoto.originalName)}</strong>
+                <span>${escapeHtml(coverPhoto.uploader)}</span>
+              </figcaption>
+            </figure>
+          `
+          : ""
+      }
       <div class="thumbs">
-        ${photos
+        ${previewPhotos
           .map(
             (photo) => `
               <figure class="photo">
@@ -172,7 +209,7 @@ function renderFolderDetail(album, folder) {
   folders.classList.add("hidden");
   folderDetail.classList.remove("hidden");
 
-  const photos = album.photos.filter((photo) => photo.folderId === folder.id);
+  const photos = album.photos.filter((photo) => photoInFolder(photo, folder.id));
   const mergeTargets = album.folders.filter((item) => item.id !== folder.id);
   const photoMoveTargets = album.folders.filter((item) => item.id !== folder.id);
   folderDetail.innerHTML = `
@@ -291,7 +328,7 @@ function renderAllPhotos(album) {
               <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
               <span>
                 <strong>${escapeHtml(photo.originalName)}</strong>
-                <small>${escapeHtml(photo.folderName)} · ${escapeHtml(photo.uploader)}</small>
+                <small>${escapeHtml(photoFolderNames(photo).join(" / "))} · ${escapeHtml(photo.uploader)}</small>
               </span>
             </button>
           `,
@@ -361,7 +398,7 @@ async function reclassifyPhoto(albumId, photoId) {
   state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
   const updatedAlbum = payload.album;
   const movedPhoto = updatedAlbum.photos.find((photo) => photo.id === photoId);
-  state.currentFolderId = movedPhoto ? movedPhoto.folderId : state.currentFolderId;
+  state.currentFolderId = movedPhoto ? photoFolderIds(movedPhoto)[0] : state.currentFolderId;
   render();
 }
 
@@ -417,6 +454,27 @@ async function uploadPhotos(event) {
   }, 1800);
 }
 
+async function reanalyzeCurrentAlbum() {
+  const album = getCurrentAlbum();
+  if (!album || !album.photos.length) return;
+  uploadStatus.textContent = "正在使用高精度模型重新分析相册...";
+  reanalyzeButton.disabled = true;
+  try {
+    const payload = await api(`/api/albums/${album.id}/reanalyze`, {
+      method: "POST",
+    });
+    state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+    state.currentFolderId = "";
+    uploadStatus.textContent = "已完成高精度重新分析";
+    render();
+  } finally {
+    reanalyzeButton.disabled = false;
+    setTimeout(() => {
+      uploadStatus.textContent = "";
+    }, 2200);
+  }
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -465,6 +523,13 @@ albumForm.addEventListener("submit", (event) => {
 uploadForm.addEventListener("submit", (event) => {
   uploadPhotos(event).catch((error) => {
     uploadStatus.textContent = error.message;
+  });
+});
+
+reanalyzeButton.addEventListener("click", () => {
+  reanalyzeCurrentAlbum().catch((error) => {
+    uploadStatus.textContent = error.message;
+    reanalyzeButton.disabled = false;
   });
 });
 
