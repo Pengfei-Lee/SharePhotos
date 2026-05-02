@@ -26,6 +26,10 @@ const viewerImage = $("#viewerImage");
 const viewerMeta = $("#viewerMeta");
 const closeViewer = $("#closeViewer");
 
+function pathPart(value) {
+  return encodeURIComponent(value);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) {
@@ -55,7 +59,7 @@ async function loadAlbums(selectFirst = true) {
 
 async function refreshCurrentAlbum() {
   if (!state.currentAlbumId) return;
-  const payload = await api(`/api/albums/${state.currentAlbumId}`);
+  const payload = await api(`/api/albums/${pathPart(state.currentAlbumId)}`);
   state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
   render();
 }
@@ -86,19 +90,19 @@ function pickFolderCoverPhoto(folder, photos) {
 function render() {
   albumList.innerHTML = "";
   state.albums.forEach((album) => {
-    const button = document.createElement("button");
-    button.className = `album-item${album.id === state.currentAlbumId ? " active" : ""}`;
-    button.type = "button";
-    button.innerHTML = `
+    const item = document.createElement("button");
+    item.className = `album-item${album.id === state.currentAlbumId ? " active" : ""}`;
+    item.type = "button";
+    item.innerHTML = `
       <strong>${escapeHtml(album.name)}</strong>
       <span>${album.photos.length} 张照片 · ${album.contributors.length} 位上传者</span>
     `;
-    button.addEventListener("click", () => {
+    item.addEventListener("click", () => {
       state.currentAlbumId = album.id;
       state.currentFolderId = "";
       render();
     });
-    albumList.appendChild(button);
+    albumList.appendChild(item);
   });
 
   const album = getCurrentAlbum();
@@ -168,9 +172,12 @@ function renderFolders(album) {
           <h3>${escapeHtml(folder.name)}</h3>
           <p>${photos.length} 张 · 最近 ${formatDate(Math.max(...photos.map((photo) => photo.createdAt)))}</p>
         </div>
-        <a href="/api/albums/${album.id}/folders/${folder.id}/download" aria-label="下载 ${escapeHtml(folder.name)}">
-          <button class="secondary" type="button">下载</button>
-        </a>
+        <div class="folder-actions">
+          <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folder.name)}">
+            <button class="secondary" type="button">下载</button>
+          </a>
+          <button class="secondary danger delete-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">删除</button>
+        </div>
       </div>
       ${
         coverPhoto
@@ -201,6 +208,13 @@ function renderFolders(album) {
     `;
     folders.appendChild(section);
   });
+
+  folders.querySelectorAll(".delete-folder").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteFolder(album.id, button.dataset.folderId).catch((error) => alert(error.message));
+    });
+  });
 }
 
 function renderFolderDetail(album, folder) {
@@ -216,12 +230,16 @@ function renderFolderDetail(album, folder) {
     <div class="detail-toolbar">
       <button id="backToFolders" class="secondary" type="button">返回</button>
       <div class="detail-title">
-        <h3>${escapeHtml(folder.name)}</h3>
+        <div class="rename-row">
+          <input id="folderNameInput" value="${escapeHtml(folder.name)}" maxlength="40" aria-label="相册昵称" />
+          <button id="saveFolderName" class="secondary" type="button">保存昵称</button>
+        </div>
         <p>${photos.length} 张照片 · 在线查看</p>
       </div>
-      <a href="/api/albums/${album.id}/folders/${folder.id}/download">
+      <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download">
         <button type="button">下载文件夹</button>
       </a>
+      <button id="deleteCurrentFolder" class="secondary danger" type="button">删除文件夹</button>
     </div>
     <div class="correction-panel">
       <div>
@@ -259,6 +277,7 @@ function renderFolderDetail(album, folder) {
                 </select>
                 <button class="secondary move-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">移动</button>
                 <button class="secondary reclassify-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">重新识别</button>
+                <button class="secondary danger delete-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">删除</button>
               </div>
             </article>
           `,
@@ -272,6 +291,25 @@ function renderFolderDetail(album, folder) {
     render();
   });
 
+  $("#saveFolderName").addEventListener("click", () => {
+    $("#saveFolderName").disabled = true;
+    renameCurrentFolder(album.id, folder.id).catch((error) => {
+      $("#correctionStatus").textContent = error.message;
+      $("#saveFolderName").disabled = false;
+    });
+  });
+
+  $("#folderNameInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      $("#saveFolderName").disabled = true;
+      renameCurrentFolder(album.id, folder.id).catch((error) => {
+        $("#correctionStatus").textContent = error.message;
+        $("#saveFolderName").disabled = false;
+      });
+    }
+  });
+
   $("#mergeFolder").addEventListener("click", () => {
     mergeCurrentFolder(album.id, folder.id).catch((error) => {
       $("#correctionStatus").textContent = error.message;
@@ -280,6 +318,12 @@ function renderFolderDetail(album, folder) {
 
   $("#markNoFace").addEventListener("click", () => {
     markCurrentFolderNoFace(album.id, folder.id).catch((error) => {
+      $("#correctionStatus").textContent = error.message;
+    });
+  });
+
+  $("#deleteCurrentFolder").addEventListener("click", () => {
+    deleteFolder(album.id, folder.id).catch((error) => {
       $("#correctionStatus").textContent = error.message;
     });
   });
@@ -306,6 +350,14 @@ function renderFolderDetail(album, folder) {
       });
     });
   });
+
+  folderDetail.querySelectorAll(".delete-photo").forEach((button) => {
+    button.addEventListener("click", () => {
+      deletePhoto(album.id, button.dataset.photoId).catch((error) => {
+        $("#correctionStatus").textContent = error.message;
+      });
+    });
+  });
 }
 
 function renderAllPhotos(album) {
@@ -324,13 +376,16 @@ function renderAllPhotos(album) {
       ${sortedPhotos
         .map(
           (photo) => `
-            <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-              <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
-              <span>
-                <strong>${escapeHtml(photo.originalName)}</strong>
-                <small>${escapeHtml(photoFolderNames(photo).join(" / "))} · ${escapeHtml(photo.uploader)}</small>
-              </span>
-            </button>
+            <article class="album-photo-card">
+              <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
+                <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
+                <span>
+                  <strong>${escapeHtml(photo.originalName)}</strong>
+                  <small>${escapeHtml(photoFolderNames(photo).join(" / "))} · ${escapeHtml(photo.uploader)}</small>
+                </span>
+              </button>
+              <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}">删除</button>
+            </article>
           `,
         )
         .join("")}
@@ -343,6 +398,33 @@ function renderAllPhotos(album) {
       if (photo) openPhotoViewer(photo);
     });
   });
+  allPhotos.querySelectorAll(".delete-photo-badge").forEach((badge) => {
+    badge.addEventListener("click", () => {
+      deletePhoto(album.id, badge.dataset.photoId).catch((error) => alert(error.message));
+    });
+  });
+}
+
+async function deleteFolder(albumId, folderId) {
+  const album = state.albums.find((item) => item.id === albumId);
+  const folder = album ? album.folders.find((item) => item.id === folderId) : null;
+  if (!folder) return;
+  const photos = album.photos.filter((photo) => photoInFolder(photo, folderId));
+  const sharedCount = photos.filter((photo) => photoFolderIds(photo).length > 1).length;
+  const onlyCount = photos.length - sharedCount;
+  const message =
+    `确定删除子相册“${folder.name}”吗？\n\n` +
+    `仅属于这个子相册的 ${onlyCount} 张照片会被物理删除。\n` +
+    `同时属于其他子相册的 ${sharedCount} 张照片只会从这里移除，直到不属于任何子相册时才会删除文件。`;
+  if (!window.confirm(message)) return;
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(folderId)}`, {
+    method: "DELETE",
+  });
+  state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+  if (state.currentFolderId === folderId) {
+    state.currentFolderId = "";
+  }
+  render();
 }
 
 async function mergeCurrentFolder(albumId, sourceFolderId) {
@@ -352,7 +434,7 @@ async function mergeCurrentFolder(albumId, sourceFolderId) {
     return;
   }
   $("#correctionStatus").textContent = "正在合并...";
-  const payload = await api(`/api/albums/${albumId}/folders/${sourceFolderId}/merge`, {
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(sourceFolderId)}/merge`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ targetFolderId }),
@@ -364,12 +446,29 @@ async function mergeCurrentFolder(albumId, sourceFolderId) {
 
 async function markCurrentFolderNoFace(albumId, sourceFolderId) {
   $("#correctionStatus").textContent = "正在标记...";
-  const payload = await api(`/api/albums/${albumId}/folders/${sourceFolderId}/mark-no-face`, {
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(sourceFolderId)}/mark-no-face`, {
     method: "POST",
   });
   state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
   const noFaceFolder = payload.album.folders.find((folder) => folder.id === "no-face" || folder.name === "未识别人脸");
   state.currentFolderId = noFaceFolder ? noFaceFolder.id : "";
+  render();
+}
+
+async function renameCurrentFolder(albumId, folderId) {
+  const name = $("#folderNameInput").value.trim();
+  if (!name) {
+    $("#correctionStatus").textContent = "昵称不能为空";
+    return;
+  }
+  $("#correctionStatus").textContent = "正在保存昵称...";
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(folderId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
+  state.currentFolderId = folderId;
   render();
 }
 
@@ -381,7 +480,7 @@ async function movePhotoToFolder(albumId, photoId) {
     return;
   }
   $("#correctionStatus").textContent = "正在移动照片...";
-  const payload = await api(`/api/albums/${albumId}/photos/${photoId}/move`, {
+  const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ targetFolderId }),
@@ -390,9 +489,28 @@ async function movePhotoToFolder(albumId, photoId) {
   render();
 }
 
+async function deletePhoto(albumId, photoId) {
+  const album = state.albums.find((item) => item.id === albumId);
+  const photo = album ? album.photos.find((item) => item.id === photoId) : null;
+  if (!photo) return;
+  if (!window.confirm(`确定删除照片“${photo.originalName}”吗？`)) return;
+  const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}`, {
+    method: "DELETE",
+  });
+  state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+  const currentAlbum = getCurrentAlbum();
+  if (currentAlbum && state.currentFolderId && !currentAlbum.folders.some((folder) => folder.id === state.currentFolderId)) {
+    state.currentFolderId = "";
+  }
+  if (photoViewer.open && viewerImage.src.includes(photo.url)) {
+    photoViewer.close();
+  }
+  render();
+}
+
 async function reclassifyPhoto(albumId, photoId) {
   $("#correctionStatus").textContent = "正在重新识别...";
-  const payload = await api(`/api/albums/${albumId}/photos/${photoId}/reclassify`, {
+  const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/reclassify`, {
     method: "POST",
   });
   state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
@@ -441,7 +559,7 @@ async function uploadPhotos(event) {
     form.append("photos", file);
   }
 
-  await api(`/api/albums/${album.id}/upload`, {
+  await api(`/api/albums/${pathPart(album.id)}/upload`, {
     method: "POST",
     body: form,
   });
@@ -460,7 +578,7 @@ async function reanalyzeCurrentAlbum() {
   uploadStatus.textContent = "正在使用高精度模型重新分析相册...";
   reanalyzeButton.disabled = true;
   try {
-    const payload = await api(`/api/albums/${album.id}/reanalyze`, {
+    const payload = await api(`/api/albums/${pathPart(album.id)}/reanalyze`, {
       method: "POST",
     });
     state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));

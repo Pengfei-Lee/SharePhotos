@@ -304,6 +304,108 @@ def apply_photo_folders(photo, folders, classification):
     photo["classification"] = classification
 
 
+def sync_photo_folder_names(album):
+    folders_by_id = {folder["id"]: folder for folder in album.get("folders", [])}
+    for photo in album.get("photos", []):
+        folders = [folders_by_id[folder_id] for folder_id in photo_folder_ids(photo) if folder_id in folders_by_id]
+        if not folders and photo.get("folderId") in folders_by_id:
+            folders = [folders_by_id[photo["folderId"]]]
+        classification = photo.get("classification") or ""
+        apply_photo_folders(photo, folders, classification)
+
+
+def rename_folder(album, folder_id, name):
+    new_name = (name or "").strip()[:40]
+    if not new_name:
+        return None, "名称不能为空"
+    folder = next((item for item in album.get("folders", []) if item["id"] == folder_id), None)
+    if not folder:
+        return None, "文件夹不存在"
+    folder["name"] = new_name
+    sync_photo_folder_names(album)
+    return folder, ""
+
+
+def prune_empty_folders(album):
+    used = set()
+    for photo in album.get("photos", []):
+        used.update(photo_folder_ids(photo))
+    album["folders"] = [folder for folder in album.get("folders", []) if folder["id"] in used]
+    sync_photo_folder_names(album)
+
+
+def remove_photo(album, photo_id):
+    photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+    if not photo:
+        return None, "照片不存在"
+    album["photos"] = [item for item in album.get("photos", []) if item["id"] != photo_id]
+    still_used = any(item.get("storedName") == photo.get("storedName") for item in album.get("photos", []))
+    if not still_used:
+        source = UPLOADS / album["id"] / photo["storedName"]
+        if source.exists():
+            source.unlink()
+    prune_empty_folders(album)
+    return photo, ""
+
+
+def remove_folder(album, folder_id):
+    folder = next((item for item in album.get("folders", []) if item["id"] == folder_id), None)
+    if not folder:
+        return None, "文件夹不存在"
+
+    folders_by_id = {item["id"]: item for item in album.get("folders", [])}
+    removed_photos = []
+    kept_photos = []
+    deleted_count = 0
+    unlinked_count = 0
+    logical_removed_count = 0
+
+    for photo in album.get("photos", []):
+        ids = photo_folder_ids(photo)
+        if folder_id not in ids:
+            kept_photos.append(photo)
+            continue
+
+        remaining_ids = [item for item in ids if item != folder_id]
+        remaining_folders = [folders_by_id[item] for item in remaining_ids if item in folders_by_id]
+        if remaining_folders:
+            apply_photo_folders(photo, remaining_folders, "已从“%s”移除" % folder["name"])
+            kept_photos.append(photo)
+            logical_removed_count += 1
+            continue
+
+        removed_photos.append(photo)
+        deleted_count += 1
+
+    album["photos"] = kept_photos
+    for photo in removed_photos:
+        still_used = any(item.get("storedName") == photo.get("storedName") for item in album.get("photos", []))
+        if still_used:
+            continue
+        source = UPLOADS / album["id"] / photo["storedName"]
+        if source.exists():
+            source.unlink()
+            unlinked_count += 1
+
+    album["folders"] = [item for item in album.get("folders", []) if item["id"] != folder_id]
+    prune_empty_folders(album)
+    return {
+        "folder": folder,
+        "deletedPhotos": deleted_count,
+        "deletedFiles": unlinked_count,
+        "logicalRemovedPhotos": logical_removed_count,
+    }, ""
+
+
+def remove_album_files(album_id):
+    album_dir = UPLOADS / album_id
+    if album_dir.exists():
+        shutil.rmtree(album_dir)
+    for zip_path in DATA.glob("%s-*.zip" % album_id):
+        if zip_path.exists():
+            zip_path.unlink()
+
+
 def merge_embeddings(target, source):
     if target["id"] == "no-face":
         target.pop("embedding", None)
@@ -385,12 +487,18 @@ def reclassify_photo(album, photo_id):
 
 
 def reanalyze_album(album):
+    previous_names = {folder["id"]: folder.get("name") for folder in album.get("folders", [])}
     photos = sorted(album.get("photos", []), key=lambda item: item.get("createdAt", 0))
     album["folders"] = []
     for photo in photos:
         image_path = UPLOADS / album["id"] / photo["storedName"]
         folders, note = classify_photo(album, image_path)
         apply_photo_folders(photo, folders, "全量重分析：%s" % note)
+    for folder in album.get("folders", []):
+        previous_name = previous_names.get(folder["id"])
+        if previous_name:
+            folder["name"] = previous_name
+    sync_photo_folder_names(album)
     return album
 
 
@@ -513,6 +621,9 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/merge$", path)
         if match:
             return self.merge_folder_request(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/rename$", path)
+        if match:
+            return self.rename_folder_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/mark-no-face$", path)
         if match:
             return self.mark_no_face_request(match.group(1), match.group(2))
@@ -522,6 +633,20 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/reclassify$", path)
         if match:
             return self.reclassify_photo_request(match.group(1), match.group(2))
+        return self.send_error_json("Not found", 404)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        match = re.match(r"^/api/albums/([^/]+)$", path)
+        if match:
+            return self.delete_album_request(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)$", path)
+        if match:
+            return self.delete_folder_request(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)$", path)
+        if match:
+            return self.delete_photo_request(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
 
     def upload_photos(self, album_id):
@@ -615,6 +740,21 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         return self.send_json({"album": public_album(album)})
 
+    def rename_folder_request(self, album_id, folder_id):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            _, rename_error = rename_folder(album, folder_id, payload.get("name") or "")
+            if rename_error:
+                return self.send_error_json(rename_error)
+            save_db(db)
+        return self.send_json({"album": public_album(album)})
+
     def mark_no_face_request(self, album_id, source_folder_id):
         with LOCK:
             db = load_db()
@@ -660,6 +800,41 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(reclassify_error)
             save_db(db)
         return self.send_json({"album": public_album(album)})
+
+    def delete_photo_request(self, album_id, photo_id):
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            _, delete_error = remove_photo(album, photo_id)
+            if delete_error:
+                return self.send_error_json(delete_error, 404)
+            save_db(db)
+        return self.send_json({"album": public_album(album)})
+
+    def delete_folder_request(self, album_id, folder_id):
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            result, delete_error = remove_folder(album, folder_id)
+            if delete_error:
+                return self.send_error_json(delete_error, 404)
+            save_db(db)
+        return self.send_json({"album": public_album(album), "deleted": result})
+
+    def delete_album_request(self, album_id):
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            db["albums"] = [item for item in db["albums"] if item["id"] != album_id]
+            remove_album_files(album_id)
+            save_db(db)
+        return self.send_json({"deletedAlbumId": album_id})
 
     def download_folder(self, album_id, folder_id):
         with LOCK:

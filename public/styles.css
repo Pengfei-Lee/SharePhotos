@@ -352,19 +352,28 @@ label {
   gap: 12px;
 }
 
-.album-photo {
-  display: grid;
+.album-photo-card {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.album-photo-card:hover {
+  border-color: var(--accent);
+}
+
+.album-photo {
+  display: grid;
+  width: 100%;
+  min-height: 100%;
   color: var(--ink);
   padding: 0;
   text-align: left;
 }
 
 .album-photo:hover {
-  border-color: var(--accent);
   background: #fff;
 }
 
@@ -398,6 +407,19 @@ label {
   font-size: 12px;
 }
 
+.delete-photo-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border-radius: 6px;
+  background: rgba(181, 71, 71, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 5px 7px;
+}
+
 .folder {
   display: grid;
   gap: 14px;
@@ -427,6 +449,12 @@ label {
 
 .folder-title {
   min-width: 0;
+}
+
+.folder-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 
 .folder h3 {
@@ -550,6 +578,13 @@ label {
   min-width: 0;
 }
 
+.rename-row {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .detail-title h3,
 .detail-title p {
   margin: 0;
@@ -662,7 +697,7 @@ label {
 
 .photo-correction {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
   border-top: 1px solid var(--line);
   padding: 10px;
@@ -738,7 +773,8 @@ label {
   .form-grid,
   .inline,
   .detail-toolbar,
-  .correction-panel {
+  .correction-panel,
+  .rename-row {
     grid-template-columns: 1fr;
   }
 
