@@ -40,7 +40,7 @@
         <section id="emptyState" class="empty">
           <div>
             <h3>先创建一个相册</h3>
-            <p>然后用不同上传者名称上传照片。服务端会使用 OpenCV 检测照片中的人脸，并根据人脸特征把相似人物整理到同一个文件夹；没有检测到人脸的照片会进入“未识别人脸”。</p>
+            <p>然后用不同上传者名称上传照片。服务端会使用 OpenCV 检测照片中的人脸，并根据人脸特征把相似人物整理到同一个文件夹；没有检测到人脸的照片会进入“其他”。</p>
           </div>
         </section>
 
@@ -49,7 +49,7 @@
             <div class="form-grid">
               <label>
                 上传者
-                <input id="uploader" name="uploader" placeholder="你的名字" value="访客" />
+                <input id="uploader" name="uploader" placeholder="不填写则默认为访客" autocomplete="name" />
               </label>
             </div>
             <label class="dropzone" for="photos">

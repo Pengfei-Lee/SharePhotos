@@ -69,6 +69,11 @@ input {
   color: var(--ink);
 }
 
+input::placeholder {
+  color: #8b9aa4;
+  opacity: 1;
+}
+
 select {
   min-height: 42px;
   border: 1px solid var(--line);

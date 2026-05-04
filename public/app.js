@@ -2,6 +2,8 @@ const state = {
   albums: [],
   currentAlbumId: "",
   currentFolderId: "",
+  uploading: false,
+  pollTimer: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -80,6 +82,70 @@ function photoInFolder(photo, folderId) {
   return photoFolderIds(photo).includes(folderId);
 }
 
+function albumProcessingCounts(album) {
+  const queued = album.photos.filter((photo) => photo.status === "queued").length;
+  const preparing = album.photos.filter((photo) => photo.status === "preparing").length;
+  const processing = album.photos.filter((photo) => photo.status === "processing").length;
+  const failed = album.photos.filter((photo) => photo.status === "failed").length;
+  return { queued, preparing, processing, failed, active: queued + preparing + processing };
+}
+
+function photoStatusText(photo) {
+  if (photo.status === "queued") return "等待识别";
+  if (photo.status === "preparing") return "生成预览图";
+  if (photo.status === "processing") return "识别中";
+  if (photo.status === "failed") return "识别失败";
+  return "";
+}
+
+function updateUploadProgress(album) {
+  if (state.uploading || !album) return;
+  const counts = albumProcessingCounts(album);
+  if (counts.active) {
+    uploadStatus.textContent = `后台正在整理：${counts.preparing} 张生成预览图，${counts.processing} 张识别中，${counts.queued} 张排队中`;
+  } else if (counts.failed) {
+    uploadStatus.textContent = `整理完成，${counts.failed} 张照片需要稍后手动检查`;
+  } else {
+    uploadStatus.textContent = "";
+  }
+}
+
+function updatePolling(album) {
+  const shouldPoll = album && albumProcessingCounts(album).active > 0;
+  if (shouldPoll && !state.pollTimer) {
+    state.pollTimer = window.setInterval(() => {
+      refreshCurrentAlbum().catch((error) => {
+        uploadStatus.textContent = error.message;
+      });
+    }, 1600);
+  }
+  if (!shouldPoll && state.pollTimer) {
+    window.clearInterval(state.pollTimer);
+    state.pollTimer = 0;
+  }
+}
+
+function folderDisplayName(folder) {
+  return folder.id === "no-face" || folder.name === "未识别人脸" ? "其他" : folder.name;
+}
+
+function photoDisplayFolderNames(photo) {
+  return photoFolderIds(photo).map((folderId, index) => {
+    const name = photoFolderNames(photo)[index] || "";
+    return folderId === "no-face" || name === "未识别人脸" ? "其他" : name;
+  });
+}
+
+function sortedFolders(album) {
+  return [...album.folders].sort((a, b) => {
+    if (a.id === "no-face" && b.id !== "no-face") return 1;
+    if (b.id === "no-face" && a.id !== "no-face") return -1;
+    if (a.id === "group-photo" && b.id !== "group-photo") return -1;
+    if (b.id === "group-photo" && a.id !== "group-photo") return 1;
+    return (a.createdAt || 0) - (b.createdAt || 0);
+  });
+}
+
 function pickFolderCoverPhoto(folder, photos) {
   if (folder.id === "group-photo" || folder.id === "no-face") {
     return photos[0];
@@ -122,6 +188,8 @@ function render() {
     <span class="stat">${album.folders.length} 个人物文件夹</span>
     <span class="stat">${album.contributors.length} 位协作者</span>
   `;
+  updateUploadProgress(album);
+  updatePolling(album);
   const selectedFolder = album.folders.find((folder) => folder.id === state.currentFolderId);
   if (selectedFolder) {
     renderFolderDetail(album, selectedFolder);
@@ -154,7 +222,8 @@ function renderFolders(album) {
     "beforeend",
     `<div class="section-heading"><h3>人物分类文件夹</h3><p>${album.folders.length} 个文件夹</p></div>`,
   );
-  album.folders.forEach((folder) => {
+  sortedFolders(album).forEach((folder) => {
+    const folderName = folderDisplayName(folder);
     const photos = album.photos
       .filter((photo) => photoInFolder(photo, folder.id))
       .sort((a, b) => b.createdAt - a.createdAt);
@@ -165,15 +234,15 @@ function renderFolders(album) {
     section.dataset.folderId = folder.id;
     section.tabIndex = 0;
     section.setAttribute("role", "button");
-    section.setAttribute("aria-label", `查看 ${folder.name}`);
+    section.setAttribute("aria-label", `查看 ${folderName}`);
     section.innerHTML = `
       <div class="folder-header">
         <div class="folder-title">
-          <h3>${escapeHtml(folder.name)}</h3>
+          <h3>${escapeHtml(folderName)}</h3>
           <p>${photos.length} 张 · 最近 ${formatDate(Math.max(...photos.map((photo) => photo.createdAt)))}</p>
         </div>
         <div class="folder-actions">
-          <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folder.name)}">
+          <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folderName)}">
             <button class="secondary" type="button">下载</button>
           </a>
           <button class="secondary danger delete-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">删除</button>
@@ -183,7 +252,7 @@ function renderFolders(album) {
         coverPhoto
           ? `
             <figure class="folder-cover">
-              <img src="${coverPhoto.url}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" />
+              <img src="${coverPhoto.coverUrl || coverPhoto.cardUrl || coverPhoto.url}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" decoding="async" />
               <figcaption>
                 <strong>${escapeHtml(coverPhoto.originalName)}</strong>
                 <span>${escapeHtml(coverPhoto.uploader)}</span>
@@ -197,7 +266,7 @@ function renderFolders(album) {
           .map(
             (photo) => `
               <figure class="photo">
-                <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
+                <img src="${photo.tinyUrl || photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
                 <span>${escapeHtml(photo.uploader)}</span>
               </figure>
             `,
@@ -231,7 +300,7 @@ function renderFolderDetail(album, folder) {
       <button id="backToFolders" class="secondary" type="button">返回</button>
       <div class="detail-title">
         <div class="rename-row">
-          <input id="folderNameInput" value="${escapeHtml(folder.name)}" maxlength="40" aria-label="相册昵称" />
+          <input id="folderNameInput" value="${escapeHtml(folderDisplayName(folder))}" maxlength="40" aria-label="相册昵称" />
           <button id="saveFolderName" class="secondary" type="button">保存昵称</button>
         </div>
         <p>${photos.length} 张照片 · 在线查看</p>
@@ -244,15 +313,15 @@ function renderFolderDetail(album, folder) {
     <div class="correction-panel">
       <div>
         <strong>识别纠错</strong>
-        <span>同一个人被拆开时可合并；误识别人物时可标记为未识别人脸。</span>
+        <span>同一个人被拆开时可合并；误识别人物时可标记为其他。</span>
       </div>
       <div class="correction-actions">
         <select id="mergeTarget" ${mergeTargets.length ? "" : "disabled"}>
           <option value="">选择要合并到的文件夹</option>
-          ${mergeTargets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`).join("")}
+          ${mergeTargets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`).join("")}
         </select>
         <button id="mergeFolder" class="secondary" type="button" ${mergeTargets.length ? "" : "disabled"}>合并</button>
-        <button id="markNoFace" class="secondary danger" type="button" ${folder.id === "no-face" ? "disabled" : ""}>标记为未识别人脸</button>
+        <button id="markNoFace" class="secondary danger" type="button" ${folder.id === "no-face" ? "disabled" : ""}>标记为其他</button>
       </div>
       <span id="correctionStatus"></span>
     </div>
@@ -262,7 +331,7 @@ function renderFolderDetail(album, folder) {
           (photo) => `
             <article class="detail-photo-card">
               <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
+                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
                 <span>
                   <strong>${escapeHtml(photo.originalName)}</strong>
                   <small>${escapeHtml(photo.uploader)} · ${formatDate(photo.createdAt)}</small>
@@ -378,10 +447,10 @@ function renderAllPhotos(album) {
           (photo) => `
             <article class="album-photo-card">
               <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" />
+                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
                 <span>
                   <strong>${escapeHtml(photo.originalName)}</strong>
-                  <small>${escapeHtml(photoFolderNames(photo).join(" / "))} · ${escapeHtml(photo.uploader)}</small>
+                  <small>${escapeHtml([photoStatusText(photo) || photoDisplayFolderNames(photo).join(" / "), photo.uploader].filter(Boolean).join(" · "))}</small>
                 </span>
               </button>
               <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}">删除</button>
@@ -450,7 +519,7 @@ async function markCurrentFolderNoFace(albumId, sourceFolderId) {
     method: "POST",
   });
   state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
-  const noFaceFolder = payload.album.folders.find((folder) => folder.id === "no-face" || folder.name === "未识别人脸");
+  const noFaceFolder = payload.album.folders.find((folder) => folder.id === "no-face" || folder.name === "其他" || folder.name === "未识别人脸");
   state.currentFolderId = noFaceFolder ? noFaceFolder.id : "";
   render();
 }
@@ -552,24 +621,29 @@ async function uploadPhotos(event) {
   const files = Array.from(photosInput.files || []);
   if (!album || !files.length) return;
 
-  uploadStatus.textContent = "上传中，服务端正在识别人脸...";
+  state.uploading = true;
+    uploadStatus.textContent = `正在上传 ${files.length} 张照片，上传完成后会自动生成预览图并识别人脸`;
+  uploadForm.querySelector("button[type='submit']").disabled = true;
   const form = new FormData();
   form.append("uploader", $("#uploader").value.trim() || "访客");
   for (const file of files) {
     form.append("photos", file);
   }
 
-  await api(`/api/albums/${pathPart(album.id)}/upload`, {
-    method: "POST",
-    body: form,
-  });
-  photosInput.value = "";
-  selectedFiles.textContent = "上传后自动进行人脸识别";
-  uploadStatus.textContent = "已完成人脸识别整理";
-  await refreshCurrentAlbum();
-  setTimeout(() => {
-    uploadStatus.textContent = "";
-  }, 1800);
+  try {
+    const payload = await api(`/api/albums/${pathPart(album.id)}/upload`, {
+      method: "POST",
+      body: form,
+    });
+    state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+    photosInput.value = "";
+    selectedFiles.textContent = "上传后自动进行人脸识别";
+    uploadStatus.textContent = `已成功上传 ${payload.queued || files.length} 张照片，后台正在生成预览图并整理人物分类`;
+    render();
+  } finally {
+    state.uploading = false;
+    uploadForm.querySelector("button[type='submit']").disabled = false;
+  }
 }
 
 async function reanalyzeCurrentAlbum() {
