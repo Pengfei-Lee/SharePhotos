@@ -1,0 +1,22 @@
+name: Auto Deploy
+
+on:
+  push:
+    branches:
+      - master   # 你用哪个分支就写哪个
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/SharePhotos
+            git pull
+            docker compose up -d --build
