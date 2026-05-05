@@ -11,6 +11,9 @@ const state = {
   allPhotosLimit: 12,
   viewerToken: 0,
   viewerPhotoId: "",
+  viewerPhotos: [],
+  viewerIndex: -1,
+  viewerTouchStart: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -506,7 +509,7 @@ function renderFolderDetail(album, folder) {
   folderDetail.querySelectorAll(".detail-photo").forEach((button) => {
     button.addEventListener("click", () => {
       const photo = photos.find((item) => item.id === button.dataset.photoId);
-      if (photo) openPhotoViewer(photo);
+      if (photo) openPhotoViewer(photo, photos);
     });
   });
 
@@ -625,7 +628,7 @@ function renderAllPhotos(album) {
   allPhotos.querySelectorAll(".album-photo").forEach((button) => {
     button.addEventListener("click", () => {
       const photo = album.photos.find((item) => item.id === button.dataset.photoId);
-      if (photo) openPhotoViewer(photo);
+      if (photo) openPhotoViewer(photo, sortedPhotos);
     });
   });
   allPhotos.querySelectorAll(".delete-photo-badge").forEach((badge) => {
@@ -763,7 +766,15 @@ async function deletePhoto(albumId, photoId) {
   render();
 }
 
-function openPhotoViewer(photo) {
+function openPhotoViewer(photo, photos = []) {
+  const viewerPhotos = photos.length ? photos : [photo];
+  const viewerIndex = Math.max(0, viewerPhotos.findIndex((item) => item.id === photo.id));
+  state.viewerPhotos = viewerPhotos;
+  state.viewerIndex = viewerIndex;
+  showViewerPhoto(viewerPhotos[viewerIndex] || photo);
+}
+
+function showViewerPhoto(photo) {
   const token = state.viewerToken + 1;
   state.viewerToken = token;
   state.viewerPhotoId = photo.id;
@@ -771,9 +782,9 @@ function openPhotoViewer(photo) {
   viewerImage.removeAttribute("src");
   viewerImage.alt = "";
   viewerMeta.textContent = "正在打开原图...";
-  if (typeof photoViewer.showModal === "function") {
+  if (!photoViewer.open && typeof photoViewer.showModal === "function") {
     photoViewer.showModal();
-  } else {
+  } else if (!photoViewer.open) {
     photoViewer.setAttribute("open", "");
   }
 
@@ -791,6 +802,14 @@ function openPhotoViewer(photo) {
     photoViewer.classList.remove("loading");
   };
   nextImage.src = photo.url;
+}
+
+function showAdjacentViewerPhoto(direction) {
+  if (!state.viewerPhotos.length) return;
+  const nextIndex = state.viewerIndex + direction;
+  if (nextIndex < 0 || nextIndex >= state.viewerPhotos.length) return;
+  state.viewerIndex = nextIndex;
+  showViewerPhoto(state.viewerPhotos[nextIndex]);
 }
 
 async function createAlbum(event) {
@@ -934,9 +953,46 @@ closeViewer.addEventListener("click", () => {
   photoViewer.close();
 });
 
+photoViewer.addEventListener("touchstart", (event) => {
+  if (!photoViewer.open || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  state.viewerTouchStart = { x: touch.clientX, y: touch.clientY };
+});
+
+photoViewer.addEventListener("touchend", (event) => {
+  if (!photoViewer.open || !state.viewerTouchStart || event.changedTouches.length !== 1) return;
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - state.viewerTouchStart.x;
+  const dy = touch.clientY - state.viewerTouchStart.y;
+  state.viewerTouchStart = null;
+  if (Math.abs(dx) < 60 || Math.abs(dy) > 80) return;
+  showAdjacentViewerPhoto(dx < 0 ? 1 : -1);
+});
+
 photoViewer.addEventListener("click", (event) => {
   if (event.target === photoViewer) {
     photoViewer.close();
+  }
+});
+
+photoViewer.addEventListener("close", () => {
+  state.viewerToken += 1;
+  state.viewerPhotoId = "";
+  state.viewerPhotos = [];
+  state.viewerIndex = -1;
+  state.viewerTouchStart = null;
+  photoViewer.classList.remove("loading");
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!photoViewer.open) return;
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    showAdjacentViewerPhoto(-1);
+  }
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    showAdjacentViewerPhoto(1);
   }
 });
 
