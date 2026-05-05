@@ -4,6 +4,7 @@ services:
   sharephotos:
     container_name: sharephotos
     build: .
+    image: sharephotos:latest
     restart: unless-stopped
     expose:
       - "8000"
