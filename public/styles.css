@@ -3,8 +3,8 @@
   --ink: #17232a;
   --muted: #647783;
   --line: #d9e6eb;
-  --panel: #fffdf9;
-  --wash: #f5f8f6;
+  --panel: #ffffff;
+  --wash: #f5f5f7;
   --accent: #197c72;
   --accent-strong: #075f58;
   --mint: #dff2e7;
@@ -13,8 +13,8 @@
   --coral: #e96d5d;
   --warm: #e39a41;
   --danger: #b84b50;
-  --shadow: 0 14px 36px rgba(32, 65, 76, 0.1);
-  --soft-shadow: 0 8px 22px rgba(32, 65, 76, 0.08);
+  --shadow: 0 18px 46px rgba(28, 43, 52, 0.1);
+  --soft-shadow: 0 8px 22px rgba(28, 43, 52, 0.07);
 }
 
 * {
@@ -31,7 +31,7 @@ body {
     radial-gradient(circle at 10% 10%, rgba(247, 212, 109, 0.34), transparent 26%),
     radial-gradient(circle at 86% 12%, rgba(143, 199, 210, 0.34), transparent 28%),
     radial-gradient(circle at 78% 78%, rgba(233, 109, 93, 0.12), transparent 30%),
-    linear-gradient(135deg, #f9fbf7 0%, #eef7f3 45%, #fff7e5 100%);
+    linear-gradient(135deg, #fbfbfd 0%, #f3f7f6 45%, #fff8e8 100%);
 }
 
 body::before {
@@ -68,6 +68,18 @@ button {
     box-shadow 0.16s ease,
     background 0.16s ease,
     border-color 0.16s ease;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
 }
 
 button:hover {
@@ -240,16 +252,18 @@ label {
 
 .album-item {
   display: grid;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 8px;
   width: 100%;
   min-height: 64px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 253, 249, 0.9);
+  background: rgba(255, 255, 255, 0.86);
   color: var(--ink);
-  padding: 11px 12px;
+  padding: 8px;
   text-align: left;
-  box-shadow: none;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8), var(--soft-shadow);
 }
 
 .album-item.active {
@@ -263,13 +277,50 @@ label {
   background: #fffdf9;
 }
 
-.album-item strong {
+.album-select {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 48px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  padding: 4px 6px;
+  text-align: left;
+  box-shadow: none;
+}
+
+.album-select:hover {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.album-delete {
+  align-self: center;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 50%;
+  background: #fae9e8;
+  color: var(--danger);
+  box-shadow: none;
+  font-size: 12px;
+  padding: 0;
+}
+
+.album-delete:hover {
+  background: #f5dddd;
+  box-shadow: none;
+}
+
+.album-select strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.album-item span {
+.album-select span {
   color: var(--muted);
   font-size: 12px;
 }
@@ -324,7 +375,7 @@ label {
 .stat {
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 253, 249, 0.9);
+  background: rgba(255, 255, 255, 0.86);
   padding: 8px 11px;
   color: var(--muted);
   font-size: 13px;
@@ -491,7 +542,7 @@ label {
   border: 1px solid rgba(25, 124, 114, 0.16);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(255, 253, 249, 0.98), rgba(223, 242, 231, 0.76)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(242, 248, 246, 0.84)),
     #fff;
   padding: 18px;
   box-shadow: var(--shadow);
@@ -591,12 +642,14 @@ label {
 }
 
 #uploadStatus {
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--muted);
+  border: 1px solid rgba(25, 124, 114, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--accent-strong);
   font-size: 13px;
   font-weight: 700;
-  padding: 7px 10px;
+  line-height: 1.5;
+  padding: 8px 11px;
 }
 
 .folders {
@@ -644,7 +697,7 @@ label {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--soft-shadow);
   transition:
     transform 0.16s ease,
@@ -711,14 +764,21 @@ label {
   position: absolute;
   top: 8px;
   right: 8px;
-  border-radius: 6px;
-  background: rgba(184, 75, 80, 0.92);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
+  width: 34px;
+  min-width: 34px;
   min-height: 34px;
-  padding: 5px 7px;
-  box-shadow: 0 8px 18px rgba(108, 30, 34, 0.18);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  color: var(--danger);
+  box-shadow: 0 8px 18px rgba(108, 30, 34, 0.14);
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0;
+}
+
+.delete-photo-badge:hover {
+  background: #fae9e8;
 }
 
 .folder {
@@ -728,7 +788,7 @@ label {
   border: 1px solid var(--line);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255, 253, 249, 0.98), rgba(255, 255, 255, 0.94)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94)),
     var(--panel);
   cursor: pointer;
   padding: 14px;
@@ -772,7 +832,7 @@ label {
 .folder-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 6px;
 }
 
 .folder h3 {
@@ -905,7 +965,7 @@ label {
   gap: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: rgba(255, 255, 255, 0.92);
   padding: 14px;
   box-shadow: var(--shadow);
 }
@@ -946,7 +1006,7 @@ label {
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(255, 253, 249, 0.98), rgba(255, 245, 220, 0.82));
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(255, 248, 230, 0.82));
   padding: 14px;
   box-shadow: var(--soft-shadow);
 }
@@ -983,7 +1043,7 @@ label {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--soft-shadow);
   transition:
     transform 0.16s ease,
@@ -1051,7 +1111,7 @@ label {
 
 .photo-correction {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) 38px 38px;
   gap: 8px;
   border-top: 1px solid var(--line);
   padding: 10px;
@@ -1241,6 +1301,10 @@ label {
     min-height: 58px;
     padding: 10px 11px;
     scroll-snap-align: start;
+  }
+
+  .album-delete {
+    padding: 0 9px;
   }
 
   .album-item.active {
@@ -1438,8 +1502,14 @@ label {
 
   .folder-actions button {
     min-height: 40px;
-    padding: 0 11px;
     font-size: 14px;
+  }
+
+  .folder-actions .icon-button {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
   }
 
   .folder-cover {
@@ -1477,9 +1547,23 @@ label {
   }
 
   .delete-photo-badge {
+    width: 32px;
+    min-width: 32px;
     min-height: 32px;
-    padding: 4px 7px;
+    padding: 0;
     font-size: 12px;
+  }
+
+  .photo-correction {
+    grid-template-columns: minmax(0, 1fr) 42px 42px;
+    gap: 7px;
+  }
+
+  .photo-correction .icon-button {
+    width: 42px;
+    min-width: 42px;
+    min-height: 42px;
+    padding: 0;
   }
 
   .detail-toolbar {

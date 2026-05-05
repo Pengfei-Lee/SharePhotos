@@ -4,6 +4,8 @@ const state = {
   currentFolderId: "",
   uploading: false,
   pollTimer: 0,
+  lastUpload: null,
+  touchStart: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -88,11 +90,11 @@ function defaultSelectedFilesText() {
   return "手机上可以一次多选；上传后先入库，再在后台生成预览和人物小相册";
 }
 
-function albumProcessingCounts(album) {
-  const queued = album.photos.filter((photo) => photo.status === "queued").length;
-  const preparing = album.photos.filter((photo) => photo.status === "preparing").length;
-  const processing = album.photos.filter((photo) => photo.status === "processing").length;
-  const failed = album.photos.filter((photo) => photo.status === "failed").length;
+function albumProcessingCounts(album, photos = album.photos) {
+  const queued = photos.filter((photo) => photo.status === "queued").length;
+  const preparing = photos.filter((photo) => photo.status === "preparing").length;
+  const processing = photos.filter((photo) => photo.status === "processing").length;
+  const failed = photos.filter((photo) => photo.status === "failed").length;
   return { queued, preparing, processing, failed, active: queued + preparing + processing };
 }
 
@@ -104,13 +106,43 @@ function photoStatusText(photo) {
   return "";
 }
 
+function uploadBatchPhotos(album) {
+  if (!album || !state.lastUpload || state.lastUpload.albumId !== album.id) return [];
+  const ids = new Set(state.lastUpload.photoIds);
+  return album.photos.filter((photo) => ids.has(photo.id));
+}
+
+function photoResultSummary(photos, prefix = "这次上传已整理好") {
+  if (!photos.length) return "";
+  const readyPhotos = photos.filter((photo) => !photoStatusText(photo));
+  if (!readyPhotos.length) return "";
+  const personPhotoIds = new Set();
+  let groupCount = 0;
+  let otherCount = 0;
+  readyPhotos.forEach((photo) => {
+    const ids = photoFolderIds(photo);
+    if (ids.includes("group-photo")) groupCount += 1;
+    if (ids.includes("no-face")) otherCount += 1;
+    if (ids.some((id) => id && id !== "group-photo" && id !== "no-face" && id !== "pending")) {
+      personPhotoIds.add(photo.id);
+    }
+  });
+  return `${prefix}：人物照片 ${personPhotoIds.size} 张，合照 ${groupCount} 张，其他 ${otherCount} 张`;
+}
+
 function updateUploadProgress(album) {
   if (state.uploading || !album) return;
-  const counts = albumProcessingCounts(album);
+  const batchPhotos = uploadBatchPhotos(album);
+  const targetPhotos = batchPhotos.length ? batchPhotos : album.photos;
+  const counts = albumProcessingCounts(album, targetPhotos);
   if (counts.active) {
-    uploadStatus.textContent = `照片池正在开工：${counts.preparing} 张做预览，${counts.processing} 张认人，${counts.queued} 张排队`;
+    const prefix = batchPhotos.length ? "这次上传正在整理" : "照片池正在开工";
+    uploadStatus.textContent = `${prefix}：${counts.preparing} 张做预览，${counts.processing} 张认人，${counts.queued} 张排队`;
   } else if (counts.failed) {
-    uploadStatus.textContent = `基本整理好了，有 ${counts.failed} 张需要稍后手动看一眼`;
+    const summary = photoResultSummary(targetPhotos);
+    uploadStatus.textContent = `${summary || "基本整理好了"}，有 ${counts.failed} 张需要稍后手动看一眼`;
+  } else if (batchPhotos.length) {
+    uploadStatus.textContent = photoResultSummary(batchPhotos);
   } else {
     uploadStatus.textContent = "";
   }
@@ -159,20 +191,39 @@ function pickFolderCoverPhoto(folder, photos) {
   return photos.find((photo) => photoFolderIds(photo).length === 1) || photos[0];
 }
 
+function folderCoverUrl(folder, photo) {
+  if (!photo) return "";
+  if (folder.id === "group-photo" || folder.id === "no-face") {
+    return photo.coverUrl || photo.cardUrl || photo.url;
+  }
+  return photo.faceUrl || photo.coverUrl || photo.cardUrl || photo.url;
+}
+
+function backToFolderList() {
+  if (!state.currentFolderId) return;
+  state.currentFolderId = "";
+  render();
+}
+
 function render() {
   albumList.innerHTML = "";
   state.albums.forEach((album) => {
-    const item = document.createElement("button");
+    const item = document.createElement("div");
     item.className = `album-item${album.id === state.currentAlbumId ? " active" : ""}`;
-    item.type = "button";
     item.innerHTML = `
-      <strong>${escapeHtml(album.name)}</strong>
-      <span>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</span>
+      <button class="album-select" type="button" aria-label="打开 ${escapeHtml(album.name)}">
+        <strong>${escapeHtml(album.name)}</strong>
+        <span>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</span>
+      </button>
+      <button class="album-delete" type="button" aria-label="删除 ${escapeHtml(album.name)}">删</button>
     `;
-    item.addEventListener("click", () => {
+    item.querySelector(".album-select").addEventListener("click", () => {
       state.currentAlbumId = album.id;
       state.currentFolderId = "";
       render();
+    });
+    item.querySelector(".album-delete").addEventListener("click", () => {
+      deleteAlbum(album.id).catch((error) => alert(error.message));
     });
     albumList.appendChild(item);
   });
@@ -249,16 +300,16 @@ function renderFolders(album) {
         </div>
         <div class="folder-actions">
           <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folderName)}">
-            <button class="secondary" type="button">下载</button>
+            <button class="secondary icon-button" type="button" aria-label="下载 ${escapeHtml(folderName)}">↓</button>
           </a>
-          <button class="secondary danger delete-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">删除</button>
+          <button class="secondary danger delete-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" aria-label="删除 ${escapeHtml(folderName)}">删</button>
         </div>
       </div>
       ${
         coverPhoto
           ? `
             <figure class="folder-cover">
-              <img src="${coverPhoto.coverUrl || coverPhoto.cardUrl || coverPhoto.url}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" decoding="async" />
+              <img src="${folderCoverUrl(folder, coverPhoto)}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" decoding="async" />
               <figcaption>
                 <strong>${escapeHtml(coverPhoto.originalName)}</strong>
                 <span>${escapeHtml(coverPhoto.uploader)}</span>
@@ -312,9 +363,9 @@ function renderFolderDetail(album, folder) {
         <p>${photos.length} 张照片 · 这里可能藏着朋友拍到的你</p>
       </div>
       <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download">
-        <button type="button">下载文件夹</button>
+        <button type="button" aria-label="下载文件夹">下载</button>
       </a>
-      <button id="deleteCurrentFolder" class="secondary danger" type="button">删除文件夹</button>
+      <button id="deleteCurrentFolder" class="secondary danger" type="button" aria-label="删除文件夹">删</button>
     </div>
     <div class="correction-panel">
       <div>
@@ -350,9 +401,8 @@ function renderFolderDetail(album, folder) {
                     .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`)
                     .join("")}
                 </select>
-                <button class="secondary move-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">移动</button>
-                <button class="secondary reclassify-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">重新识别</button>
-                <button class="secondary danger delete-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">删除</button>
+                <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
+                <button class="secondary danger delete-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
               </div>
             </article>
           `,
@@ -362,8 +412,7 @@ function renderFolderDetail(album, folder) {
   `;
 
   $("#backToFolders").addEventListener("click", () => {
-    state.currentFolderId = "";
-    render();
+    backToFolderList();
   });
 
   $("#saveFolderName").addEventListener("click", () => {
@@ -418,14 +467,6 @@ function renderFolderDetail(album, folder) {
     });
   });
 
-  folderDetail.querySelectorAll(".reclassify-photo").forEach((button) => {
-    button.addEventListener("click", () => {
-      reclassifyPhoto(album.id, button.dataset.photoId).catch((error) => {
-        $("#correctionStatus").textContent = error.message;
-      });
-    });
-  });
-
   folderDetail.querySelectorAll(".delete-photo").forEach((button) => {
     button.addEventListener("click", () => {
       deletePhoto(album.id, button.dataset.photoId).catch((error) => {
@@ -459,7 +500,7 @@ function renderAllPhotos(album) {
                   <small>${escapeHtml([photoStatusText(photo) || photoDisplayFolderNames(photo).join(" / "), photo.uploader].filter(Boolean).join(" · "))}</small>
                 </span>
               </button>
-              <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}">删除</button>
+              <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
             </article>
           `,
         )
@@ -478,6 +519,24 @@ function renderAllPhotos(album) {
       deletePhoto(album.id, badge.dataset.photoId).catch((error) => alert(error.message));
     });
   });
+}
+
+async function deleteAlbum(albumId) {
+  const album = state.albums.find((item) => item.id === albumId);
+  if (!album) return;
+  const message =
+    `确定删除一级相册“${album.name}”吗？\n\n` +
+    `这个操作会物理删除该相册内的 ${album.photos.length} 张照片、缩略图和下载缓存，删除后无法从页面恢复。`;
+  if (!window.confirm(message)) return;
+  await api(`/api/albums/${pathPart(albumId)}`, {
+    method: "DELETE",
+  });
+  state.albums = state.albums.filter((item) => item.id !== albumId);
+  if (state.currentAlbumId === albumId) {
+    state.currentAlbumId = state.albums[0] ? state.albums[0].id : "";
+    state.currentFolderId = "";
+  }
+  render();
 }
 
 async function deleteFolder(albumId, folderId) {
@@ -583,18 +642,6 @@ async function deletePhoto(albumId, photoId) {
   render();
 }
 
-async function reclassifyPhoto(albumId, photoId) {
-  $("#correctionStatus").textContent = "正在重新确认这张照片里是谁...";
-  const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/reclassify`, {
-    method: "POST",
-  });
-  state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
-  const updatedAlbum = payload.album;
-  const movedPhoto = updatedAlbum.photos.find((photo) => photo.id === photoId);
-  state.currentFolderId = movedPhoto ? photoFolderIds(movedPhoto)[0] : state.currentFolderId;
-  render();
-}
-
 function openPhotoViewer(photo) {
   viewerImage.src = photo.url;
   viewerImage.alt = photo.originalName;
@@ -642,6 +689,10 @@ async function uploadPhotos(event) {
       body: form,
     });
     state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+    state.lastUpload = {
+      albumId: payload.album.id,
+      photoIds: (payload.photos || []).map((photo) => photo.id),
+    };
     photosInput.value = "";
     selectedFiles.textContent = defaultSelectedFilesText();
     uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人`;
@@ -715,6 +766,23 @@ folders.addEventListener("keydown", (event) => {
   event.preventDefault();
   state.currentFolderId = folder.dataset.folderId;
   render();
+});
+
+folderDetail.addEventListener("touchstart", (event) => {
+  if (!state.currentFolderId || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  state.touchStart = { x: touch.clientX, y: touch.clientY };
+});
+
+folderDetail.addEventListener("touchend", (event) => {
+  if (!state.currentFolderId || !state.touchStart || event.changedTouches.length !== 1) return;
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - state.touchStart.x;
+  const dy = touch.clientY - state.touchStart.y;
+  state.touchStart = null;
+  if (Math.abs(dx) >= 80 && Math.abs(dy) <= 70) {
+    backToFolderList();
+  }
 });
 
 closeViewer.addEventListener("click", () => {
