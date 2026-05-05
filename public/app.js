@@ -9,6 +9,8 @@ const state = {
   uploadExpanded: false,
   allPhotosOpen: false,
   allPhotosLimit: 12,
+  viewerToken: 0,
+  viewerPhotoId: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -755,21 +757,40 @@ async function deletePhoto(albumId, photoId) {
   if (currentAlbum && state.currentFolderId && !currentAlbum.folders.some((folder) => folder.id === state.currentFolderId)) {
     state.currentFolderId = "";
   }
-  if (photoViewer.open && viewerImage.src.includes(photo.url)) {
+  if (photoViewer.open && state.viewerPhotoId === photo.id) {
     photoViewer.close();
   }
   render();
 }
 
 function openPhotoViewer(photo) {
-  viewerImage.src = photo.url;
-  viewerImage.alt = photo.originalName;
-  viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
+  const token = state.viewerToken + 1;
+  state.viewerToken = token;
+  state.viewerPhotoId = photo.id;
+  photoViewer.classList.add("loading");
+  viewerImage.removeAttribute("src");
+  viewerImage.alt = "";
+  viewerMeta.textContent = "正在打开原图...";
   if (typeof photoViewer.showModal === "function") {
     photoViewer.showModal();
   } else {
     photoViewer.setAttribute("open", "");
   }
+
+  const nextImage = new Image();
+  nextImage.onload = () => {
+    if (state.viewerToken !== token) return;
+    viewerImage.src = photo.url;
+    viewerImage.alt = photo.originalName;
+    viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
+    photoViewer.classList.remove("loading");
+  };
+  nextImage.onerror = () => {
+    if (state.viewerToken !== token) return;
+    viewerMeta.textContent = "原图加载失败，请稍后再试";
+    photoViewer.classList.remove("loading");
+  };
+  nextImage.src = photo.url;
 }
 
 async function createAlbum(event) {

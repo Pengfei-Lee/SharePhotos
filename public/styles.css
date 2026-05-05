@@ -1561,9 +1561,28 @@ label {
 .photo-viewer img {
   display: block;
   width: 100%;
+  min-height: min(68vh, 680px);
   max-height: calc(100vh - 112px);
   object-fit: contain;
   background: #101619;
+}
+
+.photo-viewer.loading img {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05)),
+    #101619;
+  background-size: 220% 100%;
+  animation: viewer-loading 1.1s ease-in-out infinite;
+}
+
+@keyframes viewer-loading {
+  from {
+    background-position: 120% 0;
+  }
+
+  to {
+    background-position: -120% 0;
+  }
 }
 
 .viewer-close {
