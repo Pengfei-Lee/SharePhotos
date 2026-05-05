@@ -473,6 +473,14 @@ def rename_folder(album, folder_id, name):
     return folder, ""
 
 
+def rename_album(album, name):
+    new_name = (name or "").strip()[:80]
+    if not new_name:
+        return "名称不能为空"
+    album["name"] = new_name
+    return ""
+
+
 def prune_empty_folders(album):
     used = set()
     for photo in album.get("photos", []):
@@ -849,6 +857,9 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
             return self.upload_photos(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/rename$", path)
+        if match:
+            return self.rename_album_request(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/reanalyze$", path)
         if match:
             return self.reanalyze_album_request(match.group(1))
@@ -989,6 +1000,21 @@ class AppHandler(BaseHTTPRequestHandler):
             if not album:
                 return self.send_error_json("Album not found", 404)
             _, rename_error = rename_folder(album, folder_id, payload.get("name") or "")
+            if rename_error:
+                return self.send_error_json(rename_error)
+            save_db(db)
+        return self.send_json({"album": public_album(album)})
+
+    def rename_album_request(self, album_id):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            rename_error = rename_album(album, payload.get("name") or "")
             if rename_error:
                 return self.send_error_json(rename_error)
             save_db(db)

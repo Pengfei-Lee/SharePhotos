@@ -280,6 +280,7 @@ function renderHomeAlbums() {
           <small>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</small>
         </span>
       </button>
+      <button class="home-album-rename" type="button" aria-label="重命名 ${escapeHtml(album.name)}">名</button>
       <button class="home-album-delete" type="button" aria-label="删除 ${escapeHtml(album.name)}">删</button>
     `;
     card.querySelector(".home-album-open").addEventListener("click", () => {
@@ -291,6 +292,11 @@ function renderHomeAlbums() {
     });
     card.querySelector(".home-album-delete").addEventListener("click", () => {
       deleteAlbum(album.id).catch((error) => alert(error.message));
+    });
+    card.querySelector(".home-album-rename").addEventListener("click", () => {
+      const name = window.prompt("给这个相册换个名字", album.name);
+      if (name === null) return;
+      renameAlbum(album.id, name).catch((error) => alert(error.message));
     });
     homeAlbums.appendChild(card);
   });
@@ -430,6 +436,7 @@ function renderFolders(album) {
           <p>${photos.length} 张 · 最近 ${formatDate(Math.max(...photos.map((photo) => photo.createdAt)))}</p>
         </div>
         <div class="folder-actions">
+          <button class="secondary rename-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" data-folder-name="${escapeHtml(folderName)}" aria-label="重命名 ${escapeHtml(folderName)}">名</button>
           <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folderName)}">
             <button class="secondary icon-button" type="button" aria-label="下载 ${escapeHtml(folderName)}">↓</button>
           </a>
@@ -457,6 +464,16 @@ function renderFolders(album) {
   folders.insertAdjacentElement("afterend", toggleUploadForm);
   toggleUploadForm.insertAdjacentElement("afterend", uploadForm);
   uploadForm.insertAdjacentElement("afterend", allPhotos);
+
+  folders.querySelectorAll(".rename-folder").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const currentName = button.dataset.folderName || "";
+      const name = window.prompt("给这个小相册换个名字", currentName);
+      if (name === null) return;
+      renameFolderById(album.id, button.dataset.folderId, name).catch((error) => alert(error.message));
+    });
+  });
 
   folders.querySelectorAll(".delete-folder").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -664,6 +681,20 @@ async function deleteAlbum(albumId) {
   render();
 }
 
+async function renameAlbum(albumId, name) {
+  const nextName = (name || "").trim();
+  if (!nextName) {
+    throw new Error("名称不能为空");
+  }
+  const payload = await api(`/api/albums/${pathPart(albumId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nextName }),
+  });
+  state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+  render();
+}
+
 async function deleteFolder(albumId, folderId) {
   const album = state.albums.find((item) => item.id === albumId);
   const folder = album ? album.folders.find((item) => item.id === folderId) : null;
@@ -683,6 +714,20 @@ async function deleteFolder(albumId, folderId) {
   if (state.currentFolderId === folderId) {
     state.currentFolderId = "";
   }
+  render();
+}
+
+async function renameFolderById(albumId, folderId, name) {
+  const nextName = (name || "").trim();
+  if (!nextName) {
+    throw new Error("名称不能为空");
+  }
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(folderId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nextName }),
+  });
+  state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
   render();
 }
 

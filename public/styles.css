@@ -671,18 +671,28 @@ label {
   font-weight: 800;
 }
 
+.home-album-rename,
 .home-album-delete {
   position: absolute;
-  right: 14px;
   bottom: 16px;
   width: 42px;
   min-width: 42px;
   min-height: 42px;
   border-radius: 50%;
-  background: #fae9e8;
-  color: var(--danger);
   box-shadow: none;
   padding: 0;
+}
+
+.home-album-rename {
+  right: 62px;
+  background: #eaf4f0;
+  color: var(--accent-strong);
+}
+
+.home-album-delete {
+  right: 14px;
+  background: #fae9e8;
+  color: var(--danger);
 }
 
 .trip-board {
@@ -1188,6 +1198,10 @@ label {
 
 .folder-actions .danger {
   color: var(--danger);
+}
+
+.folder-actions .rename-folder {
+  color: var(--accent-strong);
 }
 
 .folder h3 {
