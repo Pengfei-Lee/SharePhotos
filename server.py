@@ -4,6 +4,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import queue
 import re
 import shutil
 import threading
@@ -14,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/sharephotos-matplotlib")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/sharephotos-matplotlib")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 import cv2
@@ -28,15 +29,24 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("DATA_DIR", str(ROOT / "data")))
 UPLOADS = DATA / "uploads"
+THUMBS = DATA / "thumbs"
 DB_FILE = DATA / "db.json"
 LOCK = threading.Lock()
+JOB_QUEUE = queue.Queue()
+QUEUED_PHOTOS = set()
+THUMB_SPECS = {
+    "tiny": (96, 72),
+    "card": (420, 78),
+    "cover": (900, 82),
+}
 
 
 def ensure_store():
     DATA.mkdir(exist_ok=True)
     UPLOADS.mkdir(exist_ok=True)
+    THUMBS.mkdir(exist_ok=True)
     if not DB_FILE.exists():
         save_db({"albums": []})
 
@@ -61,6 +71,108 @@ def slugify(value):
     return value or "album"
 
 
+def remove_thumbnails(album_id, stored_name=None):
+    album_dir = THUMBS / album_id
+    if not album_dir.exists():
+        return
+    if stored_name is None:
+        shutil.rmtree(album_dir)
+        return
+    for size_dir in album_dir.iterdir():
+        target = size_dir / ("%s.jpg" % stored_name)
+        if target.exists():
+            target.unlink()
+
+
+def generate_thumbnail(album_id, stored_name, size):
+    if size not in THUMB_SPECS:
+        return None
+    source = UPLOADS / album_id / stored_name
+    if not source.exists():
+        return None
+    max_width, quality = THUMB_SPECS[size]
+    target_dir = THUMBS / album_id / size
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / ("%s.jpg" % stored_name)
+    if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+        return target
+
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    height, width = image.shape[:2]
+    scale = min(1.0, max_width / max(width, 1))
+    if scale < 1.0:
+        image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        return None
+    target.write_bytes(encoded.tobytes())
+    return target
+
+
+def generate_all_thumbnails(album_id, stored_name):
+    for size in THUMB_SPECS:
+        generate_thumbnail(album_id, stored_name, size)
+
+
+def detect_primary_face_box(image):
+    app = get_insightface_app()
+    if app:
+        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        if faces:
+            face = max(faces, key=lambda item: bbox_area(item.bbox))
+            x1, y1, x2, y2 = [float(value) for value in face.bbox]
+            return x1, y1, x2, y2
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces = FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=5, minSize=(32, 32))
+    if len(faces) == 0:
+        return None
+    x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
+    return float(x), float(y), float(x + w), float(y + h)
+
+
+def generate_face_thumbnail(album_id, stored_name):
+    source = UPLOADS / album_id / stored_name
+    if not source.exists():
+        return None
+    target_dir = THUMBS / album_id / "face"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / ("%s.jpg" % stored_name)
+    if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+        return target
+
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    box = detect_primary_face_box(image)
+    if not box:
+        return None
+
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = box
+    face_w = max(1.0, x2 - x1)
+    face_h = max(1.0, y2 - y1)
+    size = max(face_w, face_h) * 2.15
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2 - face_h * 0.08
+    left = int(max(0, round(cx - size / 2)))
+    top = int(max(0, round(cy - size / 2)))
+    right = int(min(width, round(cx + size / 2)))
+    bottom = int(min(height, round(cy + size / 2)))
+    if right <= left or bottom <= top:
+        return None
+
+    crop = image[top:bottom, left:right]
+    crop = cv2.resize(crop, (420, 420), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+    if not ok:
+        return None
+    target.write_bytes(encoded.tobytes())
+    return target
+
+
 def find_album(db, album_id):
     for album in db["albums"]:
         if album["id"] == album_id:
@@ -68,12 +180,39 @@ def find_album(db, album_id):
     return None
 
 
+def thumb_url(photo, size):
+    return "/thumbs/%s/%s/%s" % (photo.get("albumId", ""), size, quote(photo.get("storedName", "")))
+
+
 def public_album(album):
     visible = dict(album)
     visible["folders"] = []
     for folder in album.get("folders", []):
+        if folder.get("id") == "pending":
+            continue
         item = {key: value for key, value in folder.items() if key not in {"embedding", "embeddingCount", "embeddingEngine"}}
+        if item.get("id") == "no-face" or item.get("name") == "未识别人脸":
+            item["name"] = "其他"
         visible["folders"].append(item)
+    folder_names = {folder["id"]: folder["name"] for folder in visible["folders"]}
+    visible["photos"] = []
+    for photo in album.get("photos", []):
+        item = dict(photo)
+        item["albumId"] = album["id"]
+        item["tinyUrl"] = thumb_url(item, "tiny")
+        item["cardUrl"] = thumb_url(item, "card")
+        item["coverUrl"] = thumb_url(item, "cover")
+        item["faceUrl"] = "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
+        ids = photo_folder_ids(item)
+        if ids:
+            original_names = item.get("folderNames", [])
+            item["folderNames"] = [
+                folder_names.get(folder_id, original_names[index] if index < len(original_names) else "")
+                for index, folder_id in enumerate(ids)
+            ]
+            if item.get("folderId") in folder_names:
+                item["folderName"] = folder_names[item["folderId"]]
+        visible["photos"].append(item)
     return visible
 
 
@@ -271,13 +410,21 @@ def create_folder(album, name, embedding=None, folder_id=None, engine=None):
 
 
 def get_no_face_folder(album):
-    folder = next((item for item in album.get("folders", []) if item["id"] == "no-face" or item["name"] == "未识别人脸"), None)
-    return folder or create_folder(album, "未识别人脸", folder_id="no-face")
+    folder = next((item for item in album.get("folders", []) if item["id"] == "no-face" or item["name"] in {"未识别人脸", "其他"}), None)
+    if folder:
+        folder["name"] = "其他"
+        return folder
+    return create_folder(album, "其他", folder_id="no-face")
 
 
 def get_group_folder(album):
     folder = next((item for item in album.get("folders", []) if item["id"] == "group-photo" or item["name"] == "合照"), None)
     return folder or create_folder(album, "合照", folder_id="group-photo")
+
+
+def get_pending_folder(album):
+    folder = next((item for item in album.get("folders", []) if item["id"] == "pending"), None)
+    return folder or create_folder(album, "等待识别", folder_id="pending")
 
 
 def photo_folder_ids(photo):
@@ -344,6 +491,7 @@ def remove_photo(album, photo_id):
         source = UPLOADS / album["id"] / photo["storedName"]
         if source.exists():
             source.unlink()
+        remove_thumbnails(album["id"], photo["storedName"])
     prune_empty_folders(album)
     return photo, ""
 
@@ -386,6 +534,7 @@ def remove_folder(album, folder_id):
         if source.exists():
             source.unlink()
             unlinked_count += 1
+        remove_thumbnails(album["id"], photo["storedName"])
 
     album["folders"] = [item for item in album.get("folders", []) if item["id"] != folder_id]
     prune_empty_folders(album)
@@ -401,6 +550,7 @@ def remove_album_files(album_id):
     album_dir = UPLOADS / album_id
     if album_dir.exists():
         shutil.rmtree(album_dir)
+    remove_thumbnails(album_id)
     for zip_path in DATA.glob("%s-*.zip" % album_id):
         if zip_path.exists():
             zip_path.unlink()
@@ -502,6 +652,84 @@ def reanalyze_album(album):
     return album
 
 
+def enqueue_photo_job(album_id, photo_id):
+    key = (album_id, photo_id)
+    if key in QUEUED_PHOTOS:
+        return
+    QUEUED_PHOTOS.add(key)
+    JOB_QUEUE.put(key)
+
+
+def enqueue_pending_jobs():
+    with LOCK:
+        db = load_db()
+        for album in db.get("albums", []):
+            for photo in album.get("photos", []):
+                if photo.get("status") in {"queued", "preparing", "processing"}:
+                    photo["status"] = "queued"
+                    enqueue_photo_job(album["id"], photo["id"])
+        save_db(db)
+
+
+def process_photo_job(album_id, photo_id):
+    with LOCK:
+        db = load_db()
+        album = find_album(db, album_id)
+        if not album:
+            return
+        photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+        if not photo:
+            return
+        photo["status"] = "preparing"
+        photo["classification"] = "正在生成预览图"
+        sync_photo_folder_names(album)
+        save_db(db)
+
+    generate_all_thumbnails(album_id, photo["storedName"])
+
+    with LOCK:
+        db = load_db()
+        album = find_album(db, album_id)
+        if not album:
+            return
+        photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+        if not photo:
+            return
+        photo["status"] = "processing"
+        photo["classification"] = "正在识别人脸"
+        sync_photo_folder_names(album)
+        save_db(db)
+
+    with LOCK:
+        db = load_db()
+        album = find_album(db, album_id)
+        if not album:
+            return
+        photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+        if not photo:
+            return
+        image_path = UPLOADS / album_id / photo["storedName"]
+        try:
+            photo_folders, classification_note = classify_photo(album, image_path)
+            photo["status"] = "ready"
+            apply_photo_folders(photo, photo_folders, classification_note)
+        except Exception as error:
+            photo["status"] = "failed"
+            apply_photo_folders(photo, [get_no_face_folder(album)], "识别失败：%s" % error)
+        prune_empty_folders(album)
+        save_db(db)
+
+
+def photo_worker():
+    while True:
+        album_id, photo_id = JOB_QUEUE.get()
+        try:
+            process_photo_job(album_id, photo_id)
+        finally:
+            QUEUED_PHOTOS.discard((album_id, photo_id))
+            JOB_QUEUE.task_done()
+
+
 def assign_face_folder(album, embedding, engine):
     folder = choose_face_folder(album, embedding, engine)
     if folder:
@@ -568,6 +796,12 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.serve_file(PUBLIC / "index.html")
         if path.startswith("/assets/"):
             return self.serve_file(PUBLIC / path.removeprefix("/assets/"))
+        match = re.match(r"^/thumbs/([^/]+)/(tiny|card|cover)/([^/]+)$", path)
+        if match:
+            return self.serve_thumbnail(match.group(1), match.group(2), match.group(3))
+        match = re.match(r"^/face-thumbs/([^/]+)/([^/]+)$", path)
+        if match:
+            return self.serve_face_thumbnail(match.group(1), match.group(2))
         if path.startswith("/uploads/"):
             return self.serve_file(UPLOADS / path.removeprefix("/uploads/"))
         if path == "/api/albums":
@@ -677,6 +911,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
             album_dir = UPLOADS / album_id
             album_dir.mkdir(parents=True, exist_ok=True)
+            pending_folder = get_pending_folder(album)
+            queued = []
             for idx, item in enumerate(files):
                 original = Path(item.filename).name
                 suffix = Path(original).suffix.lower()
@@ -688,7 +924,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 with target.open("wb") as out:
                     shutil.copyfileobj(item.file, out)
 
-                photo_folders, classification_note = classify_photo(album, target)
                 photo = {
                     "id": uuid.uuid4().hex[:12],
                     "originalName": original,
@@ -696,12 +931,16 @@ class AppHandler(BaseHTTPRequestHandler):
                     "url": "/uploads/%s/%s" % (album_id, stored_name),
                     "uploader": uploader,
                     "createdAt": int(time.time()),
+                    "status": "queued",
                 }
-                apply_photo_folders(photo, photo_folders, classification_note)
+                apply_photo_folders(photo, [pending_folder], "已上传，等待后台识别")
                 album["photos"].append(photo)
                 created.append(photo)
+                queued.append(photo["id"])
             save_db(db)
-        return self.send_json({"photos": created}, 201)
+        for photo_id in queued:
+            enqueue_photo_job(album_id, photo_id)
+        return self.send_json({"photos": created, "album": public_album(album), "queued": len(created)}, 202)
 
     def read_json_body(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -880,9 +1119,39 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def serve_thumbnail(self, album_id, size, stored_name):
+        stored_name = Path(stored_name).name
+        path = generate_thumbnail(album_id, stored_name, size)
+        if not path:
+            return self.serve_file(UPLOADS / album_id / stored_name)
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "public, max-age=31536000")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def serve_face_thumbnail(self, album_id, stored_name):
+        stored_name = Path(stored_name).name
+        path = generate_face_thumbnail(album_id, stored_name)
+        if not path:
+            path = generate_thumbnail(album_id, stored_name, "cover")
+        if not path:
+            return self.serve_file(UPLOADS / album_id / stored_name)
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "public, max-age=31536000")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 def main():
     ensure_store()
+    threading.Thread(target=photo_worker, daemon=True).start()
+    enqueue_pending_jobs()
     port = int(os.environ.get("PORT", "8000"))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), AppHandler)
     print("Shared Album Demo running at http://localhost:%d" % port)
