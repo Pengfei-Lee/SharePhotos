@@ -9,6 +9,13 @@
   <body>
     <main class="shell">
       <aside class="sidebar">
+        <div class="album-context" aria-live="polite">
+          <button id="backToHome" class="secondary" type="button">返回</button>
+          <div>
+            <strong id="albumContextName">相册</strong>
+            <span>回到首页</span>
+          </div>
+        </div>
         <div class="brand">
           <span class="brand-mark">SA</span>
           <div>
@@ -16,14 +23,13 @@
             <p>朋友拍的你，一键收齐</p>
           </div>
         </div>
-
-        <form id="albumForm" class="new-album">
-          <label for="albumName">这次出游叫什么</label>
-          <div class="inline">
-            <input id="albumName" name="name" placeholder="例如：重庆周末小队" autocomplete="off" />
-            <button type="submit">开局</button>
+        <div class="subalbum-context" aria-live="polite">
+          <button id="mobileBackToFolders" class="secondary" type="button">返回</button>
+          <div>
+            <strong id="subalbumAlbumName">相册</strong>
+            <span>切换小相册</span>
           </div>
-        </form>
+        </div>
 
         <nav id="albumList" class="album-list" aria-label="相册列表"></nav>
       </aside>
@@ -39,28 +45,17 @@
 
         <section id="emptyState" class="empty">
           <div>
-            <h3>先开一个朋友照片局</h3>
-            <p>出去玩时，每个人手机里都装着别人视角的精彩瞬间。建好相册后，把页面发给同行朋友，大家各自上传，系统会自动按人物整理，回头直接按人下载。</p>
+            <h3>暂无相册</h3>
+            <p>创建一个相册后，就可以邀请朋友一起上传照片。</p>
           </div>
         </section>
 
+        <section id="homeAlbums" class="home-albums hidden"></section>
+
         <section id="albumPanel" class="album-panel hidden">
-          <section class="trip-board">
-            <div class="trip-copy">
-              <p class="eyebrow">Trip exchange station</p>
-              <h3>别再一张张微信传图了</h3>
-              <p>朋友各自拍、一起上传、后台认人分组。最后每个人打开自己的小相册，把别人拍到自己的照片整包带走。</p>
-            </div>
-            <div class="trip-steps" aria-label="使用流程">
-              <span><b>1</b>发链接给同行朋友</span>
-              <span><b>2</b>各自上传手机照片</span>
-              <span><b>3</b>按人下载照片包</span>
-            </div>
-            <div class="share-tools">
-              <button id="copyShareLink" class="secondary" type="button">复制分享链接</button>
-              <span id="shareLinkStatus">同一 Wi-Fi 下打开更方便</span>
-            </div>
-          </section>
+          <div id="folders" class="folders"></div>
+
+          <button id="toggleUploadForm" class="upload-toggle" type="button">上传照片</button>
 
           <form id="uploadForm" class="upload-card">
             <div class="upload-intro">
@@ -83,12 +78,10 @@
             </label>
             <div class="upload-actions">
               <button id="uploadButton" type="submit">加入照片池</button>
-              <button id="reanalyzeButton" class="secondary" type="button">重新分一遍人</button>
               <span id="uploadStatus"></span>
             </div>
           </form>
 
-          <div id="folders" class="folders"></div>
           <section id="allPhotos" class="album-section"></section>
           <section id="folderDetail" class="folder-detail hidden"></section>
         </section>
@@ -99,6 +92,22 @@
       <button id="closeViewer" class="viewer-close" type="button" aria-label="关闭">×</button>
       <img id="viewerImage" alt="" />
       <div id="viewerMeta" class="viewer-meta"></div>
+    </dialog>
+
+    <button id="openCreateAlbum" class="create-album-fab" type="button">创建新相册</button>
+
+    <dialog id="createAlbumDialog" class="create-album-dialog">
+      <form id="albumForm" method="dialog" class="create-album-form">
+        <div>
+          <p class="eyebrow">New album</p>
+          <h3>这次出游叫什么</h3>
+        </div>
+        <input id="albumName" name="name" placeholder="例如：重庆周末小队" autocomplete="off" />
+        <div class="dialog-actions">
+          <button id="cancelCreateAlbum" class="secondary" type="button">取消</button>
+          <button type="submit">创建</button>
+        </div>
+      </form>
     </dialog>
 
     <script src="/assets/app.js"></script>

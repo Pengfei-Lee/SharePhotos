@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/sharephotos-matplotlib")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/sharephotos-matplotlib")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 import cv2
@@ -29,7 +29,7 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("DATA_DIR", str(ROOT / "data")))
 UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
 DB_FILE = DATA / "db.json"

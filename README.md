@@ -28,6 +28,40 @@ http://localhost:8000
 http://你的电脑IP:8000
 ```
 
+## Docker 部署
+
+服务器只需要安装 Docker 和 Docker Compose。首次启动会构建镜像，并把照片数据保存在项目目录的 `data/`，把 InsightFace 模型缓存在 `models/`。
+
+```bash
+git clone git@github.com:Pengfei-Lee/SharePhotos.git
+cd SharePhotos
+docker compose up -d --build
+```
+
+打开：
+
+```text
+http://服务器IP:8000
+```
+
+常用命令：
+
+```bash
+docker compose logs -f
+docker compose restart
+docker compose down
+docker compose up -d --build
+```
+
+升级代码：
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+不要删除 `data/`，里面有照片、缩略图和 `db.json`；不要删除 `models/`，否则下次启动会重新下载人脸识别模型。
+
 ## 验证路径
 
 1. 创建一个相册。

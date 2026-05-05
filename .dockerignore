@@ -1,0 +1,9 @@
+.git
+.DS_Store
+.idea
+.vscode
+__pycache__/
+*.pyc
+data/
+models/
+*.log

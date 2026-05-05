@@ -6,24 +6,35 @@ const state = {
   pollTimer: 0,
   lastUpload: null,
   touchStart: null,
+  uploadExpanded: false,
+  allPhotosOpen: false,
+  allPhotosLimit: 12,
 };
 
 const $ = (selector) => document.querySelector(selector);
 
 const albumForm = $("#albumForm");
 const albumName = $("#albumName");
+const openCreateAlbum = $("#openCreateAlbum");
+const createAlbumDialog = $("#createAlbumDialog");
+const cancelCreateAlbum = $("#cancelCreateAlbum");
 const albumList = $("#albumList");
+const sidebar = $(".sidebar");
+const albumContextName = $("#albumContextName");
+const backToHomeButton = $("#backToHome");
+const subalbumAlbumName = $("#subalbumAlbumName");
+const mobileBackToFolders = $("#mobileBackToFolders");
+const topbar = $(".topbar");
 const currentAlbumTitle = $("#currentAlbumTitle");
 const stats = $("#stats");
 const emptyState = $("#emptyState");
+const homeAlbums = $("#homeAlbums");
 const albumPanel = $("#albumPanel");
 const uploadForm = $("#uploadForm");
+const toggleUploadForm = $("#toggleUploadForm");
 const photosInput = $("#photos");
 const selectedFiles = $("#selectedFiles");
 const uploadStatus = $("#uploadStatus");
-const copyShareLink = $("#copyShareLink");
-const shareLinkStatus = $("#shareLinkStatus");
-const reanalyzeButton = $("#reanalyzeButton");
 const allPhotos = $("#allPhotos");
 const folders = $("#folders");
 const folderDetail = $("#folderDetail");
@@ -54,12 +65,9 @@ function formatDate(seconds) {
   });
 }
 
-async function loadAlbums(selectFirst = true) {
+async function loadAlbums() {
   const payload = await api("/api/albums");
   state.albums = payload.albums;
-  if (!state.currentAlbumId && selectFirst && state.albums[0]) {
-    state.currentAlbumId = state.albums[0].id;
-  }
   render();
 }
 
@@ -202,61 +210,177 @@ function folderCoverUrl(folder, photo) {
 function backToFolderList() {
   if (!state.currentFolderId) return;
   state.currentFolderId = "";
+  state.allPhotosOpen = false;
   render();
 }
 
-function render() {
+function returnToHome() {
+  state.currentAlbumId = "";
+  state.currentFolderId = "";
+  state.allPhotosOpen = false;
+  state.uploadExpanded = false;
+  render();
+}
+
+function renderPrimaryAlbumNav() {
   albumList.innerHTML = "";
+  if (!state.currentAlbumId || !state.currentFolderId) {
+    albumList.classList.add("hidden");
+    return;
+  }
+}
+
+function renderHomeAlbums() {
+  homeAlbums.innerHTML = "";
+  if (!state.albums.length) {
+    homeAlbums.classList.add("hidden");
+    emptyState.classList.remove("hidden");
+    return;
+  }
+
+  emptyState.classList.add("hidden");
+  homeAlbums.classList.remove("hidden");
+  homeAlbums.insertAdjacentHTML("beforeend", `<div class="section-heading"><h3>相册</h3><p>${state.albums.length} 个一级相册</p></div>`);
   state.albums.forEach((album) => {
-    const item = document.createElement("div");
-    item.className = `album-item${album.id === state.currentAlbumId ? " active" : ""}`;
-    item.innerHTML = `
-      <button class="album-select" type="button" aria-label="打开 ${escapeHtml(album.name)}">
-        <strong>${escapeHtml(album.name)}</strong>
-        <span>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</span>
+    const folderPreviews = sortedFolders(album)
+      .map((folder) => {
+        const folderPhotos = album.photos.filter((photo) => photoInFolder(photo, folder.id)).sort((a, b) => b.createdAt - a.createdAt);
+        const coverPhoto = pickFolderCoverPhoto(folder, folderPhotos);
+        return { folder, photo: coverPhoto };
+      })
+      .filter((item) => item.photo)
+      .slice(0, 8);
+    const card = document.createElement("section");
+    card.className = "home-album-card";
+    card.innerHTML = `
+      <button class="home-album-open" type="button" aria-label="进入 ${escapeHtml(album.name)}">
+        <span class="home-album-faces ${folderPreviews.length ? "" : "empty-cover"}">
+          ${
+            folderPreviews.length
+              ? folderPreviews
+                  .map(
+                    ({ folder, photo }) => `
+                      <span class="home-face">
+                        <img src="${folderCoverUrl(folder, photo)}" alt="${escapeHtml(folderDisplayName(folder))}" loading="lazy" decoding="async" />
+                        <small>${escapeHtml(folderDisplayName(folder))}</small>
+                      </span>
+                    `,
+                  )
+                  .join("")
+              : "<i>暂无子相册</i>"
+          }
+        </span>
+        <span class="home-album-meta">
+          <strong>${escapeHtml(album.name)}</strong>
+          <small>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</small>
+        </span>
       </button>
-      <button class="album-delete" type="button" aria-label="删除 ${escapeHtml(album.name)}">删</button>
+      <button class="home-album-delete" type="button" aria-label="删除 ${escapeHtml(album.name)}">删</button>
     `;
-    item.querySelector(".album-select").addEventListener("click", () => {
+    card.querySelector(".home-album-open").addEventListener("click", () => {
       state.currentAlbumId = album.id;
       state.currentFolderId = "";
+      state.allPhotosOpen = false;
+      state.uploadExpanded = false;
       render();
     });
-    item.querySelector(".album-delete").addEventListener("click", () => {
+    card.querySelector(".home-album-delete").addEventListener("click", () => {
       deleteAlbum(album.id).catch((error) => alert(error.message));
+    });
+    homeAlbums.appendChild(card);
+  });
+}
+
+function renderFolderNav(album, selectedFolder) {
+  albumList.classList.remove("hidden");
+  subalbumAlbumName.textContent = album.name;
+  albumList.innerHTML = "";
+
+  const orderedFolders = sortedFolders(album).sort((a, b) => {
+    if (a.id === selectedFolder.id) return -1;
+    if (b.id === selectedFolder.id) return 1;
+    return 0;
+  });
+
+  orderedFolders.forEach((folder) => {
+    const folderName = folderDisplayName(folder);
+    const count = album.photos.filter((photo) => photoInFolder(photo, folder.id)).length;
+    const item = document.createElement("div");
+    item.className = `album-item subalbum-item${folder.id === selectedFolder.id ? " active" : ""}`;
+    item.innerHTML = `
+      <button class="album-select" type="button" aria-label="切换到 ${escapeHtml(folderName)}">
+        <strong>${escapeHtml(folderName)}</strong>
+        <span>${count} 张照片</span>
+      </button>
+    `;
+    item.querySelector(".album-select").addEventListener("click", () => {
+      state.currentFolderId = folder.id;
+      render();
     });
     albumList.appendChild(item);
   });
+}
+
+function render() {
+  renderPrimaryAlbumNav();
 
   const album = getCurrentAlbum();
   if (!album) {
-    currentAlbumTitle.textContent = "先开一个朋友照片局吧";
+    openCreateAlbum.classList.remove("hidden");
+    sidebar.classList.remove("album-mode", "subalbum-mode");
+    topbar.classList.remove("folder-summary-topbar");
+    currentAlbumTitle.textContent = "请选择或创建一个相册";
     stats.innerHTML = "";
-    emptyState.classList.remove("hidden");
+    renderHomeAlbums();
     albumPanel.classList.add("hidden");
     return;
   }
 
-  currentAlbumTitle.textContent = album.name;
+  openCreateAlbum.classList.add("hidden");
   emptyState.classList.add("hidden");
+  homeAlbums.classList.add("hidden");
   albumPanel.classList.remove("hidden");
-  stats.innerHTML = `
-    <span class="stat">${album.photos.length} 张朋友视角</span>
-    <span class="stat">${album.folders.length} 个可下载小相册</span>
-    <span class="stat">${album.contributors.length} 位参与者</span>
-  `;
   updateUploadProgress(album);
   updatePolling(album);
   const selectedFolder = album.folders.find((folder) => folder.id === state.currentFolderId);
   if (selectedFolder) {
+    const selectedCount = album.photos.filter((photo) => photoInFolder(photo, selectedFolder.id)).length;
+    topbar.classList.add("folder-summary-topbar");
+    currentAlbumTitle.textContent = `${selectedCount} 张照片`;
+    stats.innerHTML = "";
+    sidebar.classList.remove("album-mode");
+    sidebar.classList.add("subalbum-mode");
+    renderFolderNav(album, selectedFolder);
     renderFolderDetail(album, selectedFolder);
   } else {
+    topbar.classList.remove("folder-summary-topbar");
+    currentAlbumTitle.textContent = album.name;
+    stats.innerHTML = `
+      <span class="stat">${album.photos.length} 张朋友视角</span>
+      <span class="stat">${album.folders.length} 个可下载小相册</span>
+      <span class="stat">${album.contributors.length} 位参与者</span>
+    `;
+    albumContextName.textContent = album.name;
+    sidebar.classList.remove("subalbum-mode");
+    sidebar.classList.add("album-mode");
     renderFolders(album);
   }
 }
 
 function renderFolders(album) {
-  uploadForm.classList.remove("hidden");
+  if (state.allPhotosOpen) {
+    uploadForm.classList.add("hidden");
+    toggleUploadForm.classList.add("hidden");
+    folders.classList.add("hidden");
+    folderDetail.classList.add("hidden");
+    allPhotos.classList.remove("hidden");
+    renderAllPhotos(album);
+    return;
+  }
+
+  toggleUploadForm.classList.remove("hidden");
+  uploadForm.classList.toggle("hidden", !state.uploadExpanded);
+  toggleUploadForm.textContent = state.uploadExpanded ? "收起上传" : "上传照片";
   allPhotos.classList.remove("hidden");
   folders.classList.remove("hidden");
   folderDetail.classList.add("hidden");
@@ -271,6 +395,9 @@ function renderFolders(album) {
         </div>
       </section>
     `;
+    folders.insertAdjacentElement("afterend", toggleUploadForm);
+    toggleUploadForm.insertAdjacentElement("afterend", uploadForm);
+    uploadForm.insertAdjacentElement("afterend", allPhotos);
     return;
   }
 
@@ -285,7 +412,6 @@ function renderFolders(album) {
       .filter((photo) => photoInFolder(photo, folder.id))
       .sort((a, b) => b.createdAt - a.createdAt);
     const coverPhoto = pickFolderCoverPhoto(folder, photos);
-    const previewPhotos = photos.filter((photo) => !coverPhoto || photo.id !== coverPhoto.id).slice(0, 4);
     const section = document.createElement("section");
     section.className = "folder";
     section.dataset.folderId = folder.id;
@@ -318,22 +444,14 @@ function renderFolders(album) {
           `
           : ""
       }
-      <div class="thumbs">
-        ${previewPhotos
-          .map(
-            (photo) => `
-              <figure class="photo">
-                <img src="${photo.tinyUrl || photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
-                <span>${escapeHtml(photo.uploader)}</span>
-              </figure>
-            `,
-          )
-          .join("")}
-      </div>
       <button class="open-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">认领看看</button>
     `;
     folders.appendChild(section);
   });
+
+  folders.insertAdjacentElement("afterend", toggleUploadForm);
+  toggleUploadForm.insertAdjacentElement("afterend", uploadForm);
+  uploadForm.insertAdjacentElement("afterend", allPhotos);
 
   folders.querySelectorAll(".delete-folder").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -345,60 +463,32 @@ function renderFolders(album) {
 
 function renderFolderDetail(album, folder) {
   uploadForm.classList.add("hidden");
+  toggleUploadForm.classList.add("hidden");
   allPhotos.classList.add("hidden");
   folders.classList.add("hidden");
   folderDetail.classList.remove("hidden");
 
   const photos = album.photos.filter((photo) => photoInFolder(photo, folder.id));
-  const mergeTargets = album.folders.filter((item) => item.id !== folder.id);
   const photoMoveTargets = album.folders.filter((item) => item.id !== folder.id);
   folderDetail.innerHTML = `
-    <div class="detail-toolbar">
-      <button id="backToFolders" class="secondary" type="button">返回</button>
-      <div class="detail-title">
-        <div class="rename-row">
-          <input id="folderNameInput" value="${escapeHtml(folderDisplayName(folder))}" maxlength="40" aria-label="相册昵称" />
-          <button id="saveFolderName" class="secondary" type="button">保存昵称</button>
-        </div>
-        <p>${photos.length} 张照片 · 这里可能藏着朋友拍到的你</p>
-      </div>
-      <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download">
-        <button type="button" aria-label="下载文件夹">下载</button>
-      </a>
-      <button id="deleteCurrentFolder" class="secondary danger" type="button" aria-label="删除文件夹">删</button>
-    </div>
-    <div class="correction-panel">
-      <div>
-        <strong>帮照片池纠个错</strong>
-        <span>同一个人被拆开时可以合并；不是人物的照片可以标记为其他。</span>
-      </div>
-      <div class="correction-actions">
-        <select id="mergeTarget" ${mergeTargets.length ? "" : "disabled"}>
-          <option value="">选择要合并到的文件夹</option>
-          ${mergeTargets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`).join("")}
-        </select>
-        <button id="mergeFolder" class="secondary" type="button" ${mergeTargets.length ? "" : "disabled"}>合并</button>
-        <button id="markNoFace" class="secondary danger" type="button" ${folder.id === "no-face" ? "disabled" : ""}>标记为其他</button>
-      </div>
-      <span id="correctionStatus"></span>
-    </div>
-    <div class="detail-grid">
+    <div class="detail-grid masonry">
       ${photos
         .map(
-          (photo) => `
+          (photo, index) => `
             <article class="detail-photo-card">
               <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
+                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="${index < 6 ? "eager" : "lazy"}" decoding="async" />
                 <span>
                   <strong>${escapeHtml(photo.originalName)}</strong>
                   <small>${escapeHtml(photo.uploader)} · ${formatDate(photo.createdAt)}</small>
                 </span>
               </button>
+              <button class="photo-menu-toggle" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="更多操作">...</button>
               <div class="photo-correction">
-                <select data-photo-target="${escapeHtml(photo.id)}">
-                  <option value="">移动到...</option>
+                <select data-photo-target="${escapeHtml(photo.id)}" aria-label="移动照片到其他相册">
+                  <option value="">移到...</option>
                   ${photoMoveTargets
-                    .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`)
+                    .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`)
                     .join("")}
                 </select>
                 <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
@@ -411,47 +501,6 @@ function renderFolderDetail(album, folder) {
     </div>
   `;
 
-  $("#backToFolders").addEventListener("click", () => {
-    backToFolderList();
-  });
-
-  $("#saveFolderName").addEventListener("click", () => {
-    $("#saveFolderName").disabled = true;
-    renameCurrentFolder(album.id, folder.id).catch((error) => {
-      $("#correctionStatus").textContent = error.message;
-      $("#saveFolderName").disabled = false;
-    });
-  });
-
-  $("#folderNameInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      $("#saveFolderName").disabled = true;
-      renameCurrentFolder(album.id, folder.id).catch((error) => {
-        $("#correctionStatus").textContent = error.message;
-        $("#saveFolderName").disabled = false;
-      });
-    }
-  });
-
-  $("#mergeFolder").addEventListener("click", () => {
-    mergeCurrentFolder(album.id, folder.id).catch((error) => {
-      $("#correctionStatus").textContent = error.message;
-    });
-  });
-
-  $("#markNoFace").addEventListener("click", () => {
-    markCurrentFolderNoFace(album.id, folder.id).catch((error) => {
-      $("#correctionStatus").textContent = error.message;
-    });
-  });
-
-  $("#deleteCurrentFolder").addEventListener("click", () => {
-    deleteFolder(album.id, folder.id).catch((error) => {
-      $("#correctionStatus").textContent = error.message;
-    });
-  });
-
   folderDetail.querySelectorAll(".detail-photo").forEach((button) => {
     button.addEventListener("click", () => {
       const photo = photos.find((item) => item.id === button.dataset.photoId);
@@ -459,37 +508,85 @@ function renderFolderDetail(album, folder) {
     });
   });
 
+  folderDetail.querySelectorAll(".photo-menu-toggle").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const card = button.closest(".detail-photo-card");
+      const isOpen = card.classList.contains("menu-open");
+      folderDetail.querySelectorAll(".detail-photo-card.menu-open").forEach((item) => {
+        item.classList.remove("menu-open");
+      });
+      if (!isOpen) card.classList.add("menu-open");
+    });
+  });
+
+  folderDetail.querySelectorAll(".photo-correction").forEach((panel) => {
+    panel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  });
+
   folderDetail.querySelectorAll(".move-photo").forEach((button) => {
     button.addEventListener("click", () => {
-      movePhotoToFolder(album.id, button.dataset.photoId).catch((error) => {
-        $("#correctionStatus").textContent = error.message;
-      });
+      movePhotoToFolder(album.id, button.dataset.photoId).catch((error) => alert(error.message));
     });
   });
 
   folderDetail.querySelectorAll(".delete-photo").forEach((button) => {
     button.addEventListener("click", () => {
-      deletePhoto(album.id, button.dataset.photoId).catch((error) => {
-        $("#correctionStatus").textContent = error.message;
-      });
+      deletePhoto(album.id, button.dataset.photoId).catch((error) => alert(error.message));
     });
   });
+
+  folderDetail.onclick = (event) => {
+    if (event.target.closest(".photo-menu-toggle") || event.target.closest(".photo-correction")) return;
+    folderDetail.querySelectorAll(".detail-photo-card.menu-open").forEach((item) => {
+      item.classList.remove("menu-open");
+    });
+  };
 }
 
 function renderAllPhotos(album) {
   if (!album.photos.length) {
-    allPhotos.innerHTML = "";
+    allPhotos.innerHTML = `
+      <button class="all-photos-entry" type="button" disabled>
+        <strong>查看所有照片</strong>
+        <span>照片池还是空的</span>
+      </button>
+    `;
     return;
   }
 
   const sortedPhotos = [...album.photos].sort((a, b) => b.createdAt - a.createdAt);
+  if (!state.allPhotosOpen) {
+    allPhotos.innerHTML = `
+      <button id="openAllPhotos" class="all-photos-entry" type="button">
+        <strong>查看所有照片</strong>
+        <span>${sortedPhotos.length} 张原始上传，点开看大图</span>
+      </button>
+    `;
+    $("#openAllPhotos").addEventListener("click", () => {
+      state.allPhotosOpen = true;
+      state.allPhotosLimit = 12;
+      state.uploadExpanded = false;
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    return;
+  }
+
+  const visiblePhotos = sortedPhotos.slice(0, state.allPhotosLimit);
+  const hasMore = visiblePhotos.length < sortedPhotos.length;
   allPhotos.innerHTML = `
-    <div class="section-heading">
-      <h3>全员底片池</h3>
-      <p>${sortedPhotos.length} 张原始上传，点开看大图</p>
+    <div class="detail-toolbar all-photos-toolbar">
+      <button id="backFromAllPhotos" class="secondary" type="button">返回</button>
+      <div class="detail-title">
+        <h3>所有照片</h3>
+        <p>已显示 ${visiblePhotos.length} / ${sortedPhotos.length} 张，向下滑继续加载</p>
+      </div>
     </div>
-    <div class="all-photo-grid">
-      ${sortedPhotos
+    <div class="all-photo-grid masonry">
+      ${visiblePhotos
         .map(
           (photo) => `
             <article class="album-photo-card">
@@ -506,8 +603,23 @@ function renderAllPhotos(album) {
         )
         .join("")}
     </div>
+    ${
+      hasMore
+        ? `<button id="loadMorePhotos" class="secondary load-more-photos" type="button">再看 ${Math.min(12, sortedPhotos.length - visiblePhotos.length)} 张</button>`
+        : `<p class="photo-end">已经到底啦</p>`
+    }
   `;
 
+  $("#backFromAllPhotos").addEventListener("click", () => {
+    state.allPhotosOpen = false;
+    render();
+  });
+  const loadMorePhotos = $("#loadMorePhotos");
+  if (loadMorePhotos) {
+    loadMorePhotos.addEventListener("click", () => {
+      loadMoreAllPhotos();
+    });
+  }
   allPhotos.querySelectorAll(".album-photo").forEach((button) => {
     button.addEventListener("click", () => {
       const photo = album.photos.find((item) => item.id === button.dataset.photoId);
@@ -519,6 +631,14 @@ function renderAllPhotos(album) {
       deletePhoto(album.id, badge.dataset.photoId).catch((error) => alert(error.message));
     });
   });
+}
+
+function loadMoreAllPhotos() {
+  const album = getCurrentAlbum();
+  if (!album || !state.allPhotosOpen) return;
+  if (state.allPhotosLimit >= album.photos.length) return;
+  state.allPhotosLimit = Math.min(state.allPhotosLimit + 12, album.photos.length);
+  render();
 }
 
 async function deleteAlbum(albumId) {
@@ -610,10 +730,9 @@ async function movePhotoToFolder(albumId, photoId) {
   const select = folderDetail.querySelector(`[data-photo-target="${CSS.escape(photoId)}"]`);
   const targetFolderId = select ? select.value : "";
   if (!targetFolderId) {
-    $("#correctionStatus").textContent = "请选择要移动到的文件夹";
+    alert("请选择要移动到的文件夹");
     return;
   }
-  $("#correctionStatus").textContent = "正在把照片送回正确的小相册...";
   const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -665,6 +784,9 @@ async function createAlbum(event) {
   state.currentAlbumId = payload.album.id;
   state.currentFolderId = "";
   albumName.value = "";
+  if (createAlbumDialog.open) {
+    createAlbumDialog.close();
+  }
   render();
 }
 
@@ -703,27 +825,6 @@ async function uploadPhotos(event) {
   }
 }
 
-async function reanalyzeCurrentAlbum() {
-  const album = getCurrentAlbum();
-  if (!album || !album.photos.length) return;
-  uploadStatus.textContent = "正在把整本照片池重新分一遍人...";
-  reanalyzeButton.disabled = true;
-  try {
-    const payload = await api(`/api/albums/${pathPart(album.id)}/reanalyze`, {
-      method: "POST",
-    });
-    state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
-    state.currentFolderId = "";
-    uploadStatus.textContent = "重新分组完成，可以看看每个人的照片包是否顺眼";
-    render();
-  } finally {
-    reanalyzeButton.disabled = false;
-    setTimeout(() => {
-      uploadStatus.textContent = "";
-    }, 2200);
-  }
-}
-
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -736,19 +837,6 @@ function escapeHtml(value) {
 photosInput.addEventListener("change", () => {
   const count = photosInput.files.length;
   selectedFiles.textContent = count ? `已选好 ${count} 张，准备加入这次出游照片池` : defaultSelectedFilesText();
-});
-
-copyShareLink.addEventListener("click", async () => {
-  const url = window.location.href;
-  try {
-    await navigator.clipboard.writeText(url);
-    shareLinkStatus.textContent = "已复制。发给同行朋友，让大家一起上传";
-  } catch {
-    shareLinkStatus.textContent = "复制失败，可以直接复制浏览器地址栏链接";
-  }
-  setTimeout(() => {
-    shareLinkStatus.textContent = "同一 Wi-Fi 下打开更方便";
-  }, 2600);
 });
 
 folders.addEventListener("click", (event) => {
@@ -768,6 +856,42 @@ folders.addEventListener("keydown", (event) => {
   render();
 });
 
+backToHomeButton.addEventListener("click", returnToHome);
+
+toggleUploadForm.addEventListener("click", () => {
+  state.uploadExpanded = !state.uploadExpanded;
+  render();
+  if (state.uploadExpanded) {
+    uploadForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+mobileBackToFolders.addEventListener("click", backToFolderList);
+
+albumPanel.addEventListener("touchstart", (event) => {
+  if (!state.currentAlbumId || state.currentFolderId || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  state.touchStart = { x: touch.clientX, y: touch.clientY };
+});
+
+albumPanel.addEventListener("touchend", (event) => {
+  if (!state.currentAlbumId || state.currentFolderId || !state.touchStart || event.changedTouches.length !== 1) return;
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - state.touchStart.x;
+  const dy = touch.clientY - state.touchStart.y;
+  const startedNearLeftEdge = state.touchStart.x < 45;
+  state.touchStart = null;
+  if (Math.abs(dy) > 70) return;
+  if (state.allPhotosOpen && (dx <= -80 || (startedNearLeftEdge && dx >= 80))) {
+    state.allPhotosOpen = false;
+    render();
+    return;
+  }
+  if (dx <= -80 || (startedNearLeftEdge && dx >= 80)) {
+    returnToHome();
+  }
+});
+
 folderDetail.addEventListener("touchstart", (event) => {
   if (!state.currentFolderId || event.touches.length !== 1) return;
   const touch = event.touches[0];
@@ -780,7 +904,7 @@ folderDetail.addEventListener("touchend", (event) => {
   const dx = touch.clientX - state.touchStart.x;
   const dy = touch.clientY - state.touchStart.y;
   state.touchStart = null;
-  if (Math.abs(dx) >= 80 && Math.abs(dy) <= 70) {
+  if (dx <= -80 && Math.abs(dy) <= 70) {
     backToFolderList();
   }
 });
@@ -799,17 +923,38 @@ albumForm.addEventListener("submit", (event) => {
   createAlbum(event).catch((error) => alert(error.message));
 });
 
+openCreateAlbum.addEventListener("click", () => {
+  if (typeof createAlbumDialog.showModal === "function") {
+    createAlbumDialog.showModal();
+  } else {
+    createAlbumDialog.setAttribute("open", "");
+  }
+  albumName.focus();
+});
+
+cancelCreateAlbum.addEventListener("click", () => {
+  albumName.value = "";
+  createAlbumDialog.close();
+});
+
+createAlbumDialog.addEventListener("click", (event) => {
+  if (event.target === createAlbumDialog) {
+    createAlbumDialog.close();
+  }
+});
+
 uploadForm.addEventListener("submit", (event) => {
   uploadPhotos(event).catch((error) => {
     uploadStatus.textContent = error.message;
   });
 });
 
-reanalyzeButton.addEventListener("click", () => {
-  reanalyzeCurrentAlbum().catch((error) => {
-    uploadStatus.textContent = error.message;
-    reanalyzeButton.disabled = false;
-  });
+window.addEventListener("scroll", () => {
+  if (!state.allPhotosOpen) return;
+  const remaining = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+  if (remaining < 420) {
+    loadMoreAllPhotos();
+  }
 });
 
 loadAlbums().catch((error) => {

@@ -1,0 +1,14 @@
+services:
+  sharephotos:
+    build: .
+    image: sharephotos:latest
+    container_name: sharephotos
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+      - ./models:/home/app/.insightface
