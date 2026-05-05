@@ -19,6 +19,8 @@ const uploadForm = $("#uploadForm");
 const photosInput = $("#photos");
 const selectedFiles = $("#selectedFiles");
 const uploadStatus = $("#uploadStatus");
+const copyShareLink = $("#copyShareLink");
+const shareLinkStatus = $("#shareLinkStatus");
 const reanalyzeButton = $("#reanalyzeButton");
 const allPhotos = $("#allPhotos");
 const folders = $("#folders");
@@ -82,6 +84,10 @@ function photoInFolder(photo, folderId) {
   return photoFolderIds(photo).includes(folderId);
 }
 
+function defaultSelectedFilesText() {
+  return "手机上可以一次多选；上传后先入库，再在后台生成预览和人物小相册";
+}
+
 function albumProcessingCounts(album) {
   const queued = album.photos.filter((photo) => photo.status === "queued").length;
   const preparing = album.photos.filter((photo) => photo.status === "preparing").length;
@@ -102,9 +108,9 @@ function updateUploadProgress(album) {
   if (state.uploading || !album) return;
   const counts = albumProcessingCounts(album);
   if (counts.active) {
-    uploadStatus.textContent = `后台正在整理：${counts.preparing} 张生成预览图，${counts.processing} 张识别中，${counts.queued} 张排队中`;
+    uploadStatus.textContent = `照片池正在开工：${counts.preparing} 张做预览，${counts.processing} 张认人，${counts.queued} 张排队`;
   } else if (counts.failed) {
-    uploadStatus.textContent = `整理完成，${counts.failed} 张照片需要稍后手动检查`;
+    uploadStatus.textContent = `基本整理好了，有 ${counts.failed} 张需要稍后手动看一眼`;
   } else {
     uploadStatus.textContent = "";
   }
@@ -161,7 +167,7 @@ function render() {
     item.type = "button";
     item.innerHTML = `
       <strong>${escapeHtml(album.name)}</strong>
-      <span>${album.photos.length} 张照片 · ${album.contributors.length} 位上传者</span>
+      <span>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</span>
     `;
     item.addEventListener("click", () => {
       state.currentAlbumId = album.id;
@@ -173,7 +179,7 @@ function render() {
 
   const album = getCurrentAlbum();
   if (!album) {
-    currentAlbumTitle.textContent = "请选择或创建一个相册";
+    currentAlbumTitle.textContent = "先开一个朋友照片局吧";
     stats.innerHTML = "";
     emptyState.classList.remove("hidden");
     albumPanel.classList.add("hidden");
@@ -184,9 +190,9 @@ function render() {
   emptyState.classList.add("hidden");
   albumPanel.classList.remove("hidden");
   stats.innerHTML = `
-    <span class="stat">${album.photos.length} 张照片</span>
-    <span class="stat">${album.folders.length} 个人物文件夹</span>
-    <span class="stat">${album.contributors.length} 位协作者</span>
+    <span class="stat">${album.photos.length} 张朋友视角</span>
+    <span class="stat">${album.folders.length} 个可下载小相册</span>
+    <span class="stat">${album.contributors.length} 位参与者</span>
   `;
   updateUploadProgress(album);
   updatePolling(album);
@@ -210,7 +216,7 @@ function renderFolders(album) {
       <section class="empty">
         <div>
           <h3>还没有照片</h3>
-          <p>上传后系统会自动创建人物文件夹。多个浏览器或多台设备访问同一个局域网地址即可协作上传。</p>
+          <p>把这个页面发给同行朋友，大家各自把手机里的照片倒进来。等照片池热闹起来，就能按人物打包下载。</p>
         </div>
       </section>
     `;
@@ -220,7 +226,7 @@ function renderFolders(album) {
   folders.innerHTML = "";
   folders.insertAdjacentHTML(
     "beforeend",
-    `<div class="section-heading"><h3>人物分类文件夹</h3><p>${album.folders.length} 个文件夹</p></div>`,
+    `<div class="section-heading"><h3>按人打包带走</h3><p>${album.folders.length} 个可下载小相册</p></div>`,
   );
   sortedFolders(album).forEach((folder) => {
     const folderName = folderDisplayName(folder);
@@ -273,7 +279,7 @@ function renderFolders(album) {
           )
           .join("")}
       </div>
-      <button class="open-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">查看全部</button>
+      <button class="open-folder" type="button" data-folder-id="${escapeHtml(folder.id)}">认领看看</button>
     `;
     folders.appendChild(section);
   });
@@ -303,7 +309,7 @@ function renderFolderDetail(album, folder) {
           <input id="folderNameInput" value="${escapeHtml(folderDisplayName(folder))}" maxlength="40" aria-label="相册昵称" />
           <button id="saveFolderName" class="secondary" type="button">保存昵称</button>
         </div>
-        <p>${photos.length} 张照片 · 在线查看</p>
+        <p>${photos.length} 张照片 · 这里可能藏着朋友拍到的你</p>
       </div>
       <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download">
         <button type="button">下载文件夹</button>
@@ -312,8 +318,8 @@ function renderFolderDetail(album, folder) {
     </div>
     <div class="correction-panel">
       <div>
-        <strong>识别纠错</strong>
-        <span>同一个人被拆开时可合并；误识别人物时可标记为其他。</span>
+        <strong>帮照片池纠个错</strong>
+        <span>同一个人被拆开时可以合并；不是人物的照片可以标记为其他。</span>
       </div>
       <div class="correction-actions">
         <select id="mergeTarget" ${mergeTargets.length ? "" : "disabled"}>
@@ -438,8 +444,8 @@ function renderAllPhotos(album) {
   const sortedPhotos = [...album.photos].sort((a, b) => b.createdAt - a.createdAt);
   allPhotos.innerHTML = `
     <div class="section-heading">
-      <h3>全部照片</h3>
-      <p>${sortedPhotos.length} 张上传照片</p>
+      <h3>全员底片池</h3>
+      <p>${sortedPhotos.length} 张原始上传，点开看大图</p>
     </div>
     <div class="all-photo-grid">
       ${sortedPhotos
@@ -548,7 +554,7 @@ async function movePhotoToFolder(albumId, photoId) {
     $("#correctionStatus").textContent = "请选择要移动到的文件夹";
     return;
   }
-  $("#correctionStatus").textContent = "正在移动照片...";
+  $("#correctionStatus").textContent = "正在把照片送回正确的小相册...";
   const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -578,7 +584,7 @@ async function deletePhoto(albumId, photoId) {
 }
 
 async function reclassifyPhoto(albumId, photoId) {
-  $("#correctionStatus").textContent = "正在重新识别...";
+  $("#correctionStatus").textContent = "正在重新确认这张照片里是谁...";
   const payload = await api(`/api/albums/${pathPart(albumId)}/photos/${pathPart(photoId)}/reclassify`, {
     method: "POST",
   });
@@ -622,7 +628,7 @@ async function uploadPhotos(event) {
   if (!album || !files.length) return;
 
   state.uploading = true;
-    uploadStatus.textContent = `正在上传 ${files.length} 张照片，上传完成后会自动生成预览图并识别人脸`;
+  uploadStatus.textContent = `正在接收 ${files.length} 张朋友视角，先入库，后分组`;
   uploadForm.querySelector("button[type='submit']").disabled = true;
   const form = new FormData();
   form.append("uploader", $("#uploader").value.trim() || "访客");
@@ -637,8 +643,8 @@ async function uploadPhotos(event) {
     });
     state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
     photosInput.value = "";
-    selectedFiles.textContent = "上传后自动进行人脸识别";
-    uploadStatus.textContent = `已成功上传 ${payload.queued || files.length} 张照片，后台正在生成预览图并整理人物分类`;
+    selectedFiles.textContent = defaultSelectedFilesText();
+    uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人`;
     render();
   } finally {
     state.uploading = false;
@@ -649,7 +655,7 @@ async function uploadPhotos(event) {
 async function reanalyzeCurrentAlbum() {
   const album = getCurrentAlbum();
   if (!album || !album.photos.length) return;
-  uploadStatus.textContent = "正在使用高精度模型重新分析相册...";
+  uploadStatus.textContent = "正在把整本照片池重新分一遍人...";
   reanalyzeButton.disabled = true;
   try {
     const payload = await api(`/api/albums/${pathPart(album.id)}/reanalyze`, {
@@ -657,7 +663,7 @@ async function reanalyzeCurrentAlbum() {
     });
     state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
     state.currentFolderId = "";
-    uploadStatus.textContent = "已完成高精度重新分析";
+    uploadStatus.textContent = "重新分组完成，可以看看每个人的照片包是否顺眼";
     render();
   } finally {
     reanalyzeButton.disabled = false;
@@ -678,7 +684,20 @@ function escapeHtml(value) {
 
 photosInput.addEventListener("change", () => {
   const count = photosInput.files.length;
-  selectedFiles.textContent = count ? `已选择 ${count} 张照片` : "上传后自动进行人脸识别";
+  selectedFiles.textContent = count ? `已选好 ${count} 张，准备加入这次出游照片池` : defaultSelectedFilesText();
+});
+
+copyShareLink.addEventListener("click", async () => {
+  const url = window.location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+    shareLinkStatus.textContent = "已复制。发给同行朋友，让大家一起上传";
+  } catch {
+    shareLinkStatus.textContent = "复制失败，可以直接复制浏览器地址栏链接";
+  }
+  setTimeout(() => {
+    shareLinkStatus.textContent = "同一 Wi-Fi 下打开更方便";
+  }, 2600);
 });
 
 folders.addEventListener("click", (event) => {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Share Album Demo</title>
+    <title>SharePhotos</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
@@ -12,16 +12,16 @@
         <div class="brand">
           <span class="brand-mark">SA</span>
           <div>
-            <h1>共享相册</h1>
-            <p>多人上传 · 自动归类 · 文件夹下载</p>
+            <h1>SharePhotos</h1>
+            <p>朋友拍的你，一键收齐</p>
           </div>
         </div>
 
         <form id="albumForm" class="new-album">
-          <label for="albumName">新建相册</label>
+          <label for="albumName">这次出游叫什么</label>
           <div class="inline">
-            <input id="albumName" name="name" placeholder="例如：五一团建" autocomplete="off" />
-            <button type="submit">创建</button>
+            <input id="albumName" name="name" placeholder="例如：重庆周末小队" autocomplete="off" />
+            <button type="submit">开局</button>
           </div>
         </form>
 
@@ -31,7 +31,7 @@
       <section class="workspace">
         <header class="topbar">
           <div>
-            <p class="eyebrow">Demo workspace</p>
+            <p class="eyebrow">Friends photo swap</p>
             <h2 id="currentAlbumTitle">请选择或创建一个相册</h2>
           </div>
           <div id="stats" class="stats"></div>
@@ -39,27 +39,51 @@
 
         <section id="emptyState" class="empty">
           <div>
-            <h3>先创建一个相册</h3>
-            <p>然后用不同上传者名称上传照片。服务端会使用 OpenCV 检测照片中的人脸，并根据人脸特征把相似人物整理到同一个文件夹；没有检测到人脸的照片会进入“其他”。</p>
+            <h3>先开一个朋友照片局</h3>
+            <p>出去玩时，每个人手机里都装着别人视角的精彩瞬间。建好相册后，把页面发给同行朋友，大家各自上传，系统会自动按人物整理，回头直接按人下载。</p>
           </div>
         </section>
 
         <section id="albumPanel" class="album-panel hidden">
+          <section class="trip-board">
+            <div class="trip-copy">
+              <p class="eyebrow">Trip exchange station</p>
+              <h3>别再一张张微信传图了</h3>
+              <p>朋友各自拍、一起上传、后台认人分组。最后每个人打开自己的小相册，把别人拍到自己的照片整包带走。</p>
+            </div>
+            <div class="trip-steps" aria-label="使用流程">
+              <span><b>1</b>发链接给同行朋友</span>
+              <span><b>2</b>各自上传手机照片</span>
+              <span><b>3</b>按人下载照片包</span>
+            </div>
+            <div class="share-tools">
+              <button id="copyShareLink" class="secondary" type="button">复制分享链接</button>
+              <span id="shareLinkStatus">同一 Wi-Fi 下打开更方便</span>
+            </div>
+          </section>
+
           <form id="uploadForm" class="upload-card">
+            <div class="upload-intro">
+              <div>
+                <p class="eyebrow">My camera roll</p>
+                <h3>把我手机里的朋友视角加进来</h3>
+              </div>
+              <span>上传完就能继续玩，后台会慢慢整理</span>
+            </div>
             <div class="form-grid">
               <label>
-                上传者
+                你是谁
                 <input id="uploader" name="uploader" placeholder="不填写则默认为访客" autocomplete="name" />
               </label>
             </div>
             <label class="dropzone" for="photos">
               <input id="photos" name="photos" type="file" accept="image/*" multiple />
-              <span>选择或拖入照片</span>
-              <small id="selectedFiles">上传后自动进行人脸识别</small>
+              <span>点这里从相册选择照片</span>
+              <small id="selectedFiles">手机上可以一次多选；上传后先入库，再在后台生成预览和人物小相册</small>
             </label>
             <div class="upload-actions">
-              <button id="uploadButton" type="submit">上传并自动整理</button>
-              <button id="reanalyzeButton" class="secondary" type="button">重新分析相册</button>
+              <button id="uploadButton" type="submit">加入照片池</button>
+              <button id="reanalyzeButton" class="secondary" type="button">重新分一遍人</button>
               <span id="uploadStatus"></span>
             </div>
           </form>
