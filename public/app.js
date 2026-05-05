@@ -442,8 +442,8 @@ function renderFolders(album) {
             <figure class="folder-cover">
               <img src="${folderCoverUrl(folder, coverPhoto)}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" decoding="async" />
               <figcaption>
-                <strong>${escapeHtml(coverPhoto.originalName)}</strong>
-                <span>${escapeHtml(coverPhoto.uploader)}</span>
+                <strong>${escapeHtml(coverPhoto.uploader)}</strong>
+                <span>${formatDate(coverPhoto.createdAt)}</span>
               </figcaption>
             </figure>
           `
@@ -484,8 +484,8 @@ function renderFolderDetail(album, folder) {
               <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
                 <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="${index < 6 ? "eager" : "lazy"}" decoding="async" />
                 <span>
-                  <strong>${escapeHtml(photo.originalName)}</strong>
-                  <small>${escapeHtml(photo.uploader)} · ${formatDate(photo.createdAt)}</small>
+                  <strong>${escapeHtml(photo.uploader)}</strong>
+                  <small>${formatDate(photo.createdAt)}</small>
                 </span>
               </button>
               <button class="photo-menu-toggle" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="更多操作">...</button>
@@ -598,8 +598,8 @@ function renderAllPhotos(album) {
               <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
                 <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
                 <span>
-                  <strong>${escapeHtml(photo.originalName)}</strong>
-                  <small>${escapeHtml([photoStatusText(photo) || photoDisplayFolderNames(photo).join(" / "), photo.uploader].filter(Boolean).join(" · "))}</small>
+                  <strong>${escapeHtml(photo.uploader)}</strong>
+                  <small>${formatDate(photo.createdAt)}</small>
                 </span>
               </button>
               <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
