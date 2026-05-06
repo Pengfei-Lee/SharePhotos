@@ -1095,9 +1095,12 @@ label {
   top: 8px;
   left: 8px;
   z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   border-radius: 999px;
-  background: rgba(20, 28, 34, 0.58);
+  background: rgba(17, 24, 28, 0.64);
   color: #fff;
   font-size: 10px;
   font-weight: 900;
@@ -1105,10 +1108,25 @@ label {
   line-height: 1;
   padding: 6px 7px;
   backdrop-filter: blur(12px);
+  box-shadow: 0 8px 18px rgba(10, 16, 20, 0.16);
+}
+
+.live-photo-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.live-playing .live-photo-badge,
+.photo-viewer.live-playing .viewer-live-play {
+  background: rgba(255, 255, 255, 0.86);
+  color: #142028;
 }
 
 .live-photo-badge:hover {
-  background: rgba(20, 28, 34, 0.68);
+  background: rgba(17, 24, 28, 0.72);
   transform: none;
 }
 
@@ -1579,7 +1597,7 @@ label {
   bottom: 8px;
   z-index: 2;
   display: none;
-  grid-template-columns: minmax(0, 1fr) repeat(4, 36px);
+  grid-template-columns: minmax(0, 1fr) repeat(3, 36px);
   gap: 6px;
   border-top: 0;
   padding: 0;
@@ -1726,8 +1744,7 @@ label {
   transform: none;
 }
 
-.viewer-download,
-.viewer-live-download {
+.viewer-download {
   position: absolute;
   top: 10px;
   z-index: 2;
@@ -1746,12 +1763,6 @@ label {
 
 .viewer-download {
   right: 60px;
-}
-
-.viewer-live-download {
-  right: 112px;
-  padding: 0 12px;
-  font-size: 11px;
 }
 
 .viewer-meta {
@@ -2259,7 +2270,7 @@ label {
     left: 6px;
     right: 6px;
     bottom: 6px;
-    grid-template-columns: minmax(0, 1fr) repeat(4, 34px);
+    grid-template-columns: minmax(0, 1fr) repeat(3, 34px);
     gap: 5px;
   }
 

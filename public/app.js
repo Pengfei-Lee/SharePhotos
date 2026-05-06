@@ -48,7 +48,6 @@ const viewerImage = $("#viewerImage");
 const viewerVideo = $("#viewerVideo");
 const viewerMeta = $("#viewerMeta");
 const viewerDownload = $("#viewerDownload");
-const viewerLiveDownload = $("#viewerLiveDownload");
 const viewerLivePlay = $("#viewerLivePlay");
 const closeViewer = $("#closeViewer");
 
@@ -241,7 +240,7 @@ function renderPhotoMedia(photo, imageClass = "") {
         isLive
           ? `
             <video class="live-photo-video" src="${escapeHtml(photo.videoUrl)}" muted playsinline preload="metadata"></video>
-            <button class="live-photo-badge" type="button" aria-label="播放 Live Photo">LIVE</button>
+            <button class="live-photo-badge" type="button" aria-label="播放 Live Photo">Live</button>
           `
           : ""
       }
@@ -250,19 +249,15 @@ function renderPhotoMedia(photo, imageClass = "") {
 }
 
 function renderDownloadActions(photo) {
-  const imageUrl = photo.downloadImageUrl || photo.url;
-  const liveAction =
-    photo.type === "live_photo" && photo.downloadLiveUrl
-      ? `<a class="secondary live-download" href="${escapeHtml(photo.downloadLiveUrl)}" aria-label="下载完整 Live Photo">Live</a>`
-      : "";
   return `
-    <a class="secondary image-download" href="${escapeHtml(imageUrl)}" aria-label="下载静态图">图</a>
-    ${liveAction}
+    <a class="secondary image-download" href="${escapeHtml(photoDownloadUrl(photo))}" aria-label="${
+      photo.type === "live_photo" ? "下载完整 Live Photo" : "下载静态图"
+    }">↓</a>
   `;
 }
 
 function photoDownloadUrl(photo) {
-  return photo.downloadImageUrl || photo.url;
+  return photo.type === "live_photo" && photo.downloadLiveUrl ? photo.downloadLiveUrl : photo.downloadImageUrl || photo.url;
 }
 
 function backToFolderList() {
@@ -893,14 +888,11 @@ function showViewerPhoto(photo) {
   viewerDownload.href = photoDownloadUrl(photo);
   viewerDownload.setAttribute("download", "");
   if (photo.type === "live_photo" && photo.downloadLiveUrl) {
-    viewerLiveDownload.href = photo.downloadLiveUrl;
-    viewerLiveDownload.classList.remove("hidden");
     viewerVideo.src = photo.videoUrl;
     viewerVideo.classList.remove("hidden");
     viewerLivePlay.classList.remove("hidden");
   } else {
-    viewerLiveDownload.href = "#";
-    viewerLiveDownload.classList.add("hidden");
+    viewerDownload.href = photoDownloadUrl(photo);
   }
   if (!photoViewer.open && typeof photoViewer.showModal === "function") {
     photoViewer.showModal();
@@ -915,6 +907,9 @@ function showViewerPhoto(photo) {
     viewerImage.alt = photo.originalName;
     viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
     photoViewer.classList.remove("loading");
+    if (photo.type === "live_photo" && photo.videoUrl) {
+      playViewerLive();
+    }
   };
   nextImage.onerror = () => {
     if (state.viewerToken !== token) return;
@@ -928,7 +923,7 @@ function bindLivePhotoPlayback(root) {
   root.querySelectorAll(".live-photo-card").forEach((card) => {
     const video = card.querySelector(".live-photo-video");
     const badge = card.querySelector(".live-photo-badge");
-    if (!video || card.dataset.liveBound === "1") return;
+    if (!video || !badge || card.dataset.liveBound === "1") return;
     card.dataset.liveBound = "1";
 
     const stop = () => {
@@ -958,19 +953,28 @@ function bindLivePhotoPlayback(root) {
   });
 }
 
-function toggleViewerLivePlayback() {
+function stopViewerLive() {
   if (viewerVideo.classList.contains("hidden")) return;
-  if (photoViewer.classList.contains("live-playing")) {
-    viewerVideo.pause();
-    viewerVideo.currentTime = 0;
-    photoViewer.classList.remove("live-playing");
-    return;
-  }
+  viewerVideo.pause();
+  viewerVideo.currentTime = 0;
+  photoViewer.classList.remove("live-playing");
+}
+
+function playViewerLive() {
+  if (viewerVideo.classList.contains("hidden")) return;
   photoViewer.classList.add("live-playing");
   viewerVideo.currentTime = 0;
   viewerVideo.play().catch(() => {
     photoViewer.classList.remove("live-playing");
   });
+}
+
+function toggleViewerLivePlayback() {
+  if (photoViewer.classList.contains("live-playing")) {
+    stopViewerLive();
+  } else {
+    playViewerLive();
+  }
 }
 
 function showAdjacentViewerPhoto(direction) {
@@ -1131,8 +1135,7 @@ viewerLivePlay.addEventListener("click", (event) => {
 });
 
 viewerVideo.addEventListener("ended", () => {
-  viewerVideo.currentTime = 0;
-  photoViewer.classList.remove("live-playing");
+  stopViewerLive();
 });
 
 photoViewer.addEventListener("touchstart", (event) => {
@@ -1164,8 +1167,7 @@ photoViewer.addEventListener("close", () => {
   state.viewerIndex = -1;
   state.viewerTouchStart = null;
   photoViewer.classList.remove("loading");
-  photoViewer.classList.remove("live-playing");
-  viewerVideo.pause();
+  stopViewerLive();
   viewerVideo.removeAttribute("src");
   viewerVideo.load();
 });
