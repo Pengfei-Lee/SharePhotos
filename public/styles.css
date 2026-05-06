@@ -1086,6 +1086,15 @@ label {
   transition: opacity 0.16s ease;
 }
 
+.live-photo-card,
+.live-photo-card img,
+.live-photo-card video,
+.live-photo-media {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .live-playing .live-photo-video {
   opacity: 1;
 }

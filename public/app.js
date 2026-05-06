@@ -234,7 +234,7 @@ function renderPhotoMedia(photo, imageClass = "") {
   const isLive = photo.type === "live_photo" && photo.videoUrl;
   return `
     <span class="photo-media ${isLive ? "live-photo-media" : ""}">
-      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
+      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" draggable="false" />
       ${
         isLive
           ? `
@@ -942,6 +942,18 @@ function bindLivePhotoPlayback(root) {
       }, 220);
     };
 
+    card.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
+    card.addEventListener(
+      "touchstart",
+      () => {
+        start();
+      },
+      { passive: true },
+    );
+    card.addEventListener("touchend", stop);
+    card.addEventListener("touchcancel", stop);
     card.addEventListener("pointerdown", start);
     card.addEventListener("pointerup", stop);
     card.addEventListener("pointercancel", stop);
