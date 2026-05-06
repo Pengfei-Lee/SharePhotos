@@ -212,6 +212,51 @@ function folderCoverUrl(folder, photo) {
   return photo.faceUrl || photo.coverUrl || photo.cardUrl || photo.url;
 }
 
+function photoPreviewSrc(photo) {
+  const name = (photo.storedName || photo.originalName || "").toLowerCase();
+  if (photo.type === "live_photo" || name.endsWith(".heic") || name.endsWith(".heif")) {
+    return photo.previewUrl || photo.cardUrl || photo.coverUrl || photo.url;
+  }
+  return photo.cardUrl || photo.coverUrl || photo.url;
+}
+
+function photoViewerSrc(photo) {
+  const name = (photo.storedName || photo.originalName || "").toLowerCase();
+  if (photo.type === "live_photo" || name.endsWith(".heic") || name.endsWith(".heif")) {
+    return photo.previewUrl || photo.coverUrl || photo.cardUrl || photo.url;
+  }
+  return photo.url || photo.coverUrl || photo.cardUrl;
+}
+
+function renderPhotoMedia(photo, imageClass = "") {
+  const isLive = photo.type === "live_photo" && photo.videoUrl;
+  return `
+    <span class="photo-media ${isLive ? "live-photo-media" : ""}">
+      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
+      ${
+        isLive
+          ? `
+            <video class="live-photo-video" src="${escapeHtml(photo.videoUrl)}" muted playsinline preload="metadata"></video>
+            <span class="live-photo-badge" aria-label="Live Photo">LIVE</span>
+          `
+          : ""
+      }
+    </span>
+  `;
+}
+
+function renderDownloadActions(photo) {
+  const imageUrl = photo.downloadImageUrl || photo.url;
+  const liveAction =
+    photo.type === "live_photo" && photo.downloadLiveUrl
+      ? `<a class="secondary live-download" href="${escapeHtml(photo.downloadLiveUrl)}" aria-label="下载完整 Live Photo">Live</a>`
+      : "";
+  return `
+    <a class="secondary image-download" href="${escapeHtml(imageUrl)}" aria-label="下载静态图">图</a>
+    ${liveAction}
+  `;
+}
+
 function backToFolderList() {
   if (!state.currentFolderId) return;
   state.currentFolderId = "";
@@ -497,10 +542,10 @@ function renderFolderDetail(album, folder) {
       ${photos
         .map(
           (photo, index) => `
-            <article class="detail-photo-card">
+            <article class="detail-photo-card ${photo.type === "live_photo" ? "live-photo-card" : ""}">
               <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
-                <span>
+                ${renderPhotoMedia(photo)}
+                <span class="photo-meta">
                   <strong>${escapeHtml(photo.uploader)}</strong>
                   <small>${formatDate(photo.createdAt)}</small>
                 </span>
@@ -515,6 +560,7 @@ function renderFolderDetail(album, folder) {
                 </select>
                 <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
                 <button class="secondary danger delete-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
+                ${renderDownloadActions(photo)}
               </div>
             </article>
           `,
@@ -559,6 +605,7 @@ function renderFolderDetail(album, folder) {
       deletePhoto(album.id, button.dataset.photoId).catch((error) => alert(error.message));
     });
   });
+  bindLivePhotoPlayback(folderDetail);
 
   folderDetail.onclick = (event) => {
     if (event.target.closest(".photo-menu-toggle") || event.target.closest(".photo-correction")) return;
@@ -611,10 +658,10 @@ function renderAllPhotos(album) {
       ${visiblePhotos
         .map(
           (photo) => `
-            <article class="album-photo-card">
+            <article class="album-photo-card ${photo.type === "live_photo" ? "live-photo-card" : ""}">
               <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
-                <span>
+                ${renderPhotoMedia(photo)}
+                <span class="photo-meta">
                   <strong>${escapeHtml(photo.uploader)}</strong>
                   <small>${formatDate(photo.createdAt)}</small>
                 </span>
@@ -653,6 +700,7 @@ function renderAllPhotos(album) {
       deletePhoto(album.id, badge.dataset.photoId).catch((error) => alert(error.message));
     });
   });
+  bindLivePhotoPlayback(allPhotos);
 }
 
 function loadMoreAllPhotos() {
@@ -836,7 +884,7 @@ function showViewerPhoto(photo) {
   const nextImage = new Image();
   nextImage.onload = () => {
     if (state.viewerToken !== token) return;
-    viewerImage.src = photo.url;
+    viewerImage.src = photoViewerSrc(photo);
     viewerImage.alt = photo.originalName;
     viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
     photoViewer.classList.remove("loading");
@@ -846,7 +894,53 @@ function showViewerPhoto(photo) {
     viewerMeta.textContent = "原图加载失败，请稍后再试";
     photoViewer.classList.remove("loading");
   };
-  nextImage.src = photo.url;
+  nextImage.src = photoViewerSrc(photo);
+}
+
+function bindLivePhotoPlayback(root) {
+  root.querySelectorAll(".live-photo-card").forEach((card) => {
+    const video = card.querySelector(".live-photo-video");
+    if (!video || card.dataset.liveBound === "1") return;
+    card.dataset.liveBound = "1";
+    let timer = 0;
+    let played = false;
+
+    const stop = () => {
+      window.clearTimeout(timer);
+      timer = 0;
+      video.pause();
+      video.currentTime = 0;
+      card.classList.remove("live-playing");
+    };
+
+    const start = () => {
+      window.clearTimeout(timer);
+      played = false;
+      timer = window.setTimeout(() => {
+        played = true;
+        card.classList.add("live-playing");
+        video.currentTime = 0;
+        video.play().catch(() => {
+          card.classList.remove("live-playing");
+        });
+      }, 220);
+    };
+
+    card.addEventListener("pointerdown", start);
+    card.addEventListener("pointerup", stop);
+    card.addEventListener("pointercancel", stop);
+    card.addEventListener("pointerleave", stop);
+    card.addEventListener(
+      "click",
+      (event) => {
+        if (!played) return;
+        event.preventDefault();
+        event.stopPropagation();
+        played = false;
+      },
+      true,
+    );
+  });
 }
 
 function showAdjacentViewerPhoto(direction) {
@@ -902,7 +996,9 @@ async function uploadPhotos(event) {
     };
     photosInput.value = "";
     selectedFiles.textContent = defaultSelectedFilesText();
-    uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人`;
+    uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人${
+      payload.ignored ? `；${payload.ignored} 个文件未匹配到照片` : ""
+    }`;
     render();
   } finally {
     state.uploading = false;

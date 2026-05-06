@@ -1067,7 +1067,46 @@ label {
   transform: scale(1.025);
 }
 
-.album-photo span {
+.photo-media {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  padding: 0;
+}
+
+.live-photo-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.live-playing .live-photo-video {
+  opacity: 1;
+}
+
+.live-photo-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  border-radius: 999px;
+  background: rgba(20, 28, 34, 0.58);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 6px 7px;
+  backdrop-filter: blur(12px);
+}
+
+.album-photo .photo-meta {
   display: grid;
   gap: 3px;
   padding: 9px 10px 11px;
@@ -1469,7 +1508,7 @@ label {
   transform: scale(1.025);
 }
 
-.detail-photo span {
+.detail-photo .photo-meta {
   position: absolute;
   left: 0;
   right: 0;
@@ -1522,7 +1561,7 @@ label {
   bottom: 8px;
   z-index: 2;
   display: none;
-  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  grid-template-columns: minmax(0, 1fr) repeat(4, 36px);
   gap: 6px;
   border-top: 0;
   padding: 0;
@@ -1532,7 +1571,7 @@ label {
   display: grid;
 }
 
-.detail-photo-card.menu-open .detail-photo span {
+.detail-photo-card.menu-open .detail-photo .photo-meta {
   padding-bottom: 56px;
 }
 
@@ -1545,6 +1584,19 @@ label {
   font-size: 12px;
   font-weight: 800;
   padding: 0 28px 0 10px;
+  backdrop-filter: blur(16px);
+}
+
+.photo-correction a {
+  display: inline-grid;
+  min-height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
   backdrop-filter: blur(16px);
 }
 
@@ -2082,12 +2134,11 @@ label {
     margin-bottom: 8px;
   }
 
-  .album-photo span,
-  .album-photo span {
+  .album-photo .photo-meta {
     padding: 8px;
   }
 
-  .detail-photo span {
+  .detail-photo .photo-meta {
     padding: 30px 8px 8px;
   }
 
@@ -2113,11 +2164,11 @@ label {
     left: 6px;
     right: 6px;
     bottom: 6px;
-    grid-template-columns: minmax(0, 1fr) 34px 34px;
+    grid-template-columns: minmax(0, 1fr) repeat(4, 34px);
     gap: 5px;
   }
 
-  .detail-photo-card.menu-open .detail-photo span {
+  .detail-photo-card.menu-open .detail-photo .photo-meta {
     padding-bottom: 52px;
   }
 
@@ -2131,6 +2182,11 @@ label {
   .photo-correction select {
     min-height: 34px;
     font-size: 12px;
+  }
+
+  .photo-correction a {
+    min-height: 34px;
+    font-size: 10px;
   }
 
   .detail-toolbar {

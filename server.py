@@ -22,6 +22,14 @@ import cv2
 import numpy as np
 
 try:
+    from PIL import Image
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except Exception:
+    Image = None
+
+try:
     from insightface.app import FaceAnalysis
 except Exception:
     FaceAnalysis = None
@@ -32,6 +40,7 @@ PUBLIC = ROOT / "public"
 DATA = Path(os.environ.get("DATA_DIR", str(ROOT / "data")))
 UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
+PREVIEWS = DATA / "previews"
 DB_FILE = DATA / "db.json"
 LOCK = threading.Lock()
 JOB_QUEUE = queue.Queue()
@@ -41,12 +50,20 @@ THUMB_SPECS = {
     "card": (420, 78),
     "cover": (900, 82),
 }
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
+LIVE_IMAGE_EXTS = {".heic", ".heif"}
+LIVE_VIDEO_EXTS = {".mov", ".mp4"}
+
+mimetypes.add_type("image/heic", ".heic")
+mimetypes.add_type("image/heif", ".heif")
+mimetypes.add_type("video/quicktime", ".mov")
 
 
 def ensure_store():
     DATA.mkdir(exist_ok=True)
     UPLOADS.mkdir(exist_ok=True)
     THUMBS.mkdir(exist_ok=True)
+    PREVIEWS.mkdir(exist_ok=True)
     if not DB_FILE.exists():
         save_db({"albums": []})
 
@@ -84,11 +101,62 @@ def remove_thumbnails(album_id, stored_name=None):
             target.unlink()
 
 
+def remove_preview(album_id, stored_name=None):
+    album_dir = PREVIEWS / album_id
+    if not album_dir.exists():
+        return
+    if stored_name is None:
+        shutil.rmtree(album_dir)
+        return
+    target = album_dir / ("%s.jpg" % stored_name)
+    if target.exists():
+        target.unlink()
+
+
+def generate_preview(album_id, stored_name):
+    source = UPLOADS / album_id / stored_name
+    if not source.exists():
+        return None
+    target_dir = PREVIEWS / album_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / ("%s.jpg" % stored_name)
+    if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+        return target
+
+    suffix = source.suffix.lower()
+    if suffix in LIVE_IMAGE_EXTS:
+        if Image is None:
+            return None
+        try:
+            image = Image.open(source).convert("RGB")
+            image.save(target, "JPEG", quality=88)
+            return target
+        except Exception:
+            return None
+
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+    if not ok:
+        return None
+    target.write_bytes(encoded.tobytes())
+    return target
+
+
+def readable_image_path(album_id, stored_name):
+    source = UPLOADS / album_id / stored_name
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is not None:
+        return source
+    return generate_preview(album_id, stored_name)
+
+
 def generate_thumbnail(album_id, stored_name, size):
     if size not in THUMB_SPECS:
         return None
-    source = UPLOADS / album_id / stored_name
-    if not source.exists():
+    source = readable_image_path(album_id, stored_name)
+    if not source or not source.exists():
         return None
     max_width, quality = THUMB_SPECS[size]
     target_dir = THUMBS / album_id / size
@@ -134,8 +202,8 @@ def detect_primary_face_box(image):
 
 
 def generate_face_thumbnail(album_id, stored_name):
-    source = UPLOADS / album_id / stored_name
-    if not source.exists():
+    source = readable_image_path(album_id, stored_name)
+    if not source or not source.exists():
         return None
     target_dir = THUMBS / album_id / "face"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +252,10 @@ def thumb_url(photo, size):
     return "/thumbs/%s/%s/%s" % (photo.get("albumId", ""), size, quote(photo.get("storedName", "")))
 
 
+def preview_url(photo):
+    return "/previews/%s/%s" % (photo.get("albumId", ""), quote(photo.get("storedName", "")))
+
+
 def public_album(album):
     visible = dict(album)
     visible["folders"] = []
@@ -199,9 +271,21 @@ def public_album(album):
     for photo in album.get("photos", []):
         item = dict(photo)
         item["albumId"] = album["id"]
+        item["type"] = item.get("type") or "photo"
         item["tinyUrl"] = thumb_url(item, "tiny")
         item["cardUrl"] = thumb_url(item, "card")
         item["coverUrl"] = thumb_url(item, "cover")
+        item["previewUrl"] = preview_url(item)
+        item["thumbnailUrl"] = item["cardUrl"]
+        item["imageUrl"] = item.get("url") or "/uploads/%s/%s" % (album["id"], item.get("storedName", ""))
+        item["image_url"] = item["imageUrl"]
+        item["preview_url"] = item["previewUrl"]
+        item["thumbnail_url"] = item["thumbnailUrl"]
+        if item.get("liveVideoStoredName"):
+            item["videoUrl"] = "/uploads/%s/%s" % (album["id"], item["liveVideoStoredName"])
+            item["video_url"] = item["videoUrl"]
+            item["downloadLiveUrl"] = "/api/albums/%s/photos/%s/download-live" % (album["id"], item["id"])
+        item["downloadImageUrl"] = "/api/albums/%s/photos/%s/download-image" % (album["id"], item["id"])
         item["faceUrl"] = "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
         ids = photo_folder_ids(item)
         if ids:
@@ -500,6 +584,12 @@ def remove_photo(album, photo_id):
         if source.exists():
             source.unlink()
         remove_thumbnails(album["id"], photo["storedName"])
+        remove_preview(album["id"], photo["storedName"])
+    video_name = photo.get("liveVideoStoredName")
+    if video_name and not any(item.get("liveVideoStoredName") == video_name for item in album.get("photos", [])):
+        video_source = UPLOADS / album["id"] / video_name
+        if video_source.exists():
+            video_source.unlink()
     prune_empty_folders(album)
     return photo, ""
 
@@ -543,6 +633,12 @@ def remove_folder(album, folder_id):
             source.unlink()
             unlinked_count += 1
         remove_thumbnails(album["id"], photo["storedName"])
+        remove_preview(album["id"], photo["storedName"])
+        video_name = photo.get("liveVideoStoredName")
+        if video_name:
+            video_source = UPLOADS / album["id"] / video_name
+            if video_source.exists():
+                video_source.unlink()
 
     album["folders"] = [item for item in album.get("folders", []) if item["id"] != folder_id]
     prune_empty_folders(album)
@@ -559,6 +655,7 @@ def remove_album_files(album_id):
     if album_dir.exists():
         shutil.rmtree(album_dir)
     remove_thumbnails(album_id)
+    remove_preview(album_id)
     for zip_path in DATA.glob("%s-*.zip" % album_id):
         if zip_path.exists():
             zip_path.unlink()
@@ -716,8 +813,10 @@ def process_photo_job(album_id, photo_id):
         photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
         if not photo:
             return
-        image_path = UPLOADS / album_id / photo["storedName"]
+        image_path = readable_image_path(album_id, photo["storedName"])
         try:
+            if not image_path:
+                raise ValueError("图片无法生成预览图")
             photo_folders, classification_note = classify_photo(album, image_path)
             photo["status"] = "ready"
             apply_photo_folders(photo, photo_folders, classification_note)
@@ -807,6 +906,9 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/thumbs/([^/]+)/(tiny|card|cover)/([^/]+)$", path)
         if match:
             return self.serve_thumbnail(match.group(1), match.group(2), match.group(3))
+        match = re.match(r"^/previews/([^/]+)/([^/]+)$", path)
+        if match:
+            return self.serve_preview(match.group(1), match.group(2))
         match = re.match(r"^/face-thumbs/([^/]+)/([^/]+)$", path)
         if match:
             return self.serve_face_thumbnail(match.group(1), match.group(2))
@@ -826,6 +928,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/download$", path)
         if match:
             return self.download_folder(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-image$", path)
+        if match:
+            return self.download_photo_image(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-live$", path)
+        if match:
+            return self.download_live_photo(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
 
     def do_POST(self):
@@ -924,19 +1032,42 @@ class AppHandler(BaseHTTPRequestHandler):
             album_dir.mkdir(parents=True, exist_ok=True)
             pending_folder = get_pending_folder(album)
             queued = []
-            for idx, item in enumerate(files):
+            grouped = {}
+            ignored = 0
+            for item in files:
                 original = Path(item.filename).name
-                suffix = Path(original).suffix.lower()
-                if suffix not in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"}:
-                    suffix = ".jpg"
-                digest = hashlib.sha1(("%s-%s" % (time.time(), original)).encode("utf-8")).hexdigest()[:12]
+                path = Path(original)
+                suffix = path.suffix.lower()
+                if suffix not in IMAGE_EXTS | LIVE_VIDEO_EXTS:
+                    ignored += 1
+                    continue
+                key = path.stem.lower()
+                grouped.setdefault(key, {"images": [], "videos": []})
+                if suffix in LIVE_VIDEO_EXTS:
+                    grouped[key]["videos"].append((item, original, suffix))
+                else:
+                    grouped[key]["images"].append((item, original, suffix))
+
+            for key, group in grouped.items():
+                image_items = group["images"]
+                video_items = group["videos"]
+                heic_item = next((item for item in image_items if item[2] in LIVE_IMAGE_EXTS), None)
+                image_item = heic_item or (image_items[0] if image_items else None)
+                if not image_item:
+                    ignored += len(video_items)
+                    continue
+
+                image_file, original, suffix = image_item
+                video_item = video_items[0] if heic_item and video_items else None
+                digest = hashlib.sha1(("%s-%s-%s" % (time.time(), key, original)).encode("utf-8")).hexdigest()[:12]
                 stored_name = "%s%s" % (digest, suffix)
                 target = album_dir / stored_name
                 with target.open("wb") as out:
-                    shutil.copyfileobj(item.file, out)
+                    shutil.copyfileobj(image_file.file, out)
 
                 photo = {
                     "id": uuid.uuid4().hex[:12],
+                    "type": "live_photo" if video_item else "photo",
                     "originalName": original,
                     "storedName": stored_name,
                     "url": "/uploads/%s/%s" % (album_id, stored_name),
@@ -944,6 +1075,15 @@ class AppHandler(BaseHTTPRequestHandler):
                     "createdAt": int(time.time()),
                     "status": "queued",
                 }
+
+                if video_item:
+                    video_file, video_original, video_suffix = video_item
+                    video_stored_name = "%s%s" % (digest, video_suffix)
+                    with (album_dir / video_stored_name).open("wb") as out:
+                        shutil.copyfileobj(video_file.file, out)
+                    photo["liveVideoOriginalName"] = video_original
+                    photo["liveVideoStoredName"] = video_stored_name
+
                 apply_photo_folders(photo, [pending_folder], "已上传，等待后台识别")
                 album["photos"].append(photo)
                 created.append(photo)
@@ -951,7 +1091,7 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         for photo_id in queued:
             enqueue_photo_job(album_id, photo_id)
-        return self.send_json({"photos": created, "album": public_album(album), "queued": len(created)}, 202)
+        return self.send_json({"photos": created, "album": public_album(album), "queued": len(created), "ignored": ignored}, 202)
 
     def read_json_body(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -1117,6 +1257,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 source = UPLOADS / album_id / photo["storedName"]
                 if source.exists():
                     archive.write(source, arcname="%s/%s" % (folder["name"], photo["originalName"]))
+                video_name = photo.get("liveVideoStoredName")
+                if video_name:
+                    video_source = UPLOADS / album_id / video_name
+                    if video_source.exists():
+                        archive.write(video_source, arcname="%s/%s" % (folder["name"], photo.get("liveVideoOriginalName") or video_name))
 
         body = zip_path.read_bytes()
         filename = "%s-%s.zip" % (slugify(album["name"]), slugify(folder["name"]))
@@ -1132,15 +1277,80 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_download(self, path, filename, content_type=None):
+        if not path.exists() or path.is_dir():
+            return self.send_error_json("File not found", 404)
+        body = path.read_bytes()
+        filename = filename or path.name
+        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or path.name
+        encoded_filename = quote(filename.encode("utf-8"))
+        self.send_response(200)
+        self.send_header("Content-Type", content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream")
+        self.send_header(
+            "Content-Disposition",
+            'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (ascii_filename, encoded_filename),
+        )
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def find_photo_for_download(self, album_id, photo_id):
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        if not album:
+            return None, None
+        photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+        return album, photo
+
+    def download_photo_image(self, album_id, photo_id):
+        _, photo = self.find_photo_for_download(album_id, photo_id)
+        if not photo:
+            return self.send_error_json("Photo not found", 404)
+        source = UPLOADS / album_id / photo["storedName"]
+        return self.send_download(source, photo.get("originalName") or photo["storedName"])
+
+    def download_live_photo(self, album_id, photo_id):
+        album, photo = self.find_photo_for_download(album_id, photo_id)
+        if not album or not photo:
+            return self.send_error_json("Photo not found", 404)
+        video_name = photo.get("liveVideoStoredName")
+        if photo.get("type") != "live_photo" or not video_name:
+            return self.send_error_json("不是 Live Photo")
+        image_source = UPLOADS / album_id / photo["storedName"]
+        video_source = UPLOADS / album_id / video_name
+        if not image_source.exists() or not video_source.exists():
+            return self.send_error_json("Live Photo 文件不完整", 404)
+        zip_path = DATA / ("%s-%s-live.zip" % (album_id, photo_id))
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(image_source, arcname=photo.get("originalName") or photo["storedName"])
+            archive.write(video_source, arcname=photo.get("liveVideoOriginalName") or video_name)
+        filename = "%s-live.zip" % slugify(Path(photo.get("originalName") or "live-photo").stem)
+        return self.send_download(zip_path, filename, "application/zip")
+
     def serve_file(self, path):
         path = path.resolve()
-        allowed = [PUBLIC.resolve(), UPLOADS.resolve()]
+        allowed = [PUBLIC.resolve(), UPLOADS.resolve(), PREVIEWS.resolve()]
         if not any(str(path).startswith(str(root)) for root in allowed) or not path.exists() or path.is_dir():
             return self.send_error_json("Not found", 404)
         content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def serve_preview(self, album_id, stored_name):
+        stored_name = Path(stored_name).name
+        path = generate_preview(album_id, stored_name)
+        if not path:
+            path = generate_thumbnail(album_id, stored_name, "cover")
+        if not path:
+            return self.serve_file(UPLOADS / album_id / stored_name)
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "public, max-age=31536000")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
