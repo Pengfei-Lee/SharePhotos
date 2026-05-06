@@ -46,6 +46,8 @@ const folderDetail = $("#folderDetail");
 const photoViewer = $("#photoViewer");
 const viewerImage = $("#viewerImage");
 const viewerMeta = $("#viewerMeta");
+const viewerDownload = $("#viewerDownload");
+const viewerLiveDownload = $("#viewerLiveDownload");
 const closeViewer = $("#closeViewer");
 
 function pathPart(value) {
@@ -255,6 +257,10 @@ function renderDownloadActions(photo) {
     <a class="secondary image-download" href="${escapeHtml(imageUrl)}" aria-label="下载静态图">图</a>
     ${liveAction}
   `;
+}
+
+function photoDownloadUrl(photo) {
+  return photo.downloadImageUrl || photo.url;
 }
 
 function backToFolderList() {
@@ -666,6 +672,7 @@ function renderAllPhotos(album) {
                   <small>${formatDate(photo.createdAt)}</small>
                 </span>
               </button>
+              <a class="download-photo-badge" href="${escapeHtml(photoDownloadUrl(photo))}" aria-label="下载单张照片">↓</a>
               <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
             </article>
           `,
@@ -875,6 +882,15 @@ function showViewerPhoto(photo) {
   viewerImage.removeAttribute("src");
   viewerImage.alt = "";
   viewerMeta.textContent = "正在打开原图...";
+  viewerDownload.href = photoDownloadUrl(photo);
+  viewerDownload.setAttribute("download", "");
+  if (photo.type === "live_photo" && photo.downloadLiveUrl) {
+    viewerLiveDownload.href = photo.downloadLiveUrl;
+    viewerLiveDownload.classList.remove("hidden");
+  } else {
+    viewerLiveDownload.href = "#";
+    viewerLiveDownload.classList.add("hidden");
+  }
   if (!photoViewer.open && typeof photoViewer.showModal === "function") {
     photoViewer.showModal();
   } else if (!photoViewer.open) {

@@ -1128,21 +1128,33 @@ label {
   font-size: 12px;
 }
 
+.download-photo-badge,
 .delete-photo-badge {
   position: absolute;
   top: 8px;
-  right: 8px;
   width: 34px;
   min-width: 34px;
   min-height: 34px;
+  display: inline-grid;
+  place-items: center;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(12px);
-  color: var(--danger);
   box-shadow: 0 8px 18px rgba(108, 30, 34, 0.14);
   font-size: 12px;
   font-weight: 900;
   padding: 0;
+  text-decoration: none;
+}
+
+.download-photo-badge {
+  right: 48px;
+  color: var(--accent-strong);
+}
+
+.delete-photo-badge {
+  right: 8px;
+  color: var(--danger);
 }
 
 .delete-photo-badge:hover {
@@ -1664,6 +1676,34 @@ label {
   line-height: 1;
 }
 
+.viewer-download,
+.viewer-live-download {
+  position: absolute;
+  top: 10px;
+  z-index: 2;
+  display: inline-grid;
+  min-width: 42px;
+  min-height: 42px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.viewer-download {
+  right: 60px;
+}
+
+.viewer-live-download {
+  right: 112px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
 .viewer-meta {
   min-height: 48px;
   padding: 14px 18px;
@@ -2152,12 +2192,17 @@ label {
     font-size: 11px;
   }
 
+  .download-photo-badge,
   .delete-photo-badge {
     width: 32px;
     min-width: 32px;
     min-height: 32px;
     padding: 0;
     font-size: 12px;
+  }
+
+  .download-photo-badge {
+    right: 44px;
   }
 
   .photo-correction {
