@@ -1401,9 +1401,9 @@ label {
 }
 
 .detail-grid.masonry {
-  display: block;
-  column-count: 3;
-  column-gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
 }
 
 .detail-photo-card {
@@ -1421,10 +1421,9 @@ label {
 }
 
 .detail-grid.masonry .detail-photo-card {
-  display: inline-block;
+  display: grid;
   width: 100%;
-  margin: 0 0 12px;
-  break-inside: avoid;
+  margin: 0;
 }
 
 .detail-photo-card:hover {
@@ -2074,8 +2073,8 @@ label {
 
   .all-photo-grid.masonry,
   .detail-grid.masonry {
-    column-count: 2;
-    column-gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .all-photo-grid.masonry .album-photo-card,
