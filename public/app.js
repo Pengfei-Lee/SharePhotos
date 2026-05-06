@@ -45,9 +45,11 @@ const folders = $("#folders");
 const folderDetail = $("#folderDetail");
 const photoViewer = $("#photoViewer");
 const viewerImage = $("#viewerImage");
+const viewerVideo = $("#viewerVideo");
 const viewerMeta = $("#viewerMeta");
 const viewerDownload = $("#viewerDownload");
 const viewerLiveDownload = $("#viewerLiveDownload");
+const viewerLivePlay = $("#viewerLivePlay");
 const closeViewer = $("#closeViewer");
 
 function pathPart(value) {
@@ -234,12 +236,12 @@ function renderPhotoMedia(photo, imageClass = "") {
   const isLive = photo.type === "live_photo" && photo.videoUrl;
   return `
     <span class="photo-media ${isLive ? "live-photo-media" : ""}">
-      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" draggable="false" />
+      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
       ${
         isLive
           ? `
             <video class="live-photo-video" src="${escapeHtml(photo.videoUrl)}" muted playsinline preload="metadata"></video>
-            <span class="live-photo-badge" aria-label="Live Photo">LIVE</span>
+            <button class="live-photo-badge" type="button" aria-label="播放 Live Photo">LIVE</button>
           `
           : ""
       }
@@ -881,12 +883,21 @@ function showViewerPhoto(photo) {
   photoViewer.classList.add("loading");
   viewerImage.removeAttribute("src");
   viewerImage.alt = "";
+  viewerVideo.pause();
+  viewerVideo.removeAttribute("src");
+  viewerVideo.load();
+  viewerVideo.classList.add("hidden");
+  viewerLivePlay.classList.add("hidden");
+  photoViewer.classList.remove("live-playing");
   viewerMeta.textContent = "正在打开原图...";
   viewerDownload.href = photoDownloadUrl(photo);
   viewerDownload.setAttribute("download", "");
   if (photo.type === "live_photo" && photo.downloadLiveUrl) {
     viewerLiveDownload.href = photo.downloadLiveUrl;
     viewerLiveDownload.classList.remove("hidden");
+    viewerVideo.src = photo.videoUrl;
+    viewerVideo.classList.remove("hidden");
+    viewerLivePlay.classList.remove("hidden");
   } else {
     viewerLiveDownload.href = "#";
     viewerLiveDownload.classList.add("hidden");
@@ -916,58 +927,49 @@ function showViewerPhoto(photo) {
 function bindLivePhotoPlayback(root) {
   root.querySelectorAll(".live-photo-card").forEach((card) => {
     const video = card.querySelector(".live-photo-video");
+    const badge = card.querySelector(".live-photo-badge");
     if (!video || card.dataset.liveBound === "1") return;
     card.dataset.liveBound = "1";
-    let timer = 0;
-    let played = false;
 
     const stop = () => {
-      window.clearTimeout(timer);
-      timer = 0;
       video.pause();
       video.currentTime = 0;
       card.classList.remove("live-playing");
     };
 
-    const start = () => {
-      window.clearTimeout(timer);
-      played = false;
-      timer = window.setTimeout(() => {
-        played = true;
-        card.classList.add("live-playing");
-        video.currentTime = 0;
-        video.play().catch(() => {
-          card.classList.remove("live-playing");
-        });
-      }, 220);
+    const play = () => {
+      card.classList.add("live-playing");
+      video.currentTime = 0;
+      video.play().catch(() => {
+        card.classList.remove("live-playing");
+      });
     };
 
-    card.addEventListener("contextmenu", (event) => {
+    badge.addEventListener("click", (event) => {
       event.preventDefault();
+      event.stopPropagation();
+      if (card.classList.contains("live-playing")) {
+        stop();
+      } else {
+        play();
+      }
     });
-    card.addEventListener(
-      "touchstart",
-      () => {
-        start();
-      },
-      { passive: true },
-    );
-    card.addEventListener("touchend", stop);
-    card.addEventListener("touchcancel", stop);
-    card.addEventListener("pointerdown", start);
-    card.addEventListener("pointerup", stop);
-    card.addEventListener("pointercancel", stop);
-    card.addEventListener("pointerleave", stop);
-    card.addEventListener(
-      "click",
-      (event) => {
-        if (!played) return;
-        event.preventDefault();
-        event.stopPropagation();
-        played = false;
-      },
-      true,
-    );
+    video.addEventListener("ended", stop);
+  });
+}
+
+function toggleViewerLivePlayback() {
+  if (viewerVideo.classList.contains("hidden")) return;
+  if (photoViewer.classList.contains("live-playing")) {
+    viewerVideo.pause();
+    viewerVideo.currentTime = 0;
+    photoViewer.classList.remove("live-playing");
+    return;
+  }
+  photoViewer.classList.add("live-playing");
+  viewerVideo.currentTime = 0;
+  viewerVideo.play().catch(() => {
+    photoViewer.classList.remove("live-playing");
   });
 }
 
@@ -1122,6 +1124,17 @@ closeViewer.addEventListener("click", () => {
   photoViewer.close();
 });
 
+viewerLivePlay.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleViewerLivePlayback();
+});
+
+viewerVideo.addEventListener("ended", () => {
+  viewerVideo.currentTime = 0;
+  photoViewer.classList.remove("live-playing");
+});
+
 photoViewer.addEventListener("touchstart", (event) => {
   if (!photoViewer.open || event.touches.length !== 1) return;
   const touch = event.touches[0];
@@ -1151,6 +1164,10 @@ photoViewer.addEventListener("close", () => {
   state.viewerIndex = -1;
   state.viewerTouchStart = null;
   photoViewer.classList.remove("loading");
+  photoViewer.classList.remove("live-playing");
+  viewerVideo.pause();
+  viewerVideo.removeAttribute("src");
+  viewerVideo.load();
 });
 
 window.addEventListener("keydown", (event) => {
