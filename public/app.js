@@ -499,7 +499,7 @@ function renderFolderDetail(album, folder) {
           (photo, index) => `
             <article class="detail-photo-card">
               <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="${index < 6 ? "eager" : "lazy"}" decoding="async" />
+                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
                 <span>
                   <strong>${escapeHtml(photo.uploader)}</strong>
                   <small>${formatDate(photo.createdAt)}</small>
