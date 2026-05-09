@@ -1,0 +1,13 @@
+version: "Apple Swift version 5.6 (swiftlang-5.6.0.323.62 clang-1316.0.20.8)"
+options: "c68e01ab40b0b61ef5fb63a5dcd421fda07e8d702cb490b903f4fc1da0280369"
+build_start_time: [1778083181, 17262935]
+build_end_time: [1778083183, 200008869]
+inputs:
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/ContentView.swift": [1778082292, 337638378]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/LivePhotoPicker.swift": [1778080351, 599108457]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/LivePhotoSaveService.swift": [1778083127, 579183101]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/Models.swift": [1778082292, 491912841]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/PhotoKitLivePhotoExporter.swift": [1778083127, 623979091]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosAPI.swift": [1778080570, 214299678]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosApp.swift": [1778080351, 453385353]
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosStore.swift": [1778083127, 668559312]

@@ -91,12 +91,14 @@
     <dialog id="photoViewer" class="photo-viewer">
       <button id="closeViewer" class="viewer-close" type="button" aria-label="关闭">×</button>
       <a id="viewerDownload" class="viewer-download" href="#" aria-label="下载当前照片">↓</a>
+      <button id="viewerDelete" class="viewer-delete" type="button" aria-label="删除当前照片">删</button>
       <div class="viewer-media">
         <img id="viewerImage" alt="" />
         <video id="viewerVideo" class="viewer-video hidden" muted playsinline preload="metadata"></video>
         <button id="viewerLivePlay" class="viewer-live-play live-photo-badge hidden" type="button">Live</button>
       </div>
       <div id="viewerMeta" class="viewer-meta"></div>
+      <div id="viewerFilmstrip" class="viewer-filmstrip" aria-label="照片胶片条"></div>
     </dialog>
 
     <button id="openCreateAlbum" class="create-album-fab" type="button">创建新相册</button>

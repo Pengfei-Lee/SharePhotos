@@ -1,0 +1,358 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		6BDE4EFD6D3980C9447D0D71 /* LivePhotoSaveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CC7084A7E638BC09ACC505 /* LivePhotoSaveService.swift */; };
+		7E8921305D1A42570B4FD3B0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02E5C9D6C4536843DBB00E4D /* ContentView.swift */; };
+		881D1C49611C84711BF8E94F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF3BFFE282E18EF7D2C7CC5 /* Models.swift */; };
+		8A5D497CA9ED07368A1DCF96 /* PhotoKitLivePhotoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF75DF8EF0B5B0142AD6B46 /* PhotoKitLivePhotoExporter.swift */; };
+		94221F1B68781F16F488895D /* LivePhotoPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06635E4D533728DE9EED1A8 /* LivePhotoPicker.swift */; };
+		AC1E86AAED51AE6E82D4CA01 /* SharePhotosStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD71AB34E008F193E0BBC4A7 /* SharePhotosStore.swift */; };
+		B86273B722645824E835B907 /* SharePhotosAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18884DEC14E72736F73F4658 /* SharePhotosAPI.swift */; };
+		D36F6AD038DEF55836A4EBF2 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = DEB98E2BF462A9147C1F2F1A /* ZIPFoundation */; };
+		D5BA514E9777D85A125D7451 /* SharePhotosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80BBC12B958008B2597F1870 /* SharePhotosApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		02E5C9D6C4536843DBB00E4D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		18884DEC14E72736F73F4658 /* SharePhotosAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePhotosAPI.swift; sourceTree = "<group>"; };
+		5BF75DF8EF0B5B0142AD6B46 /* PhotoKitLivePhotoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoKitLivePhotoExporter.swift; sourceTree = "<group>"; };
+		7BF3BFFE282E18EF7D2C7CC5 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		80BBC12B958008B2597F1870 /* SharePhotosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePhotosApp.swift; sourceTree = "<group>"; };
+		C5E9475F525F58937908DD82 /* SharePhotos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SharePhotos.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD71AB34E008F193E0BBC4A7 /* SharePhotosStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePhotosStore.swift; sourceTree = "<group>"; };
+		D2CC7084A7E638BC09ACC505 /* LivePhotoSaveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoSaveService.swift; sourceTree = "<group>"; };
+		E06635E4D533728DE9EED1A8 /* LivePhotoPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoPicker.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E8DFFD4F98193BCDBAA13C77 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D36F6AD038DEF55836A4EBF2 /* ZIPFoundation in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7D178E2F8F2D3D18D629E18F /* SharePhotos */ = {
+			isa = PBXGroup;
+			children = (
+				02E5C9D6C4536843DBB00E4D /* ContentView.swift */,
+				E06635E4D533728DE9EED1A8 /* LivePhotoPicker.swift */,
+				D2CC7084A7E638BC09ACC505 /* LivePhotoSaveService.swift */,
+				7BF3BFFE282E18EF7D2C7CC5 /* Models.swift */,
+				5BF75DF8EF0B5B0142AD6B46 /* PhotoKitLivePhotoExporter.swift */,
+				18884DEC14E72736F73F4658 /* SharePhotosAPI.swift */,
+				80BBC12B958008B2597F1870 /* SharePhotosApp.swift */,
+				CD71AB34E008F193E0BBC4A7 /* SharePhotosStore.swift */,
+			);
+			path = SharePhotos;
+			sourceTree = "<group>";
+		};
+		9A5C8103B6130D68A8C963A7 = {
+			isa = PBXGroup;
+			children = (
+				7D178E2F8F2D3D18D629E18F /* SharePhotos */,
+				EAA84ABF5326D95CF1A5C7C7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EAA84ABF5326D95CF1A5C7C7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C5E9475F525F58937908DD82 /* SharePhotos.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C6E4EF1BC5A6DD2289E20556 /* SharePhotos */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9ADAB9ABB690CE4517387EF8 /* Build configuration list for PBXNativeTarget "SharePhotos" */;
+			buildPhases = (
+				3D591D9946ED43D18F59F370 /* Sources */,
+				E8DFFD4F98193BCDBAA13C77 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SharePhotos;
+			packageProductDependencies = (
+				DEB98E2BF462A9147C1F2F1A /* ZIPFoundation */,
+			);
+			productName = SharePhotos;
+			productReference = C5E9475F525F58937908DD82 /* SharePhotos.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CC378F0AFCA081F8C440D603 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
+			};
+			buildConfigurationList = 4269B7557DBE533A09B8915A /* Build configuration list for PBXProject "SharePhotos" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 9A5C8103B6130D68A8C963A7;
+			packageReferences = (
+				DCAE09F24F846561FA7A04CE /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C6E4EF1BC5A6DD2289E20556 /* SharePhotos */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3D591D9946ED43D18F59F370 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E8921305D1A42570B4FD3B0 /* ContentView.swift in Sources */,
+				94221F1B68781F16F488895D /* LivePhotoPicker.swift in Sources */,
+				6BDE4EFD6D3980C9447D0D71 /* LivePhotoSaveService.swift in Sources */,
+				881D1C49611C84711BF8E94F /* Models.swift in Sources */,
+				8A5D497CA9ED07368A1DCF96 /* PhotoKitLivePhotoExporter.swift in Sources */,
+				B86273B722645824E835B907 /* SharePhotosAPI.swift in Sources */,
+				D5BA514E9777D85A125D7451 /* SharePhotosApp.swift in Sources */,
+				AC1E86AAED51AE6E82D4CA01 /* SharePhotosStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		82C0B6D193B135C66A0EACD0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 5FM245WCM5;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		8CE371D6B551671C8E8AAF8A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 5FM245WCM5;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BEA09C25410F97B020056DA0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.sharephotos.app;
+				PRODUCT_NAME = SharePhotos;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		E412C1F01C8C0267B5E161FA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.sharephotos.app;
+				PRODUCT_NAME = SharePhotos;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4269B7557DBE533A09B8915A /* Build configuration list for PBXProject "SharePhotos" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8CE371D6B551671C8E8AAF8A /* Debug */,
+				82C0B6D193B135C66A0EACD0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9ADAB9ABB690CE4517387EF8 /* Build configuration list for PBXNativeTarget "SharePhotos" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E412C1F01C8C0267B5E161FA /* Debug */,
+				BEA09C25410F97B020056DA0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DCAE09F24F846561FA7A04CE /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.9.12;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DEB98E2BF462A9147C1F2F1A /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DCAE09F24F846561FA7A04CE /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = CC378F0AFCA081F8C440D603 /* Project object */;
+}

@@ -1646,10 +1646,11 @@ label {
 }
 
 .photo-viewer {
-  width: min(1100px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: #101619;
   color: #fff;
   padding: 0;
@@ -1662,14 +1663,16 @@ label {
 .viewer-media {
   position: relative;
   display: block;
+  height: calc(100dvh - 150px);
   background: #101619;
 }
 
 .photo-viewer img {
   display: block;
   width: 100%;
-  min-height: min(68vh, 680px);
-  max-height: calc(100vh - 112px);
+  height: 100%;
+  min-height: 0;
+  max-height: none;
   object-fit: contain;
   background: #101619;
 }
@@ -1765,11 +1768,64 @@ label {
   right: 60px;
 }
 
+.viewer-delete {
+  position: absolute;
+  top: 10px;
+  right: 110px;
+  z-index: 2;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0;
+}
+
 .viewer-meta {
-  min-height: 48px;
-  padding: 14px 18px;
+  min-height: 42px;
+  padding: 10px 18px 8px;
   color: #d6e0e4;
   font-size: 13px;
+}
+
+.viewer-filmstrip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  min-height: 82px;
+  padding: 4px 18px calc(12px + env(safe-area-inset-bottom));
+  scrollbar-width: none;
+}
+
+.viewer-filmstrip::-webkit-scrollbar {
+  display: none;
+}
+
+.viewer-thumb {
+  flex: 0 0 auto;
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+  padding: 0;
+}
+
+.viewer-thumb.active {
+  border-color: #fff;
+}
+
+.viewer-thumb img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
 }
 
 @media (max-width: 860px) {
@@ -2333,4 +2389,291 @@ label {
     min-height: 44px;
     padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
   }
+}
+
+.photo-library-grid {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  gap: 0;
+  touch-action: pan-y;
+}
+
+.icloud-selection-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 0;
+  background: linear-gradient(180deg, rgba(250, 252, 247, 0.96), rgba(250, 252, 247, 0.76));
+  backdrop-filter: blur(16px);
+}
+
+.icloud-selection-toolbar button {
+  min-height: 38px;
+  border-radius: 999px;
+}
+
+.photo-library-grid.is-pinching {
+  touch-action: none;
+}
+
+.photo-library-grid .photo-library-tile {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #dce5e8;
+  box-shadow: none;
+}
+
+.photo-library-grid .photo-library-tile.selection-mode::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.photo-library-grid .photo-library-tile.selection-mode.is-selected::after {
+  opacity: 1;
+}
+
+.photo-library-grid:not(.is-pinching),
+.photo-library-grid:not(.is-pinching) .photo-library-tile {
+  transition:
+    height 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.photo-library-grid.is-pinching,
+.photo-library-grid.is-pinching .photo-library-tile {
+  transition: none;
+}
+
+.photo-library-grid .photo-library-button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.photo-selection-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: transparent;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(0.88);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.photo-library-tile.selection-mode .photo-selection-check {
+  opacity: 1;
+}
+
+.photo-library-tile.is-selected .photo-selection-check {
+  background: #1677ff;
+  color: #fff;
+  transform: scale(1);
+}
+
+.photo-library-tile.selection-mode .photo-menu-toggle,
+.photo-library-tile.selection-mode .photo-correction {
+  display: none !important;
+}
+
+.photo-library-grid .photo-library-button:hover,
+.photo-library-grid .photo-library-button:active {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.photo-library-grid .photo-media,
+.photo-library-grid .photo-media img,
+.photo-library-grid .photo-library-button img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-library-grid .photo-library-tile:hover,
+.photo-library-grid .photo-library-tile:hover .photo-library-button img {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.photo-library-grid .photo-library-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 4px;
+  background: linear-gradient(180deg, transparent, rgba(12, 19, 24, 0.72));
+  color: #fff;
+  padding: 34px 9px 9px;
+}
+
+.photo-library-grid .photo-library-meta strong {
+  font-size: 13px;
+}
+
+.photo-library-grid .photo-library-meta small {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+}
+
+.photo-library-grid.compact-grid .photo-library-meta {
+  display: none;
+}
+
+.photo-library-grid .photo-correction {
+  left: auto;
+  right: 7px;
+  bottom: 7px;
+  display: none;
+  grid-template-columns: repeat(2, 36px);
+  width: max-content;
+}
+
+.photo-library-grid .photo-library-tile.has-move .photo-correction {
+  left: 7px;
+  right: 7px;
+  grid-template-columns: minmax(0, 1fr) repeat(3, 36px);
+  width: auto;
+}
+
+.photo-library-grid .photo-library-tile.menu-open .photo-correction {
+  display: grid;
+}
+
+.photo-library-grid.compact-grid .photo-menu-toggle {
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 13px;
+}
+
+.photo-library-grid.compact-grid .photo-correction {
+  right: 4px;
+  bottom: 4px;
+  grid-template-columns: repeat(2, 30px);
+}
+
+.photo-library-grid.compact-grid .photo-library-tile.has-move .photo-correction {
+  left: 4px;
+  grid-template-columns: minmax(0, 1fr) repeat(3, 30px);
+}
+
+.photo-library-grid.compact-grid .photo-correction a,
+.photo-library-grid.compact-grid .photo-correction .icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+}
+
+.icloud-selection-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  margin-top: 12px;
+  padding: 10px 76px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(210, 225, 231, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  backdrop-filter: blur(18px);
+}
+
+.icloud-selection-bar strong {
+  font-size: 17px;
+}
+
+.selection-actions {
+  position: absolute;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.selection-actions button {
+  display: grid;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  place-items: center;
+  border-radius: 14px;
+  padding: 0;
+}
+
+.selection-sheet {
+  position: absolute;
+  right: 12px;
+  bottom: calc(70px + env(safe-area-inset-bottom));
+  display: grid;
+  min-width: min(310px, calc(100vw - 28px));
+  overflow: hidden;
+  border: 1px solid rgba(210, 225, 231, 0.9);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 22px 50px rgba(35, 45, 52, 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.selection-sheet button {
+  justify-content: start;
+  min-height: 54px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  box-shadow: none;
+  padding: 0 22px;
+  text-align: left;
+}
+
+.selection-sheet button + button {
+  border-top: 1px solid rgba(210, 225, 231, 0.78);
 }

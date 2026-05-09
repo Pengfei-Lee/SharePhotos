@@ -71,10 +71,13 @@ def ensure_store():
 def load_db():
     ensure_store()
     with DB_FILE.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+        db = json.load(fh)
+    if sync_all_folder_covers(db):
+        write_db(db)
+    return db
 
 
-def save_db(db):
+def write_db(db):
     DATA.mkdir(exist_ok=True)
     tmp = DB_FILE.with_suffix(".tmp")
     with tmp.open("w", encoding="utf-8") as fh:
@@ -82,10 +85,28 @@ def save_db(db):
     tmp.replace(DB_FILE)
 
 
+def save_db(db):
+    sync_all_folder_covers(db)
+    write_db(db)
+
+
 def slugify(value):
     value = re.sub(r"[^\w\u4e00-\u9fff.-]+", "-", value.strip(), flags=re.UNICODE)
     value = re.sub(r"-{2,}", "-", value).strip("-.")
     return value or "album"
+
+
+def unique_archive_name(filename, used_names):
+    path = Path(filename)
+    stem = path.stem or "photo"
+    suffix = path.suffix
+    candidate = path.name or "photo"
+    index = 2
+    while candidate in used_names:
+        candidate = "%s-%d%s" % (stem, index, suffix)
+        index += 1
+    used_names.add(candidate)
+    return candidate
 
 
 def remove_thumbnails(album_id, stored_name=None):
@@ -256,7 +277,92 @@ def preview_url(photo):
     return "/previews/%s/%s" % (photo.get("albumId", ""), quote(photo.get("storedName", "")))
 
 
+def photo_public_urls(album_id, photo):
+    item = dict(photo)
+    item["albumId"] = album_id
+    item["tinyUrl"] = thumb_url(item, "tiny")
+    item["cardUrl"] = thumb_url(item, "card")
+    item["coverUrl"] = thumb_url(item, "cover")
+    item["previewUrl"] = preview_url(item)
+    item["thumbnailUrl"] = item["cardUrl"]
+    item["imageUrl"] = item.get("url") or "/uploads/%s/%s" % (album_id, item.get("storedName", ""))
+    item["faceUrl"] = "/face-thumbs/%s/%s" % (album_id, quote(item.get("storedName", "")))
+    return item
+
+
+def folder_uses_scene_cover(folder):
+    return folder.get("id") in {"group-photo", "no-face"}
+
+
+def choose_folder_cover_photo(folder, photos):
+    if not photos:
+        return None
+    if folder_uses_scene_cover(folder):
+        return photos[0]
+    return next((photo for photo in photos if len(photo_folder_ids(photo)) == 1), None) or photos[0]
+
+
+def folder_cover_url(album_id, folder, photo):
+    if not photo:
+        return ""
+    item = photo_public_urls(album_id, photo)
+    if folder_uses_scene_cover(folder):
+        return item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or ""
+    return item.get("faceUrl") or item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or ""
+
+
+def sync_folder_covers(album):
+    folders = album.get("folders", [])
+    if not folders:
+        return False
+    changed = False
+    for folder in folders:
+        before = {
+            "photoIds": folder.get("photoIds"),
+            "photoCount": folder.get("photoCount"),
+            "updatedAt": folder.get("updatedAt"),
+            "coverPhotoId": folder.get("coverPhotoId"),
+            "coverUrl": folder.get("coverUrl"),
+            "cover_url": folder.get("cover_url"),
+        }
+        folder_photos = [
+            photo for photo in album.get("photos", [])
+            if folder.get("id") in photo_folder_ids(photo)
+        ]
+        folder_photos.sort(key=lambda item: item.get("createdAt", 0), reverse=True)
+        cover_photo = choose_folder_cover_photo(folder, folder_photos)
+        folder["photoIds"] = [photo["id"] for photo in folder_photos]
+        folder["photoCount"] = len(folder_photos)
+        folder["updatedAt"] = folder_photos[0].get("createdAt", folder.get("updatedAt")) if folder_photos else folder.get("updatedAt")
+        if cover_photo:
+            folder["coverPhotoId"] = cover_photo["id"]
+            folder["coverUrl"] = folder_cover_url(album["id"], folder, cover_photo)
+            folder["cover_url"] = folder["coverUrl"]
+        else:
+            folder.pop("coverPhotoId", None)
+            folder.pop("coverUrl", None)
+            folder.pop("cover_url", None)
+        after = {
+            "photoIds": folder.get("photoIds"),
+            "photoCount": folder.get("photoCount"),
+            "updatedAt": folder.get("updatedAt"),
+            "coverPhotoId": folder.get("coverPhotoId"),
+            "coverUrl": folder.get("coverUrl"),
+            "cover_url": folder.get("cover_url"),
+        }
+        changed = changed or before != after
+    return changed
+
+
+def sync_all_folder_covers(db):
+    changed = False
+    for album in db.get("albums", []):
+        changed = sync_folder_covers(album) or changed
+    return changed
+
+
 def public_album(album):
+    sync_folder_covers(album)
     visible = dict(album)
     visible["folders"] = []
     for folder in album.get("folders", []):
@@ -971,6 +1077,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/reanalyze$", path)
         if match:
             return self.reanalyze_album_request(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/photos/download-selected$", path)
+        if match:
+            return self.download_selected_photos(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/photos/delete-selected$", path)
+        if match:
+            return self.delete_selected_photos(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/merge$", path)
         if match:
             return self.merge_folder_request(match.group(1), match.group(2))
@@ -1218,6 +1330,31 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         return self.send_json({"album": public_album(album)})
 
+    def delete_selected_photos(self, album_id):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        photo_ids = payload.get("photoIds") or []
+        if not isinstance(photo_ids, list) or not photo_ids:
+            return self.send_error_json("Missing photoIds")
+        photo_ids = [str(item) for item in photo_ids if item]
+
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            deleted = 0
+            missing = []
+            for photo_id in photo_ids:
+                _, delete_error = remove_photo(album, photo_id)
+                if delete_error:
+                    missing.append(photo_id)
+                else:
+                    deleted += 1
+            save_db(db)
+        return self.send_json({"album": public_album(album), "deleted": deleted, "missing": missing})
+
     def delete_folder_request(self, album_id, folder_id):
         with LOCK:
             db = load_db()
@@ -1276,6 +1413,43 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def download_selected_photos(self, album_id):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        photo_ids = payload.get("photoIds") or []
+        if not isinstance(photo_ids, list) or not photo_ids:
+            return self.send_error_json("Missing photoIds")
+        photo_ids = [str(item) for item in photo_ids if item]
+
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+
+        photos_by_id = {photo["id"]: photo for photo in album.get("photos", [])}
+        photos = [photos_by_id[photo_id] for photo_id in photo_ids if photo_id in photos_by_id]
+        if not photos:
+            return self.send_error_json("No selected photos found", 404)
+
+        zip_path = DATA / ("%s-selected-%s.zip" % (album_id, uuid.uuid4().hex[:8]))
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            used_names = set()
+            for photo in photos:
+                source = UPLOADS / album_id / photo["storedName"]
+                if source.exists():
+                    name = unique_archive_name(photo.get("originalName") or photo["storedName"], used_names)
+                    archive.write(source, arcname=name)
+                video_name = photo.get("liveVideoStoredName")
+                if video_name:
+                    video_source = UPLOADS / album_id / video_name
+                    if video_source.exists():
+                        name = unique_archive_name(photo.get("liveVideoOriginalName") or video_name, used_names)
+                        archive.write(video_source, arcname=name)
+
+        filename = "%s-selected-%d.zip" % (slugify(album.get("name") or "photos"), len(photos))
+        return self.send_download(zip_path, filename, "application/zip")
 
     def send_download(self, path, filename, content_type=None):
         if not path.exists() or path.is_dir():

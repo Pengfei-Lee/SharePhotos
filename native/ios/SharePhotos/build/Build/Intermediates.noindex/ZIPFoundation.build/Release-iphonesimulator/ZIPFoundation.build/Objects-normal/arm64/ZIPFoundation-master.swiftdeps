@@ -1,0 +1,21 @@
+version: "Apple Swift version 5.6 (swiftlang-5.6.0.323.62 clang-1316.0.20.8)"
+options: "2a9680124cb01abe71c1538e9ef840b9c1249914959cca7b397c92c7e3ef9e1e"
+build_start_time: [1778083012, 991640090]
+build_end_time: [1778083017, 424511909]
+inputs:
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+MemoryFile.swift"
+  : [1778083012, 557324409]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+Reading.swift"
+  : [1778083012, 557529449]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+Writing.swift"
+  : [1778083012, 557658433]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive.swift"
+  : [1778083012, 557841777]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Data+Compression.swift"
+  : [1778083012, 557992935]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Data+Serialization.swift"
+  : [1778083012, 558202028]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Entry.swift"
+  : [1778083012, 558378696]
+  ? "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/FileManager+ZIP.swift"
+  : [1778083012, 558749437]

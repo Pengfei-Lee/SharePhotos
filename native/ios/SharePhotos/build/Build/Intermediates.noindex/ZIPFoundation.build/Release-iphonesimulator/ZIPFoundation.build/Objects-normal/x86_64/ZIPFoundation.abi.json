@@ -1,0 +1,4017 @@
+{
+  "kind": "Root",
+  "name": "TopLevel",
+  "printedName": "TopLevel",
+  "children": [
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Var",
+      "name": "defaultReadChunkSize",
+      "printedName": "defaultReadChunkSize",
+      "children": [
+        {
+          "kind": "TypeNominal",
+          "name": "UInt32",
+          "printedName": "Swift.UInt32",
+          "usr": "s:s6UInt32V"
+        }
+      ],
+      "declKind": "Var",
+      "usr": "s:13ZIPFoundation20defaultReadChunkSizes6UInt32Vvp",
+      "mangledName": "$s13ZIPFoundation20defaultReadChunkSizes6UInt32Vvp",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "HasInitialValue",
+        "HasStorage",
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "isLet": true,
+      "hasStorage": true
+    },
+    {
+      "kind": "Var",
+      "name": "defaultWriteChunkSize",
+      "printedName": "defaultWriteChunkSize",
+      "children": [
+        {
+          "kind": "TypeNominal",
+          "name": "UInt32",
+          "printedName": "Swift.UInt32",
+          "usr": "s:s6UInt32V"
+        }
+      ],
+      "declKind": "Var",
+      "usr": "s:13ZIPFoundation21defaultWriteChunkSizes6UInt32Vvp",
+      "mangledName": "$s13ZIPFoundation21defaultWriteChunkSizes6UInt32Vvp",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "HasInitialValue",
+        "HasStorage",
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "isLet": true,
+      "hasStorage": true
+    },
+    {
+      "kind": "Var",
+      "name": "defaultFilePermissions",
+      "printedName": "defaultFilePermissions",
+      "children": [
+        {
+          "kind": "TypeNominal",
+          "name": "UInt16",
+          "printedName": "Swift.UInt16",
+          "usr": "s:s6UInt16V"
+        }
+      ],
+      "declKind": "Var",
+      "usr": "s:13ZIPFoundation22defaultFilePermissionss6UInt16Vvp",
+      "mangledName": "$s13ZIPFoundation22defaultFilePermissionss6UInt16Vvp",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "HasInitialValue",
+        "HasStorage",
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "isLet": true,
+      "hasStorage": true
+    },
+    {
+      "kind": "Var",
+      "name": "defaultDirectoryPermissions",
+      "printedName": "defaultDirectoryPermissions",
+      "children": [
+        {
+          "kind": "TypeNominal",
+          "name": "UInt16",
+          "printedName": "Swift.UInt16",
+          "usr": "s:s6UInt16V"
+        }
+      ],
+      "declKind": "Var",
+      "usr": "s:13ZIPFoundation27defaultDirectoryPermissionss6UInt16Vvp",
+      "mangledName": "$s13ZIPFoundation27defaultDirectoryPermissionss6UInt16Vvp",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "HasInitialValue",
+        "HasStorage",
+        "AccessControl"
+      ],
+      "isLet": true,
+      "hasStorage": true
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "CompressionMethod",
+      "printedName": "CompressionMethod",
+      "children": [
+        {
+          "kind": "Var",
+          "name": "none",
+          "printedName": "none",
+          "children": [
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(ZIPFoundation.CompressionMethod.Type) -> ZIPFoundation.CompressionMethod",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "CompressionMethod",
+                  "printedName": "ZIPFoundation.CompressionMethod",
+                  "usr": "s:13ZIPFoundation17CompressionMethodO"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Metatype",
+                  "printedName": "ZIPFoundation.CompressionMethod.Type",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "CompressionMethod",
+                      "printedName": "ZIPFoundation.CompressionMethod",
+                      "usr": "s:13ZIPFoundation17CompressionMethodO"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "declKind": "EnumElement",
+          "usr": "s:13ZIPFoundation17CompressionMethodO4noneyA2CmF",
+          "mangledName": "$s13ZIPFoundation17CompressionMethodO4noneyA2CmF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "RawDocComment"
+          ],
+          "fixedbinaryorder": 0
+        },
+        {
+          "kind": "Var",
+          "name": "deflate",
+          "printedName": "deflate",
+          "children": [
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(ZIPFoundation.CompressionMethod.Type) -> ZIPFoundation.CompressionMethod",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "CompressionMethod",
+                  "printedName": "ZIPFoundation.CompressionMethod",
+                  "usr": "s:13ZIPFoundation17CompressionMethodO"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Metatype",
+                  "printedName": "ZIPFoundation.CompressionMethod.Type",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "CompressionMethod",
+                      "printedName": "ZIPFoundation.CompressionMethod",
+                      "usr": "s:13ZIPFoundation17CompressionMethodO"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "declKind": "EnumElement",
+          "usr": "s:13ZIPFoundation17CompressionMethodO7deflateyA2CmF",
+          "mangledName": "$s13ZIPFoundation17CompressionMethodO7deflateyA2CmF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "RawDocComment"
+          ],
+          "fixedbinaryorder": 1
+        },
+        {
+          "kind": "Constructor",
+          "name": "init",
+          "printedName": "init(rawValue:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.CompressionMethod?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "CompressionMethod",
+                  "printedName": "ZIPFoundation.CompressionMethod",
+                  "usr": "s:13ZIPFoundation17CompressionMethodO"
+                }
+              ],
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt16",
+              "printedName": "Swift.UInt16",
+              "usr": "s:s6UInt16V"
+            }
+          ],
+          "declKind": "Constructor",
+          "usr": "s:13ZIPFoundation17CompressionMethodO8rawValueACSgs6UInt16V_tcfc",
+          "mangledName": "$s13ZIPFoundation17CompressionMethodO8rawValueACSgs6UInt16V_tcfc",
+          "moduleName": "ZIPFoundation",
+          "implicit": true,
+          "declAttributes": [
+            "Inlinable"
+          ],
+          "init_kind": "Designated"
+        },
+        {
+          "kind": "Var",
+          "name": "rawValue",
+          "printedName": "rawValue",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt16",
+              "printedName": "Swift.UInt16",
+              "usr": "s:s6UInt16V"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation17CompressionMethodO8rawValues6UInt16Vvp",
+          "mangledName": "$s13ZIPFoundation17CompressionMethodO8rawValues6UInt16Vvp",
+          "moduleName": "ZIPFoundation",
+          "implicit": true,
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt16",
+                  "printedName": "Swift.UInt16",
+                  "usr": "s:s6UInt16V"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation17CompressionMethodO8rawValues6UInt16Vvg",
+              "mangledName": "$s13ZIPFoundation17CompressionMethodO8rawValues6UInt16Vvg",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "declAttributes": [
+                "Inlinable"
+              ],
+              "accessorKind": "get"
+            }
+          ]
+        }
+      ],
+      "declKind": "Enum",
+      "usr": "s:13ZIPFoundation17CompressionMethodO",
+      "mangledName": "$s13ZIPFoundation17CompressionMethodO",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "enumRawTypeName": "UInt16",
+      "isEnumExhaustive": true,
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "Equatable",
+          "printedName": "Equatable",
+          "usr": "s:SQ",
+          "mangledName": "$sSQ"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Hashable",
+          "printedName": "Hashable",
+          "usr": "s:SH",
+          "mangledName": "$sSH"
+        },
+        {
+          "kind": "Conformance",
+          "name": "RawRepresentable",
+          "printedName": "RawRepresentable",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "RawValue",
+              "printedName": "RawValue",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt16",
+                  "printedName": "Swift.UInt16",
+                  "usr": "s:s6UInt16V"
+                }
+              ]
+            }
+          ],
+          "usr": "s:SY",
+          "mangledName": "$sSY"
+        }
+      ]
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "Archive",
+      "printedName": "Archive",
+      "children": [
+        {
+          "kind": "TypeDecl",
+          "name": "ArchiveError",
+          "printedName": "ArchiveError",
+          "children": [
+            {
+              "kind": "Var",
+              "name": "unreadableArchive",
+              "printedName": "unreadableArchive",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO010unreadableB0yA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO010unreadableB0yA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 0
+            },
+            {
+              "kind": "Var",
+              "name": "unwritableArchive",
+              "printedName": "unwritableArchive",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO010unwritableB0yA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO010unwritableB0yA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 1
+            },
+            {
+              "kind": "Var",
+              "name": "invalidEntryPath",
+              "printedName": "invalidEntryPath",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO16invalidEntryPathyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO16invalidEntryPathyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 2
+            },
+            {
+              "kind": "Var",
+              "name": "invalidCompressionMethod",
+              "printedName": "invalidCompressionMethod",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO24invalidCompressionMethodyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO24invalidCompressionMethodyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 3
+            },
+            {
+              "kind": "Var",
+              "name": "invalidStartOfCentralDirectoryOffset",
+              "printedName": "invalidStartOfCentralDirectoryOffset",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO36invalidStartOfCentralDirectoryOffsetyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO36invalidStartOfCentralDirectoryOffsetyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 4
+            },
+            {
+              "kind": "Var",
+              "name": "missingEndOfCentralDirectoryRecord",
+              "printedName": "missingEndOfCentralDirectoryRecord",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO34missingEndOfCentralDirectoryRecordyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO34missingEndOfCentralDirectoryRecordyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 5
+            },
+            {
+              "kind": "Var",
+              "name": "cancelledOperation",
+              "printedName": "cancelledOperation",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO18cancelledOperationyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO18cancelledOperationyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 6
+            },
+            {
+              "kind": "Var",
+              "name": "invalidBufferSize",
+              "printedName": "invalidBufferSize",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.ArchiveError.Type) -> ZIPFoundation.Archive.ArchiveError",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ArchiveError",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError",
+                      "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.ArchiveError.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "ArchiveError",
+                          "printedName": "ZIPFoundation.Archive.ArchiveError",
+                          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO17invalidBufferSizeyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO17invalidBufferSizeyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 7
+            },
+            {
+              "kind": "Function",
+              "name": "__derived_enum_equals",
+              "printedName": "__derived_enum_equals(_:_:)",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Bool",
+                  "printedName": "Swift.Bool",
+                  "usr": "s:Sb"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "ArchiveError",
+                  "printedName": "ZIPFoundation.Archive.ArchiveError",
+                  "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "ArchiveError",
+                  "printedName": "ZIPFoundation.Archive.ArchiveError",
+                  "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO"
+                }
+              ],
+              "declKind": "Func",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO21__derived_enum_equalsySbAE_AEtFZ",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO21__derived_enum_equalsySbAE_AEtFZ",
+              "moduleName": "ZIPFoundation",
+              "static": true,
+              "implicit": true,
+              "declAttributes": [
+                "Implements"
+              ],
+              "funcSelfKind": "NonMutating"
+            },
+            {
+              "kind": "Var",
+              "name": "hashValue",
+              "printedName": "hashValue",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ],
+              "declKind": "Var",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO9hashValueSivp",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO9hashValueSivp",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "accessors": [
+                {
+                  "kind": "Accessor",
+                  "name": "Get",
+                  "printedName": "Get()",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ],
+                  "declKind": "Accessor",
+                  "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO9hashValueSivg",
+                  "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO9hashValueSivg",
+                  "moduleName": "ZIPFoundation",
+                  "implicit": true,
+                  "accessorKind": "get"
+                }
+              ]
+            },
+            {
+              "kind": "Function",
+              "name": "hash",
+              "printedName": "hash(into:)",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Void",
+                  "printedName": "()"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Hasher",
+                  "printedName": "Swift.Hasher",
+                  "paramValueOwnership": "InOut",
+                  "usr": "s:s6HasherV"
+                }
+              ],
+              "declKind": "Func",
+              "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO4hash4intoys6HasherVz_tF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO4hash4intoys6HasherVz_tF",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "funcSelfKind": "NonMutating"
+            }
+          ],
+          "declKind": "Enum",
+          "usr": "s:13ZIPFoundation7ArchiveC0B5ErrorO",
+          "mangledName": "$s13ZIPFoundation7ArchiveC0B5ErrorO",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "isEnumExhaustive": true,
+          "conformances": [
+            {
+              "kind": "Conformance",
+              "name": "Equatable",
+              "printedName": "Equatable",
+              "usr": "s:SQ",
+              "mangledName": "$sSQ"
+            },
+            {
+              "kind": "Conformance",
+              "name": "Hashable",
+              "printedName": "Hashable",
+              "usr": "s:SH",
+              "mangledName": "$sSH"
+            },
+            {
+              "kind": "Conformance",
+              "name": "Error",
+              "printedName": "Error",
+              "usr": "s:s5ErrorP",
+              "mangledName": "$ss5ErrorP"
+            },
+            {
+              "kind": "Conformance",
+              "name": "Sendable",
+              "printedName": "Sendable",
+              "usr": "s:s8SendableP",
+              "mangledName": "$ss8SendableP"
+            }
+          ]
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "AccessMode",
+          "printedName": "AccessMode",
+          "children": [
+            {
+              "kind": "Var",
+              "name": "create",
+              "printedName": "create",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.AccessMode.Type) -> ZIPFoundation.Archive.AccessMode",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "AccessMode",
+                      "printedName": "ZIPFoundation.Archive.AccessMode",
+                      "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.AccessMode.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "AccessMode",
+                          "printedName": "ZIPFoundation.Archive.AccessMode",
+                          "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO6createyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO6createyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 0
+            },
+            {
+              "kind": "Var",
+              "name": "read",
+              "printedName": "read",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.AccessMode.Type) -> ZIPFoundation.Archive.AccessMode",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "AccessMode",
+                      "printedName": "ZIPFoundation.Archive.AccessMode",
+                      "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.AccessMode.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "AccessMode",
+                          "printedName": "ZIPFoundation.Archive.AccessMode",
+                          "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO4readyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO4readyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 1
+            },
+            {
+              "kind": "Var",
+              "name": "update",
+              "printedName": "update",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Archive.AccessMode.Type) -> ZIPFoundation.Archive.AccessMode",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "AccessMode",
+                      "printedName": "ZIPFoundation.Archive.AccessMode",
+                      "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Archive.AccessMode.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "AccessMode",
+                          "printedName": "ZIPFoundation.Archive.AccessMode",
+                          "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO6updateyA2EmF",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO6updateyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 2
+            },
+            {
+              "kind": "Constructor",
+              "name": "init",
+              "printedName": "init(rawValue:)",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Optional",
+                  "printedName": "ZIPFoundation.Archive.AccessMode?",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "AccessMode",
+                      "printedName": "ZIPFoundation.Archive.AccessMode",
+                      "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                    }
+                  ],
+                  "usr": "s:Sq"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt",
+                  "printedName": "Swift.UInt",
+                  "usr": "s:Su"
+                }
+              ],
+              "declKind": "Constructor",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO8rawValueAESgSu_tcfc",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO8rawValueAESgSu_tcfc",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "declAttributes": [
+                "Inlinable"
+              ],
+              "init_kind": "Designated"
+            },
+            {
+              "kind": "Var",
+              "name": "rawValue",
+              "printedName": "rawValue",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt",
+                  "printedName": "Swift.UInt",
+                  "usr": "s:Su"
+                }
+              ],
+              "declKind": "Var",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO8rawValueSuvp",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO8rawValueSuvp",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "accessors": [
+                {
+                  "kind": "Accessor",
+                  "name": "Get",
+                  "printedName": "Get()",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "UInt",
+                      "printedName": "Swift.UInt",
+                      "usr": "s:Su"
+                    }
+                  ],
+                  "declKind": "Accessor",
+                  "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO8rawValueSuvg",
+                  "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO8rawValueSuvg",
+                  "moduleName": "ZIPFoundation",
+                  "implicit": true,
+                  "declAttributes": [
+                    "Inlinable"
+                  ],
+                  "accessorKind": "get"
+                }
+              ]
+            }
+          ],
+          "declKind": "Enum",
+          "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO",
+          "mangledName": "$s13ZIPFoundation7ArchiveC10AccessModeO",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "enumRawTypeName": "UInt",
+          "isEnumExhaustive": true,
+          "conformances": [
+            {
+              "kind": "Conformance",
+              "name": "Equatable",
+              "printedName": "Equatable",
+              "usr": "s:SQ",
+              "mangledName": "$sSQ"
+            },
+            {
+              "kind": "Conformance",
+              "name": "Hashable",
+              "printedName": "Hashable",
+              "usr": "s:SH",
+              "mangledName": "$sSH"
+            },
+            {
+              "kind": "Conformance",
+              "name": "RawRepresentable",
+              "printedName": "RawRepresentable",
+              "children": [
+                {
+                  "kind": "TypeWitness",
+                  "name": "RawValue",
+                  "printedName": "RawValue",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "UInt",
+                      "printedName": "Swift.UInt",
+                      "usr": "s:Su"
+                    }
+                  ]
+                }
+              ],
+              "usr": "s:SY",
+              "mangledName": "$sSY"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "preferredEncoding",
+          "printedName": "preferredEncoding",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Swift.String.Encoding?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Encoding",
+                  "printedName": "Swift.String.Encoding",
+                  "usr": "s:SS10FoundationE8EncodingV"
+                }
+              ],
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC17preferredEncoding33_9865C5B1FB05F958EA64FE395BC8BDEBLLSS10FoundationE0D0VSgvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC17preferredEncoding33_9865C5B1FB05F958EA64FE395BC8BDEBLLSS10FoundationE0D0VSgvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "HasInitialValue",
+            "Final",
+            "HasStorage",
+            "AccessControl"
+          ],
+          "fixedbinaryorder": 0,
+          "hasStorage": true
+        },
+        {
+          "kind": "Var",
+          "name": "url",
+          "printedName": "url",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC3url10Foundation3URLVvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC3url10Foundation3URLVvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "HasStorage",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "fixedbinaryorder": 1,
+          "isLet": true,
+          "hasStorage": true,
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "URL",
+                  "printedName": "Foundation.URL",
+                  "usr": "s:10Foundation3URLV"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation7ArchiveC3url10Foundation3URLVvg",
+              "mangledName": "$s13ZIPFoundation7ArchiveC3url10Foundation3URLVvg",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "declAttributes": [
+                "Final",
+                "Transparent"
+              ],
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "accessMode",
+          "printedName": "accessMode",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "AccessMode",
+              "printedName": "ZIPFoundation.Archive.AccessMode",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC10accessModeAC06AccessD0Ovp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC10accessModeAC06AccessD0Ovp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "HasStorage",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "fixedbinaryorder": 2,
+          "isLet": true,
+          "hasStorage": true,
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "AccessMode",
+                  "printedName": "ZIPFoundation.Archive.AccessMode",
+                  "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation7ArchiveC10accessModeAC06AccessD0Ovg",
+              "mangledName": "$s13ZIPFoundation7ArchiveC10accessModeAC06AccessD0Ovg",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "declAttributes": [
+                "Final",
+                "Transparent"
+              ],
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "archiveFile",
+          "printedName": "archiveFile",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UnsafeMutablePointer",
+              "printedName": "Swift.UnsafeMutablePointer<Darwin.__sFILE>",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "__sFILE",
+                  "printedName": "Darwin.__sFILE",
+                  "usr": "c:@S@__sFILE"
+                }
+              ],
+              "usr": "s:Sp"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC11archiveFileSpySo7__sFILEVGvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC11archiveFileSpySo7__sFILEVGvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "Final",
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 3,
+          "hasStorage": true
+        },
+        {
+          "kind": "Var",
+          "name": "endOfCentralDirectoryRecord",
+          "printedName": "endOfCentralDirectoryRecord",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "EndOfCentralDirectoryRecord",
+              "printedName": "ZIPFoundation.Archive.EndOfCentralDirectoryRecord",
+              "usr": "s:13ZIPFoundation7ArchiveC27EndOfCentralDirectoryRecordV"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC27endOfCentralDirectoryRecordAC03EnddefG0Vvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC27endOfCentralDirectoryRecordAC03EnddefG0Vvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "Final",
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 4,
+          "hasStorage": true
+        },
+        {
+          "kind": "Constructor",
+          "name": "init",
+          "printedName": "init(url:accessMode:preferredEncoding:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.Archive?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Archive",
+                  "printedName": "ZIPFoundation.Archive",
+                  "usr": "s:13ZIPFoundation7ArchiveC"
+                }
+              ],
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "AccessMode",
+              "printedName": "ZIPFoundation.Archive.AccessMode",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Swift.String.Encoding?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Encoding",
+                  "printedName": "Swift.String.Encoding",
+                  "usr": "s:SS10FoundationE8EncodingV"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Constructor",
+          "usr": "s:13ZIPFoundation7ArchiveC3url10accessMode17preferredEncodingACSg10Foundation3URLV_AC06AccessE0OSSAHE0G0VSgtcfc",
+          "mangledName": "$s13ZIPFoundation7ArchiveC3url10accessMode17preferredEncodingACSg10Foundation3URLV_AC06AccessE0OSSAHE0G0VSgtcfc",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "init_kind": "Designated"
+        },
+        {
+          "kind": "Var",
+          "name": "memoryFile",
+          "printedName": "memoryFile",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.MemoryFile?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "MemoryFile",
+                  "printedName": "ZIPFoundation.MemoryFile",
+                  "usr": "s:13ZIPFoundation10MemoryFileC"
+                }
+              ],
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC10memoryFileAA06MemoryD0CSgvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC10memoryFileAA06MemoryD0CSgvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "HasInitialValue",
+            "Final",
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 5,
+          "hasStorage": true
+        },
+        {
+          "kind": "Constructor",
+          "name": "init",
+          "printedName": "init(data:accessMode:preferredEncoding:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.Archive?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Archive",
+                  "printedName": "ZIPFoundation.Archive",
+                  "usr": "s:13ZIPFoundation7ArchiveC"
+                }
+              ],
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Data",
+              "printedName": "Foundation.Data",
+              "hasDefaultArg": true,
+              "usr": "s:10Foundation4DataV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "AccessMode",
+              "printedName": "ZIPFoundation.Archive.AccessMode",
+              "usr": "s:13ZIPFoundation7ArchiveC10AccessModeO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Swift.String.Encoding?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Encoding",
+                  "printedName": "Swift.String.Encoding",
+                  "usr": "s:SS10FoundationE8EncodingV"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Constructor",
+          "usr": "s:13ZIPFoundation7ArchiveC4data10accessMode17preferredEncodingACSg10Foundation4DataV_AC06AccessE0OSSAHE0G0VSgtcfc",
+          "mangledName": "$s13ZIPFoundation7ArchiveC4data10accessMode17preferredEncodingACSg10Foundation4DataV_AC06AccessE0OSSAHE0G0VSgtcfc",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "init_kind": "Designated"
+        },
+        {
+          "kind": "Function",
+          "name": "makeIterator",
+          "printedName": "makeIterator()",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "AnyIterator",
+              "printedName": "Swift.AnyIterator<ZIPFoundation.Entry>",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Entry",
+                  "printedName": "ZIPFoundation.Entry",
+                  "usr": "s:13ZIPFoundation5EntryV"
+                }
+              ],
+              "usr": "s:s11AnyIteratorV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC12makeIterators03AnyD0VyAA5EntryVGyF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC12makeIterators03AnyD0VyAA5EntryVGyF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl"
+          ],
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Subscript",
+          "name": "subscript",
+          "printedName": "subscript(_:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.Entry?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Entry",
+                  "printedName": "ZIPFoundation.Entry",
+                  "usr": "s:13ZIPFoundation5EntryV"
+                }
+              ],
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            }
+          ],
+          "declKind": "Subscript",
+          "usr": "s:13ZIPFoundation7ArchiveCyAA5EntryVSgSScip",
+          "mangledName": "$s13ZIPFoundation7ArchiveCyAA5EntryVSgSScip",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Optional",
+                  "printedName": "ZIPFoundation.Entry?",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Entry",
+                      "printedName": "ZIPFoundation.Entry",
+                      "usr": "s:13ZIPFoundation5EntryV"
+                    }
+                  ],
+                  "usr": "s:Sq"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "String",
+                  "printedName": "Swift.String",
+                  "usr": "s:SS"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation7ArchiveCyAA5EntryVSgSScig",
+              "mangledName": "$s13ZIPFoundation7ArchiveCyAA5EntryVSgSScig",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "Final"
+              ],
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "data",
+          "printedName": "data",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Data?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ],
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation7ArchiveC4data10Foundation4DataVSgvp",
+          "mangledName": "$s13ZIPFoundation7ArchiveC4data10Foundation4DataVSgvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Optional",
+                  "printedName": "Foundation.Data?",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Data",
+                      "printedName": "Foundation.Data",
+                      "usr": "s:10Foundation4DataV"
+                    }
+                  ],
+                  "usr": "s:Sq"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation7ArchiveC4data10Foundation4DataVSgvg",
+              "mangledName": "$s13ZIPFoundation7ArchiveC4data10Foundation4DataVSgvg",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "Final"
+              ],
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "extract",
+          "printedName": "extract(_:to:bufferSize:skipCRC32:progress:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "hasDefaultArg": true,
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC7extract_2to10bufferSize9skipCRC328progresss6UInt32VAA5EntryV_10Foundation3URLVAJSbSo10NSProgressCSgtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC7extract_2to10bufferSize9skipCRC328progresss6UInt32VAA5EntryV_10Foundation3URLVAJSbSo10NSProgressCSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "extract",
+          "printedName": "extract(_:bufferSize:skipCRC32:progress:consumer:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "hasDefaultArg": true,
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Foundation.Data) throws -> ()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Void",
+                  "printedName": "()"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC7extract_10bufferSize9skipCRC328progress8consumers6UInt32VAA5EntryV_AJSbSo10NSProgressCSgy10Foundation4DataVKXEtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC7extract_10bufferSize9skipCRC328progress8consumers6UInt32VAA5EntryV_AJSbSo10NSProgressCSgy10Foundation4DataVKXEtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "addEntry",
+          "printedName": "addEntry(with:relativeTo:compressionMethod:bufferSize:progress:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "CompressionMethod",
+              "printedName": "ZIPFoundation.CompressionMethod",
+              "hasDefaultArg": true,
+              "usr": "s:13ZIPFoundation17CompressionMethodO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC8addEntry4with10relativeTo17compressionMethod10bufferSize8progressySS_10Foundation3URLVAA011CompressionI0Os6UInt32VSo10NSProgressCSgtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC8addEntry4with10relativeTo17compressionMethod10bufferSize8progressySS_10Foundation3URLVAA011CompressionI0Os6UInt32VSo10NSProgressCSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "addEntry",
+          "printedName": "addEntry(with:fileURL:compressionMethod:bufferSize:progress:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "CompressionMethod",
+              "printedName": "ZIPFoundation.CompressionMethod",
+              "hasDefaultArg": true,
+              "usr": "s:13ZIPFoundation17CompressionMethodO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC8addEntry4with7fileURL17compressionMethod10bufferSize8progressySS_10Foundation0G0VAA011CompressionI0Os6UInt32VSo10NSProgressCSgtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC8addEntry4with7fileURL17compressionMethod10bufferSize8progressySS_10Foundation0G0VAA011CompressionI0Os6UInt32VSo10NSProgressCSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "addEntry",
+          "printedName": "addEntry(with:type:uncompressedSize:modificationDate:permissions:compressionMethod:bufferSize:progress:provider:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "EntryType",
+              "printedName": "ZIPFoundation.Entry.EntryType",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Date",
+              "printedName": "Foundation.Date",
+              "hasDefaultArg": true,
+              "usr": "s:10Foundation4DateV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Swift.UInt16?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt16",
+                  "printedName": "Swift.UInt16",
+                  "usr": "s:s6UInt16V"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "CompressionMethod",
+              "printedName": "ZIPFoundation.CompressionMethod",
+              "hasDefaultArg": true,
+              "usr": "s:13ZIPFoundation17CompressionMethodO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Swift.Int, Swift.Int) throws -> Foundation.Data",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Tuple",
+                  "printedName": "(Swift.Int, Swift.Int)",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ]
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC8addEntry4with4type16uncompressedSize16modificationDate11permissions17compressionMethod06bufferH08progress8providerySS_AA0D0V0D4TypeOs6UInt32V10Foundation0J0Vs6UInt16VSgAA011CompressionM0OASSo10NSProgressCSgAT4DataVSi_SitKXEtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC8addEntry4with4type16uncompressedSize16modificationDate11permissions17compressionMethod06bufferH08progress8providerySS_AA0D0V0D4TypeOs6UInt32V10Foundation0J0Vs6UInt16VSgAA011CompressionM0OASSo10NSProgressCSgAT4DataVSi_SitKXEtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "remove",
+          "printedName": "remove(_:bufferSize:progress:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "hasDefaultArg": true,
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC6remove_10bufferSize8progressyAA5EntryV_s6UInt32VSo10NSProgressCSgtKF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC6remove_10bufferSize8progressyAA5EntryV_s6UInt32VSo10NSProgressCSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "totalUnitCountForRemoving",
+          "printedName": "totalUnitCountForRemoving(_:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Int64",
+              "printedName": "Swift.Int64",
+              "usr": "s:s5Int64V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC25totalUnitCountForRemovingys5Int64VAA5EntryVF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC25totalUnitCountForRemovingys5Int64VAA5EntryVF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "totalUnitCountForReading",
+          "printedName": "totalUnitCountForReading(_:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Int64",
+              "printedName": "Swift.Int64",
+              "usr": "s:s5Int64V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC24totalUnitCountForReadingys5Int64VAA5EntryVF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC24totalUnitCountForReadingys5Int64VAA5EntryVF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "totalUnitCountForAddingItem",
+          "printedName": "totalUnitCountForAddingItem(at:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Int64",
+              "printedName": "Swift.Int64",
+              "usr": "s:s5Int64V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation7ArchiveC27totalUnitCountForAddingItem2ats5Int64V10Foundation3URLV_tF",
+          "mangledName": "$s13ZIPFoundation7ArchiveC27totalUnitCountForAddingItem2ats5Int64V10Foundation3URLV_tF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "Final",
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "funcSelfKind": "NonMutating"
+        }
+      ],
+      "declKind": "Class",
+      "usr": "s:13ZIPFoundation7ArchiveC",
+      "mangledName": "$s13ZIPFoundation7ArchiveC",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "Final",
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "Sequence",
+          "printedName": "Sequence",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Entry",
+                  "printedName": "ZIPFoundation.Entry",
+                  "usr": "s:13ZIPFoundation5EntryV"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Iterator",
+              "printedName": "Iterator",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "AnyIterator",
+                  "printedName": "Swift.AnyIterator<ZIPFoundation.Entry>",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Entry",
+                      "printedName": "ZIPFoundation.Entry",
+                      "usr": "s:13ZIPFoundation5EntryV"
+                    }
+                  ],
+                  "usr": "s:s11AnyIteratorV"
+                }
+              ]
+            }
+          ],
+          "usr": "s:ST",
+          "mangledName": "$sST"
+        }
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Var",
+      "name": "crcTable",
+      "printedName": "crcTable",
+      "children": [
+        {
+          "kind": "TypeNominal",
+          "name": "Array",
+          "printedName": "[Swift.UInt32]",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            }
+          ],
+          "usr": "s:Sa"
+        }
+      ],
+      "declKind": "Var",
+      "usr": "s:13ZIPFoundation8crcTableSays6UInt32VGvp",
+      "mangledName": "$s13ZIPFoundation8crcTableSays6UInt32VGvp",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "HasInitialValue",
+        "HasStorage",
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "isLet": true,
+      "hasStorage": true
+    },
+    {
+      "kind": "Import",
+      "name": "Compression",
+      "printedName": "Compression",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "CoreFoundation",
+      "printedName": "CoreFoundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation"
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "Entry",
+      "printedName": "Entry",
+      "children": [
+        {
+          "kind": "TypeDecl",
+          "name": "EntryType",
+          "printedName": "EntryType",
+          "children": [
+            {
+              "kind": "Var",
+              "name": "file",
+              "printedName": "file",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Entry.EntryType.Type) -> ZIPFoundation.Entry.EntryType",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "EntryType",
+                      "printedName": "ZIPFoundation.Entry.EntryType",
+                      "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Entry.EntryType.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "EntryType",
+                          "printedName": "ZIPFoundation.Entry.EntryType",
+                          "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO4fileyA2EmF",
+              "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO4fileyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 0
+            },
+            {
+              "kind": "Var",
+              "name": "directory",
+              "printedName": "directory",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Entry.EntryType.Type) -> ZIPFoundation.Entry.EntryType",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "EntryType",
+                      "printedName": "ZIPFoundation.Entry.EntryType",
+                      "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Entry.EntryType.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "EntryType",
+                          "printedName": "ZIPFoundation.Entry.EntryType",
+                          "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO9directoryyA2EmF",
+              "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO9directoryyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 1
+            },
+            {
+              "kind": "Var",
+              "name": "symlink",
+              "printedName": "symlink",
+              "children": [
+                {
+                  "kind": "TypeFunc",
+                  "name": "Function",
+                  "printedName": "(ZIPFoundation.Entry.EntryType.Type) -> ZIPFoundation.Entry.EntryType",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "EntryType",
+                      "printedName": "ZIPFoundation.Entry.EntryType",
+                      "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Metatype",
+                      "printedName": "ZIPFoundation.Entry.EntryType.Type",
+                      "children": [
+                        {
+                          "kind": "TypeNominal",
+                          "name": "EntryType",
+                          "printedName": "ZIPFoundation.Entry.EntryType",
+                          "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "declKind": "EnumElement",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO7symlinkyA2EmF",
+              "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO7symlinkyA2EmF",
+              "moduleName": "ZIPFoundation",
+              "declAttributes": [
+                "RawDocComment"
+              ],
+              "fixedbinaryorder": 2
+            },
+            {
+              "kind": "Constructor",
+              "name": "init",
+              "printedName": "init(rawValue:)",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Optional",
+                  "printedName": "ZIPFoundation.Entry.EntryType?",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "EntryType",
+                      "printedName": "ZIPFoundation.Entry.EntryType",
+                      "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                    }
+                  ],
+                  "usr": "s:Sq"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ],
+              "declKind": "Constructor",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO8rawValueAESgSi_tcfc",
+              "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO8rawValueAESgSi_tcfc",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "declAttributes": [
+                "Inlinable"
+              ],
+              "init_kind": "Designated"
+            },
+            {
+              "kind": "Var",
+              "name": "rawValue",
+              "printedName": "rawValue",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ],
+              "declKind": "Var",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO8rawValueSivp",
+              "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO8rawValueSivp",
+              "moduleName": "ZIPFoundation",
+              "implicit": true,
+              "accessors": [
+                {
+                  "kind": "Accessor",
+                  "name": "Get",
+                  "printedName": "Get()",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ],
+                  "declKind": "Accessor",
+                  "usr": "s:13ZIPFoundation5EntryV0B4TypeO8rawValueSivg",
+                  "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO8rawValueSivg",
+                  "moduleName": "ZIPFoundation",
+                  "implicit": true,
+                  "declAttributes": [
+                    "Inlinable"
+                  ],
+                  "accessorKind": "get"
+                }
+              ]
+            }
+          ],
+          "declKind": "Enum",
+          "usr": "s:13ZIPFoundation5EntryV0B4TypeO",
+          "mangledName": "$s13ZIPFoundation5EntryV0B4TypeO",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "enumRawTypeName": "Int",
+          "isEnumExhaustive": true,
+          "conformances": [
+            {
+              "kind": "Conformance",
+              "name": "Equatable",
+              "printedName": "Equatable",
+              "usr": "s:SQ",
+              "mangledName": "$sSQ"
+            },
+            {
+              "kind": "Conformance",
+              "name": "Hashable",
+              "printedName": "Hashable",
+              "usr": "s:SH",
+              "mangledName": "$sSH"
+            },
+            {
+              "kind": "Conformance",
+              "name": "RawRepresentable",
+              "printedName": "RawRepresentable",
+              "children": [
+                {
+                  "kind": "TypeWitness",
+                  "name": "RawValue",
+                  "printedName": "RawValue",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ]
+                }
+              ],
+              "usr": "s:SY",
+              "mangledName": "$sSY"
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "path",
+          "printedName": "path(using:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Encoding",
+              "printedName": "Swift.String.Encoding",
+              "usr": "s:SS10FoundationE8EncodingV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation5EntryV4path5usingS2S10FoundationE8EncodingV_tF",
+          "mangledName": "$s13ZIPFoundation5EntryV4path5usingS2S10FoundationE8EncodingV_tF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Var",
+          "name": "path",
+          "printedName": "path",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "String",
+              "printedName": "Swift.String",
+              "usr": "s:SS"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV4pathSSvp",
+          "mangledName": "$s13ZIPFoundation5EntryV4pathSSvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "String",
+                  "printedName": "Swift.String",
+                  "usr": "s:SS"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV4pathSSvg",
+              "mangledName": "$s13ZIPFoundation5EntryV4pathSSvg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "fileAttributes",
+          "printedName": "fileAttributes",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Dictionary",
+              "printedName": "[Foundation.FileAttributeKey : Any]",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "FileAttributeKey",
+                  "printedName": "Foundation.FileAttributeKey",
+                  "usr": "c:@T@NSFileAttributeKey"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "ProtocolComposition",
+                  "printedName": "Any"
+                }
+              ],
+              "usr": "s:SD"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV14fileAttributesSDySo18NSFileAttributeKeyaypGvp",
+          "mangledName": "$s13ZIPFoundation5EntryV14fileAttributesSDySo18NSFileAttributeKeyaypGvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Dictionary",
+                  "printedName": "[Foundation.FileAttributeKey : Any]",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "FileAttributeKey",
+                      "printedName": "Foundation.FileAttributeKey",
+                      "usr": "c:@T@NSFileAttributeKey"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "ProtocolComposition",
+                      "printedName": "Any"
+                    }
+                  ],
+                  "usr": "s:SD"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV14fileAttributesSDySo18NSFileAttributeKeyaypGvg",
+              "mangledName": "$s13ZIPFoundation5EntryV14fileAttributesSDySo18NSFileAttributeKeyaypGvg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "checksum",
+          "printedName": "checksum",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV8checksums6UInt32Vvp",
+          "mangledName": "$s13ZIPFoundation5EntryV8checksums6UInt32Vvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt32",
+                  "printedName": "Swift.UInt32",
+                  "usr": "s:s6UInt32V"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV8checksums6UInt32Vvg",
+              "mangledName": "$s13ZIPFoundation5EntryV8checksums6UInt32Vvg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "type",
+          "printedName": "type",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "EntryType",
+              "printedName": "ZIPFoundation.Entry.EntryType",
+              "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV4typeAC0B4TypeOvp",
+          "mangledName": "$s13ZIPFoundation5EntryV4typeAC0B4TypeOvp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "EntryType",
+                  "printedName": "ZIPFoundation.Entry.EntryType",
+                  "usr": "s:13ZIPFoundation5EntryV0B4TypeO"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV4typeAC0B4TypeOvg",
+              "mangledName": "$s13ZIPFoundation5EntryV4typeAC0B4TypeOvg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "compressedSize",
+          "printedName": "compressedSize",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV14compressedSizeSivp",
+          "mangledName": "$s13ZIPFoundation5EntryV14compressedSizeSivp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV14compressedSizeSivg",
+              "mangledName": "$s13ZIPFoundation5EntryV14compressedSizeSivg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "uncompressedSize",
+          "printedName": "uncompressedSize",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV16uncompressedSizeSivp",
+          "mangledName": "$s13ZIPFoundation5EntryV16uncompressedSizeSivp",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "accessors": [
+            {
+              "kind": "Accessor",
+              "name": "Get",
+              "printedName": "Get()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ],
+              "declKind": "Accessor",
+              "usr": "s:13ZIPFoundation5EntryV16uncompressedSizeSivg",
+              "mangledName": "$s13ZIPFoundation5EntryV16uncompressedSizeSivg",
+              "moduleName": "ZIPFoundation",
+              "accessorKind": "get"
+            }
+          ]
+        },
+        {
+          "kind": "Var",
+          "name": "centralDirectoryStructure",
+          "printedName": "centralDirectoryStructure",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "CentralDirectoryStructure",
+              "printedName": "ZIPFoundation.Entry.CentralDirectoryStructure",
+              "usr": "s:13ZIPFoundation5EntryV25CentralDirectoryStructureV"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV25centralDirectoryStructureAC07CentraldE0Vvp",
+          "mangledName": "$s13ZIPFoundation5EntryV25centralDirectoryStructureAC07CentraldE0Vvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 0,
+          "isLet": true,
+          "hasStorage": true
+        },
+        {
+          "kind": "Var",
+          "name": "localFileHeader",
+          "printedName": "localFileHeader",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "LocalFileHeader",
+              "printedName": "ZIPFoundation.Entry.LocalFileHeader",
+              "usr": "s:13ZIPFoundation5EntryV15LocalFileHeaderV"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV15localFileHeaderAC05LocaldE0Vvp",
+          "mangledName": "$s13ZIPFoundation5EntryV15localFileHeaderAC05LocaldE0Vvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 1,
+          "isLet": true,
+          "hasStorage": true
+        },
+        {
+          "kind": "Var",
+          "name": "dataDescriptor",
+          "printedName": "dataDescriptor",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "ZIPFoundation.Entry.DataDescriptor?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "DataDescriptor",
+                  "printedName": "ZIPFoundation.Entry.DataDescriptor",
+                  "usr": "s:13ZIPFoundation5EntryV14DataDescriptorV"
+                }
+              ],
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Var",
+          "usr": "s:13ZIPFoundation5EntryV14dataDescriptorAC04DataD0VSgvp",
+          "mangledName": "$s13ZIPFoundation5EntryV14dataDescriptorAC04DataD0VSgvp",
+          "moduleName": "ZIPFoundation",
+          "isInternal": true,
+          "declAttributes": [
+            "HasStorage"
+          ],
+          "fixedbinaryorder": 2,
+          "isLet": true,
+          "hasStorage": true
+        },
+        {
+          "kind": "Function",
+          "name": "==",
+          "printedName": "==(_:_:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Entry",
+              "printedName": "ZIPFoundation.Entry",
+              "usr": "s:13ZIPFoundation5EntryV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:13ZIPFoundation5EntryV2eeoiySbAC_ACtFZ",
+          "mangledName": "$s13ZIPFoundation5EntryV2eeoiySbAC_ACtFZ",
+          "moduleName": "ZIPFoundation",
+          "static": true,
+          "declAttributes": [
+            "AccessControl"
+          ],
+          "funcSelfKind": "NonMutating"
+        }
+      ],
+      "declKind": "Struct",
+      "usr": "s:13ZIPFoundation5EntryV",
+      "mangledName": "$s13ZIPFoundation5EntryV",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "AccessControl",
+        "RawDocComment"
+      ],
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "Equatable",
+          "printedName": "Equatable",
+          "usr": "s:SQ",
+          "mangledName": "$sSQ"
+        }
+      ]
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "ZIPFoundation",
+      "declAttributes": [
+        "RawDocComment"
+      ]
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "Data",
+      "printedName": "Data",
+      "children": [
+        {
+          "kind": "Function",
+          "name": "crc32",
+          "printedName": "crc32(checksum:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:10Foundation4DataV13ZIPFoundationE5crc328checksums6UInt32VAH_tF",
+          "mangledName": "$s10Foundation4DataV13ZIPFoundationE5crc328checksums6UInt32VAH_tF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "compress",
+          "printedName": "compress(size:bufferSize:provider:consumer:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Swift.Int, Swift.Int) throws -> Foundation.Data",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Tuple",
+                  "printedName": "(Swift.Int, Swift.Int)",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ]
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Foundation.Data) throws -> ()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Void",
+                  "printedName": "()"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:10Foundation4DataV13ZIPFoundationE8compress4size10bufferSize8provider8consumers6UInt32VSi_SiACSi_SitKXEyACKXEtKFZ",
+          "mangledName": "$s10Foundation4DataV13ZIPFoundationE8compress4size10bufferSize8provider8consumers6UInt32VSi_SiACSi_SitKXEyACKXEtKFZ",
+          "moduleName": "ZIPFoundation",
+          "static": true,
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "decompress",
+          "printedName": "decompress(size:bufferSize:skipCRC32:provider:consumer:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "UInt32",
+              "printedName": "Swift.UInt32",
+              "usr": "s:s6UInt32V"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Int",
+              "printedName": "Swift.Int",
+              "usr": "s:Si"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Swift.Int, Swift.Int) throws -> Foundation.Data",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Tuple",
+                  "printedName": "(Swift.Int, Swift.Int)",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    },
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ]
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            },
+            {
+              "kind": "TypeFunc",
+              "name": "Function",
+              "printedName": "(Foundation.Data) throws -> ()",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Void",
+                  "printedName": "()"
+                },
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ],
+              "typeAttributes": [
+                "noescape"
+              ]
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:10Foundation4DataV13ZIPFoundationE10decompress4size10bufferSize9skipCRC328provider8consumers6UInt32VSi_SiSbACSi_SitKXEyACKXEtKFZ",
+          "mangledName": "$s10Foundation4DataV13ZIPFoundationE10decompress4size10bufferSize9skipCRC328provider8consumers6UInt32VSi_SiSbACSi_SitKXEyACKXEtKFZ",
+          "moduleName": "ZIPFoundation",
+          "static": true,
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        }
+      ],
+      "declKind": "Struct",
+      "usr": "s:10Foundation4DataV",
+      "mangledName": "$s10Foundation4DataV",
+      "moduleName": "Foundation",
+      "declAttributes": [
+        "Frozen"
+      ],
+      "isExternal": true,
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "ReferenceConvertible",
+          "printedName": "ReferenceConvertible",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "ReferenceType",
+              "printedName": "ReferenceType",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "NSData",
+                  "printedName": "Foundation.NSData",
+                  "usr": "c:objc(cs)NSData"
+                }
+              ]
+            }
+          ],
+          "usr": "s:10Foundation20ReferenceConvertibleP",
+          "mangledName": "$s10Foundation20ReferenceConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Equatable",
+          "printedName": "Equatable",
+          "usr": "s:SQ",
+          "mangledName": "$sSQ"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Hashable",
+          "printedName": "Hashable",
+          "usr": "s:SH",
+          "mangledName": "$sSH"
+        },
+        {
+          "kind": "Conformance",
+          "name": "RandomAccessCollection",
+          "printedName": "RandomAccessCollection",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt8",
+                  "printedName": "Swift.UInt8",
+                  "usr": "s:s5UInt8V"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Index",
+              "printedName": "Index",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "SubSequence",
+              "printedName": "SubSequence",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Indices",
+              "printedName": "Indices",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Range",
+                  "printedName": "Swift.Range<Swift.Int>",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ],
+                  "usr": "s:Sn"
+                }
+              ]
+            }
+          ],
+          "usr": "s:Sk",
+          "mangledName": "$sSk"
+        },
+        {
+          "kind": "Conformance",
+          "name": "MutableCollection",
+          "printedName": "MutableCollection",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt8",
+                  "printedName": "Swift.UInt8",
+                  "usr": "s:s5UInt8V"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Index",
+              "printedName": "Index",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "SubSequence",
+              "printedName": "SubSequence",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ]
+            }
+          ],
+          "usr": "s:SM",
+          "mangledName": "$sSM"
+        },
+        {
+          "kind": "Conformance",
+          "name": "RangeReplaceableCollection",
+          "printedName": "RangeReplaceableCollection",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "SubSequence",
+              "printedName": "SubSequence",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ]
+            }
+          ],
+          "usr": "s:Sm",
+          "mangledName": "$sSm"
+        },
+        {
+          "kind": "Conformance",
+          "name": "MutableDataProtocol",
+          "printedName": "MutableDataProtocol",
+          "usr": "s:10Foundation19MutableDataProtocolP",
+          "mangledName": "$s10Foundation19MutableDataProtocolP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "ContiguousBytes",
+          "printedName": "ContiguousBytes",
+          "usr": "s:10Foundation15ContiguousBytesP",
+          "mangledName": "$s10Foundation15ContiguousBytesP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "BidirectionalCollection",
+          "printedName": "BidirectionalCollection",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt8",
+                  "printedName": "Swift.UInt8",
+                  "usr": "s:s5UInt8V"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Index",
+              "printedName": "Index",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "SubSequence",
+              "printedName": "SubSequence",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Indices",
+              "printedName": "Indices",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Range",
+                  "printedName": "Swift.Range<Swift.Int>",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ],
+                  "usr": "s:Sn"
+                }
+              ]
+            }
+          ],
+          "usr": "s:SK",
+          "mangledName": "$sSK"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Collection",
+          "printedName": "Collection",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt8",
+                  "printedName": "Swift.UInt8",
+                  "usr": "s:s5UInt8V"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Index",
+              "printedName": "Index",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Int",
+                  "printedName": "Swift.Int",
+                  "usr": "s:Si"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Iterator",
+              "printedName": "Iterator",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Iterator",
+                  "printedName": "Foundation.Data.Iterator",
+                  "usr": "s:10Foundation4DataV8IteratorV"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "SubSequence",
+              "printedName": "SubSequence",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Data",
+                  "printedName": "Foundation.Data",
+                  "usr": "s:10Foundation4DataV"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Indices",
+              "printedName": "Indices",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Range",
+                  "printedName": "Swift.Range<Swift.Int>",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Int",
+                      "printedName": "Swift.Int",
+                      "usr": "s:Si"
+                    }
+                  ],
+                  "usr": "s:Sn"
+                }
+              ]
+            }
+          ],
+          "usr": "s:Sl",
+          "mangledName": "$sSl"
+        },
+        {
+          "kind": "Conformance",
+          "name": "DataProtocol",
+          "printedName": "DataProtocol",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Regions",
+              "printedName": "Regions",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "CollectionOfOne",
+                  "printedName": "Swift.CollectionOfOne<Foundation.Data>",
+                  "children": [
+                    {
+                      "kind": "TypeNominal",
+                      "name": "Data",
+                      "printedName": "Foundation.Data",
+                      "usr": "s:10Foundation4DataV"
+                    }
+                  ],
+                  "usr": "s:s15CollectionOfOneV"
+                }
+              ]
+            }
+          ],
+          "usr": "s:10Foundation12DataProtocolP",
+          "mangledName": "$s10Foundation12DataProtocolP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Sequence",
+          "printedName": "Sequence",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "Element",
+              "printedName": "Element",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "UInt8",
+                  "printedName": "Swift.UInt8",
+                  "usr": "s:s5UInt8V"
+                }
+              ]
+            },
+            {
+              "kind": "TypeWitness",
+              "name": "Iterator",
+              "printedName": "Iterator",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Iterator",
+                  "printedName": "Foundation.Data.Iterator",
+                  "usr": "s:10Foundation4DataV8IteratorV"
+                }
+              ]
+            }
+          ],
+          "usr": "s:ST",
+          "mangledName": "$sST"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomStringConvertible",
+          "printedName": "CustomStringConvertible",
+          "usr": "s:s23CustomStringConvertibleP",
+          "mangledName": "$ss23CustomStringConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomDebugStringConvertible",
+          "printedName": "CustomDebugStringConvertible",
+          "usr": "s:s28CustomDebugStringConvertibleP",
+          "mangledName": "$ss28CustomDebugStringConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomReflectable",
+          "printedName": "CustomReflectable",
+          "usr": "s:s17CustomReflectableP",
+          "mangledName": "$ss17CustomReflectableP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_ObjectiveCBridgeable",
+          "printedName": "_ObjectiveCBridgeable",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "_ObjectiveCType",
+              "printedName": "_ObjectiveCType",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "NSData",
+                  "printedName": "Foundation.NSData",
+                  "usr": "c:objc(cs)NSData"
+                }
+              ]
+            }
+          ],
+          "usr": "s:s21_ObjectiveCBridgeableP",
+          "mangledName": "$ss21_ObjectiveCBridgeableP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Decodable",
+          "printedName": "Decodable",
+          "usr": "s:Se",
+          "mangledName": "$sSe"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Encodable",
+          "printedName": "Encodable",
+          "usr": "s:SE",
+          "mangledName": "$sSE"
+        }
+      ]
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "FileManager",
+      "printedName": "FileManager",
+      "children": [
+        {
+          "kind": "Function",
+          "name": "zipItem",
+          "printedName": "zipItem(at:to:shouldKeepParent:compressionMethod:progress:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "hasDefaultArg": true,
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "CompressionMethod",
+              "printedName": "ZIPFoundation.CompressionMethod",
+              "hasDefaultArg": true,
+              "usr": "s:13ZIPFoundation17CompressionMethodO"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:So13NSFileManagerC13ZIPFoundationE7zipItem2at2to16shouldKeepParent17compressionMethod8progressy10Foundation3URLV_ALSbAC011CompressionL0OSo10NSProgressCSgtKF",
+          "mangledName": "$sSo13NSFileManagerC13ZIPFoundationE7zipItem2at2to16shouldKeepParent17compressionMethod8progressy10Foundation3URLV_ALSbAC011CompressionL0OSo10NSProgressCSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        },
+        {
+          "kind": "Function",
+          "name": "unzipItem",
+          "printedName": "unzipItem(at:to:skipCRC32:progress:preferredEncoding:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Void",
+              "printedName": "()"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "hasDefaultArg": true,
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Foundation.Progress?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Progress",
+                  "printedName": "Foundation.Progress",
+                  "usr": "c:objc(cs)NSProgress"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "Optional",
+              "printedName": "Swift.String.Encoding?",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "Encoding",
+                  "printedName": "Swift.String.Encoding",
+                  "usr": "s:SS10FoundationE8EncodingV"
+                }
+              ],
+              "hasDefaultArg": true,
+              "usr": "s:Sq"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:So13NSFileManagerC13ZIPFoundationE9unzipItem2at2to9skipCRC328progress17preferredEncodingy10Foundation3URLV_ALSbSo10NSProgressCSgSSAJE0L0VSgtKF",
+          "mangledName": "$sSo13NSFileManagerC13ZIPFoundationE9unzipItem2at2to9skipCRC328progress17preferredEncodingy10Foundation3URLV_ALSbSo10NSProgressCSgSSAJE0L0VSgtKF",
+          "moduleName": "ZIPFoundation",
+          "declAttributes": [
+            "AccessControl",
+            "RawDocComment"
+          ],
+          "throwing": true,
+          "funcSelfKind": "NonMutating"
+        }
+      ],
+      "declKind": "Class",
+      "usr": "c:objc(cs)NSFileManager",
+      "moduleName": "Foundation",
+      "isOpen": true,
+      "objc_name": "NSFileManager",
+      "declAttributes": [
+        "ObjC",
+        "Dynamic"
+      ],
+      "superclassUsr": "c:objc(cs)NSObject",
+      "isExternal": true,
+      "inheritsConvenienceInitializers": true,
+      "superclassNames": [
+        "ObjectiveC.NSObject"
+      ],
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "Equatable",
+          "printedName": "Equatable",
+          "usr": "s:SQ",
+          "mangledName": "$sSQ"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Hashable",
+          "printedName": "Hashable",
+          "usr": "s:SH",
+          "mangledName": "$sSH"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CVarArg",
+          "printedName": "CVarArg",
+          "usr": "s:s7CVarArgP",
+          "mangledName": "$ss7CVarArgP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_KeyValueCodingAndObservingPublishing",
+          "printedName": "_KeyValueCodingAndObservingPublishing",
+          "usr": "s:10Foundation37_KeyValueCodingAndObservingPublishingP",
+          "mangledName": "$s10Foundation37_KeyValueCodingAndObservingPublishingP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_KeyValueCodingAndObserving",
+          "printedName": "_KeyValueCodingAndObserving",
+          "usr": "s:10Foundation27_KeyValueCodingAndObservingP",
+          "mangledName": "$s10Foundation27_KeyValueCodingAndObservingP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomStringConvertible",
+          "printedName": "CustomStringConvertible",
+          "usr": "s:s23CustomStringConvertibleP",
+          "mangledName": "$ss23CustomStringConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomDebugStringConvertible",
+          "printedName": "CustomDebugStringConvertible",
+          "usr": "s:s28CustomDebugStringConvertibleP",
+          "mangledName": "$ss28CustomDebugStringConvertibleP"
+        }
+      ]
+    },
+    {
+      "kind": "TypeDecl",
+      "name": "URL",
+      "printedName": "URL",
+      "children": [
+        {
+          "kind": "Function",
+          "name": "isContained",
+          "printedName": "isContained(in:)",
+          "children": [
+            {
+              "kind": "TypeNominal",
+              "name": "Bool",
+              "printedName": "Swift.Bool",
+              "usr": "s:Sb"
+            },
+            {
+              "kind": "TypeNominal",
+              "name": "URL",
+              "printedName": "Foundation.URL",
+              "usr": "s:10Foundation3URLV"
+            }
+          ],
+          "declKind": "Func",
+          "usr": "s:10Foundation3URLV13ZIPFoundationE11isContained2inSbAC_tF",
+          "mangledName": "$s10Foundation3URLV13ZIPFoundationE11isContained2inSbAC_tF",
+          "moduleName": "ZIPFoundation",
+          "funcSelfKind": "NonMutating"
+        }
+      ],
+      "declKind": "Struct",
+      "usr": "s:10Foundation3URLV",
+      "mangledName": "$s10Foundation3URLV",
+      "moduleName": "Foundation",
+      "isExternal": true,
+      "conformances": [
+        {
+          "kind": "Conformance",
+          "name": "ReferenceConvertible",
+          "printedName": "ReferenceConvertible",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "ReferenceType",
+              "printedName": "ReferenceType",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "NSURL",
+                  "printedName": "Foundation.NSURL",
+                  "usr": "c:objc(cs)NSURL"
+                }
+              ]
+            }
+          ],
+          "usr": "s:10Foundation20ReferenceConvertibleP",
+          "mangledName": "$s10Foundation20ReferenceConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Equatable",
+          "printedName": "Equatable",
+          "usr": "s:SQ",
+          "mangledName": "$sSQ"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Hashable",
+          "printedName": "Hashable",
+          "usr": "s:SH",
+          "mangledName": "$sSH"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_ObjectiveCBridgeable",
+          "printedName": "_ObjectiveCBridgeable",
+          "children": [
+            {
+              "kind": "TypeWitness",
+              "name": "_ObjectiveCType",
+              "printedName": "_ObjectiveCType",
+              "children": [
+                {
+                  "kind": "TypeNominal",
+                  "name": "NSURL",
+                  "printedName": "Foundation.NSURL",
+                  "usr": "c:objc(cs)NSURL"
+                }
+              ]
+            }
+          ],
+          "usr": "s:s21_ObjectiveCBridgeableP",
+          "mangledName": "$ss21_ObjectiveCBridgeableP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomStringConvertible",
+          "printedName": "CustomStringConvertible",
+          "usr": "s:s23CustomStringConvertibleP",
+          "mangledName": "$ss23CustomStringConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "CustomDebugStringConvertible",
+          "printedName": "CustomDebugStringConvertible",
+          "usr": "s:s28CustomDebugStringConvertibleP",
+          "mangledName": "$ss28CustomDebugStringConvertibleP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_CustomPlaygroundQuickLookable",
+          "printedName": "_CustomPlaygroundQuickLookable",
+          "usr": "s:s30_CustomPlaygroundQuickLookableP",
+          "mangledName": "$ss30_CustomPlaygroundQuickLookableP"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Decodable",
+          "printedName": "Decodable",
+          "usr": "s:Se",
+          "mangledName": "$sSe"
+        },
+        {
+          "kind": "Conformance",
+          "name": "Encodable",
+          "printedName": "Encodable",
+          "usr": "s:SE",
+          "mangledName": "$sSE"
+        },
+        {
+          "kind": "Conformance",
+          "name": "_ExpressibleByFileReferenceLiteral",
+          "printedName": "_ExpressibleByFileReferenceLiteral",
+          "usr": "s:s34_ExpressibleByFileReferenceLiteralP",
+          "mangledName": "$ss34_ExpressibleByFileReferenceLiteralP"
+        }
+      ]
+    }
+  ],
+  "json_format_version": 6
+}

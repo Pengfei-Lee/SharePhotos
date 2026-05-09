@@ -1,0 +1,11 @@
+{
+  "object" : {
+    "repositories" : {
+      "https://github.com/weichsel/ZIPFoundation.git" : {
+        "repositoryURL" : "https://github.com/weichsel/ZIPFoundation.git",
+        "subpath" : "ZIPFoundation-b26c070f"
+      }
+    }
+  },
+  "version" : 1
+}
