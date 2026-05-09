@@ -1,0 +1,89 @@
+{
+  "" : {
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/ZIPFoundation-primary.dia",
+    "emit-module-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/ZIPFoundation-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/ZIPFoundation-primary-emit-module.dia",
+    "pch" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/ZIPFoundation-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/ZIPFoundation-primary.swiftdeps"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+MemoryFile.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+MemoryFile~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+Reading.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Reading~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive+Writing.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive+Writing~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Archive.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Archive~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Data+Compression.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Compression~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Data+Serialization.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Data+Serialization~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/Entry.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/Entry~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/SourcePackages/checkouts/ZIPFoundation/Sources/ZIPFoundation/FileManager+ZIP.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.dia",
+    "index-unit-output-path" : "/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build-plan-check/Build/Intermediates.noindex/ZIPFoundation.build/Debug-iphonesimulator/ZIPFoundation.build/Objects-normal/arm64/FileManager+ZIP~partial.swiftmodule"
+  }
+}

@@ -1,0 +1,6 @@
+Target dependency graph (3 targets)
+ZIPFoundation in ZIPFoundation, no dependencies
+ZIPFoundation in ZIPFoundation, depends on:
+ZIPFoundation in ZIPFoundation (explicit)
+SharePhotos in SharePhotos, depends on:
+ZIPFoundation in ZIPFoundation (explicit)

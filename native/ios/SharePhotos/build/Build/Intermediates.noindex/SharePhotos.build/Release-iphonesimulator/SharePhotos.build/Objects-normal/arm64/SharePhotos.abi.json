@@ -1,0 +1,120 @@
+{
+  "kind": "Root",
+  "name": "TopLevel",
+  "printedName": "TopLevel",
+  "children": [
+    {
+      "kind": "Import",
+      "name": "Photos",
+      "printedName": "Photos",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "SwiftUI",
+      "printedName": "SwiftUI",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Photos",
+      "printedName": "Photos",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "PhotosUI",
+      "printedName": "PhotosUI",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "SwiftUI",
+      "printedName": "SwiftUI",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Photos",
+      "printedName": "Photos",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "ZIPFoundation",
+      "printedName": "ZIPFoundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Photos",
+      "printedName": "Photos",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "UniformTypeIdentifiers",
+      "printedName": "UniformTypeIdentifiers",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "SwiftUI",
+      "printedName": "SwiftUI",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Foundation",
+      "printedName": "Foundation",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    },
+    {
+      "kind": "Import",
+      "name": "Photos",
+      "printedName": "Photos",
+      "declKind": "Import",
+      "moduleName": "SharePhotos"
+    }
+  ],
+  "json_format_version": 6
+}

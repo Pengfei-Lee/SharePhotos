@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>logFormatVersion</key>
+	<integer>12</integer>
+	<key>logs</key>
+	<dict>
+		<key>2D822513-7432-4D08-8C7C-1CA0B75E583D</key>
+		<dict>
+			<key>className</key>
+			<string>IDECommandLineBuildLog</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
+			<key>fileName</key>
+			<string>2D822513-7432-4D08-8C7C-1CA0B75E583D.xcactivitylog</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>E</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>6</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>0</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>SharePhotos project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>SharePhotos</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Building project SharePhotos with scheme SharePhotos and configuration Debug</string>
+			<key>timeStartedRecording</key>
+			<real>799932712.46295404</real>
+			<key>timeStoppedRecording</key>
+			<real>799932715.27508795</real>
+			<key>title</key>
+			<string>Building project SharePhotos with scheme SharePhotos and configuration Debug</string>
+			<key>uniqueIdentifier</key>
+			<string>2D822513-7432-4D08-8C7C-1CA0B75E583D</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

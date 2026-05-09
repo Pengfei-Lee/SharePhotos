@@ -1,0 +1,1846 @@
+import Photos
+import PhotosUI
+import SwiftUI
+import UIKit
+import AVFoundation
+
+struct ContentView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @State private var createAlbumPresented = false
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            NavigationView {
+                HomeView(createAlbumPresented: $createAlbumPresented)
+                    .navigationBarHidden(true)
+            }
+            .navigationViewStyle(.stack)
+
+            if store.showsOperation {
+                OperationHUD()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(10)
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: store.showsOperation)
+        .task {
+            await store.loadAlbums()
+        }
+        .sheet(isPresented: $createAlbumPresented) {
+            CreateAlbumSheet()
+        }
+        .sheet(isPresented: $store.isServerSettingsPresented) {
+            ServerSettingsSheet()
+        }
+        .sheet(item: $store.shareableFile) { file in
+            ActivityView(items: [file.url])
+        }
+        .preferredColorScheme(.light)
+        .tint(.teal)
+    }
+}
+
+private struct HomeView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Binding var createAlbumPresented: Bool
+    @State private var deletingAlbum: Album?
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    BrandHeader()
+                        .padding(.top, 24)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("相册")
+                            .font(.system(size: 38, weight: .black))
+                        Text(store.albums.isEmpty ? "暂无相册" : "\(store.albums.count) 个一级相册")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if store.albums.isEmpty {
+                        EmptyAlbumState()
+                    } else {
+                        VStack(spacing: 16) {
+                            ForEach(store.albums) { album in
+                                NavigationLink {
+                                    AlbumDetailView(albumId: album.id)
+                                } label: {
+                                    AlbumCard(album: album)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        deletingAlbum = album
+                                    } label: {
+                                        Label("删除相册", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text(store.statusText)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+
+                    ServerStatusRow()
+                        .padding(.bottom, 112)
+                }
+                .padding(.horizontal, 18)
+            }
+
+            Button {
+                createAlbumPresented = true
+            } label: {
+                Label("创建新相册", systemImage: "plus")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(primaryGradient, in: Capsule())
+                    .foregroundColor(.white)
+                    .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 22)
+        }
+        .background(AppBackground())
+        .alert("删除这个共享相册？", isPresented: Binding(
+            get: { deletingAlbum != nil },
+            set: { if !$0 { deletingAlbum = nil } }
+        )) {
+            Button("取消", role: .cancel) { deletingAlbum = nil }
+            Button("删除", role: .destructive) {
+                if let deletingAlbum {
+                    Task { await store.deleteAlbum(deletingAlbum) }
+                }
+                deletingAlbum = nil
+            }
+        } message: {
+            Text("会删除这个一级相册里的所有照片和分类。")
+        }
+    }
+}
+
+private struct ServerStatusRow: View {
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        Button {
+            store.isServerSettingsPresented = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "wifi.router")
+                    .font(.headline)
+                    .foregroundColor(.teal)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("服务地址")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(.secondaryText)
+                    Text(store.serverAddress)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.primaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text("修改")
+                    .font(.footnote.weight(.bold))
+                    .foregroundColor(.teal)
+            }
+            .padding(14)
+            .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ServerSettingsSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var isSaving = false
+
+    private var trimmedAddress: String {
+        address.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("手机真机不能访问 Mac 的 localhost。请填写 Mac 当前局域网地址，格式类似 http://192.168.3.25:8000。")
+                    .font(.subheadline)
+                    .foregroundColor(.secondaryText)
+                    .lineSpacing(4)
+
+                TextField("http://192.168.3.25:8000", text: $address)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.body.weight(.semibold))
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(.teal.opacity(0.18)))
+
+                Button {
+                    Task {
+                        isSaving = true
+                        let didConnect = await store.updateServerAddress(address)
+                        isSaving = false
+                        if didConnect {
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Text(isSaving ? "连接中..." : "保存并重连")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .foregroundColor(.white)
+                }
+                .disabled(trimmedAddress.isEmpty || isSaving)
+                .opacity(trimmedAddress.isEmpty || isSaving ? 0.55 : 1)
+
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Label("检查本地网络权限", systemImage: "gearshape")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .foregroundColor(.teal)
+                }
+
+                Text("如果 Safari 能打开同一个地址，但 App 不能连，通常是 iOS 的“本地网络”权限没打开。")
+                    .font(.footnote)
+                    .foregroundColor(.secondaryText)
+
+                Spacer()
+            }
+            .padding(20)
+            .background(AppBackground())
+            .navigationTitle("服务连接")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .onAppear {
+                address = store.serverAddress
+            }
+        }
+    }
+}
+
+private struct AlbumDetailView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    @State private var uploadPresented = false
+    @State private var deletingFolder: PhotoFolder?
+
+    var album: Album? { store.album(id: albumId) }
+
+    var body: some View {
+        ScrollView {
+            if let album {
+                VStack(alignment: .leading, spacing: 22) {
+                    BackButton { dismiss() }
+
+                    AlbumHero(album: album)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("按人打包带走")
+                            .font(.system(size: 32, weight: .black))
+                        Text("\(album.folders.count) 个可下载小相册")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                    }
+
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                        ForEach(album.folders) { folder in
+                            NavigationLink {
+                                FolderDetailView(albumId: album.id, folderId: folder.id)
+                            } label: {
+                                FolderCard(album: album, folder: folder, compact: true)
+                            }
+                            .buttonStyle(.plain)
+                            .overlay(alignment: .topTrailing) {
+                                FolderMenu(album: album, folder: folder, onDelete: { deletingFolder = folder })
+                                    .padding(10)
+                            }
+                        }
+                    }
+                    if album.folders.isEmpty {
+                        EmptyContentState(
+                            systemImage: "person.2.crop.square.stack",
+                            title: "还没有人物小相册",
+                            message: album.photos.isEmpty ? "先上传照片，后台整理完成后会自动生成小相册。" : "照片还在整理中，稍后刷新就能看到人物小相册。"
+                        )
+                    }
+
+                    Button {
+                        store.selectAlbum(id: album.id)
+                        uploadPresented = true
+                    } label: {
+                        Label("上传照片", systemImage: "photo.badge.plus")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .foregroundColor(.white)
+                    }
+                    .disabled(store.isBusy)
+                    .opacity(store.isBusy ? 0.55 : 1)
+
+                    NavigationLink {
+                        AllPhotosView(albumId: album.id)
+                    } label: {
+                        VStack(spacing: 6) {
+                            Text("查看所有照片")
+                                .font(.title3.weight(.bold))
+                            Text("\(album.photos.count) 张原始上传，点开看大图")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 22)
+                        .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 18)
+            } else {
+                ProgressView("正在打开相册")
+                    .padding(40)
+            }
+        }
+        .background(AppBackground())
+        .navigationBarHidden(true)
+        .edgeSwipeBack { dismiss() }
+        .task {
+            store.selectAlbum(id: albumId)
+            await store.refreshAlbum(id: albumId)
+        }
+        .sheet(isPresented: $uploadPresented) {
+            UploadSheet(albumId: albumId)
+        }
+        .alert("删除这个小相册？", isPresented: Binding(
+            get: { deletingFolder != nil },
+            set: { if !$0 { deletingFolder = nil } }
+        )) {
+            Button("取消", role: .cancel) { deletingFolder = nil }
+            Button("删除", role: .destructive) {
+                if let album, let deletingFolder {
+                    Task { await store.deleteFolder(album: album, folder: deletingFolder) }
+                }
+                deletingFolder = nil
+            }
+        } message: {
+            Text("会按 H5 规则删除这个子相册里的照片；合照仍会保留在其他人的小相册中。")
+        }
+    }
+}
+
+private struct FolderDetailView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    @State private var selectedPhoto: Photo?
+    @State private var gridColumnCount = 3
+    @State private var gridZoomScale: CGFloat = 1
+    @State private var activeFolderId: String
+    @State private var isSelecting = false
+    @State private var selectedPhotoIds = Set<String>()
+    @State private var selectionActionsPresented = false
+
+    init(albumId: String, folderId: String) {
+        self.albumId = albumId
+        _activeFolderId = State(initialValue: folderId)
+    }
+
+    var album: Album? { store.album(id: albumId) }
+    var folder: PhotoFolder? { store.folder(albumId: albumId, folderId: activeFolderId) }
+    var photos: [Photo] {
+        guard let album, let folder else { return [] }
+        return store.photos(in: album, folder: folder)
+    }
+    var selectedPhotos: [Photo] {
+        photos.filter { selectedPhotoIds.contains($0.id) }
+    }
+
+    var body: some View {
+        ScrollView {
+            if let album {
+                VStack(alignment: .leading, spacing: 18) {
+                    BackButton { dismiss() }
+                        .padding(.horizontal, 18)
+                    FolderSwitcher(album: album, currentFolderId: $activeFolderId)
+                        .padding(.horizontal, 18)
+                    SelectionTopBar(
+                        isSelecting: $isSelecting,
+                        selectedPhotoIds: $selectedPhotoIds,
+                        photos: photos
+                    )
+                    .padding(.horizontal, 18)
+                    Text("\(photos.count) 张照片")
+                        .font(.system(size: 42, weight: .black))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 18)
+                    if photos.isEmpty {
+                        EmptyContentState(
+                            systemImage: "photo",
+                            title: "这个小相册暂时为空",
+                            message: "照片可能还在整理，或已被移动到其他小相册。"
+                        )
+                        .padding(.horizontal, 18)
+                    } else {
+                        PhotoLibraryGrid(
+                            album: album,
+                            photos: photos,
+                            columnCount: $gridColumnCount,
+                            zoomScale: gridZoomScale,
+                            selectedPhoto: $selectedPhoto,
+                            isSelecting: isSelecting,
+                            selectedPhotoIds: $selectedPhotoIds
+                        )
+                    }
+                }
+                .padding(.vertical, 18)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                SelectionBottomBar(
+                    count: selectedPhotoIds.count,
+                    onDelete: {
+                        guard let album else { return }
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
+                    },
+                    onMore: { selectionActionsPresented = true }
+                )
+            }
+        }
+        .background(AppBackground())
+        .navigationBarHidden(true)
+        .edgeSwipeBack { dismiss() }
+        .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .onChange(of: activeFolderId) { _ in
+            selectedPhotoIds.removeAll()
+            isSelecting = false
+        }
+        .task {
+            await store.refreshAlbum(id: albumId)
+            if let album, !album.folders.contains(where: { $0.id == activeFolderId }), let first = album.folders.first {
+                activeFolderId = first.id
+            }
+        }
+        .fullScreenCover(item: $selectedPhoto) { photo in
+            PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id)
+        }
+        .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
+            if let album {
+                Button("保存到系统相册") {
+                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                }
+                Button("下载照片包") {
+                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                }
+                ForEach(album.folders.filter { $0.id != activeFolderId }) { folder in
+                    Button("移动到 \(folder.name)") {
+                        Task {
+                            await store.movePhotos(album: album, photos: selectedPhotos, targetFolder: folder)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
+                    }
+                }
+                Button("删除所选", role: .destructive) {
+                    Task {
+                        await store.deletePhotos(album: album, photos: selectedPhotos)
+                        selectedPhotoIds.removeAll()
+                        isSelecting = false
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+}
+
+private struct AllPhotosView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    @State private var limit = 16
+    @State private var selectedPhoto: Photo?
+    @State private var gridColumnCount = 3
+    @State private var gridZoomScale: CGFloat = 1
+    @State private var isSelecting = false
+    @State private var selectedPhotoIds = Set<String>()
+    @State private var selectionActionsPresented = false
+
+    var album: Album? { store.album(id: albumId) }
+    var visiblePhotos: [Photo] {
+        Array((album?.photos.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) } ?? []).prefix(limit))
+    }
+    var selectedPhotos: [Photo] {
+        visiblePhotos.filter { selectedPhotoIds.contains($0.id) }
+    }
+
+    var body: some View {
+        ScrollView {
+            if let album {
+                VStack(alignment: .leading, spacing: 18) {
+                    BackButton { dismiss() }
+                        .padding(.horizontal, 18)
+                    SelectionTopBar(
+                        isSelecting: $isSelecting,
+                        selectedPhotoIds: $selectedPhotoIds,
+                        photos: visiblePhotos
+                    )
+                    .padding(.horizontal, 18)
+                    Text("\(album.photos.count) 张照片")
+                        .font(.system(size: 42, weight: .black))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 18)
+                    if album.photos.isEmpty {
+                        EmptyContentState(
+                            systemImage: "photo.stack",
+                            title: "还没有上传照片",
+                            message: "返回相册详情，点上传照片添加朋友视角。"
+                        )
+                        .padding(.horizontal, 18)
+                    } else {
+                        PhotoLibraryGrid(
+                            album: album,
+                            photos: visiblePhotos,
+                            columnCount: $gridColumnCount,
+                            zoomScale: gridZoomScale,
+                            selectedPhoto: $selectedPhoto,
+                            isSelecting: isSelecting,
+                            selectedPhotoIds: $selectedPhotoIds
+                        )
+                    }
+                    if limit < album.photos.count {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .onAppear {
+                                limit = min(limit + 12, album.photos.count)
+                            }
+                    }
+                }
+                .padding(.vertical, 18)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                SelectionBottomBar(
+                    count: selectedPhotoIds.count,
+                    onDelete: {
+                        guard let album else { return }
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
+                    },
+                    onMore: { selectionActionsPresented = true }
+                )
+            }
+        }
+        .background(AppBackground())
+        .navigationBarHidden(true)
+        .edgeSwipeBack { dismiss() }
+        .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .task { await store.refreshAlbum(id: albumId) }
+        .fullScreenCover(item: $selectedPhoto) { photo in
+            PhotoViewer(albumId: albumId, photos: visiblePhotos, initialPhotoId: photo.id)
+        }
+        .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
+            if let album {
+                Button("保存到系统相册") {
+                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                }
+                Button("下载照片包") {
+                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                }
+                Button("删除所选", role: .destructive) {
+                    Task {
+                        await store.deletePhotos(album: album, photos: selectedPhotos)
+                        selectedPhotoIds.removeAll()
+                        isSelecting = false
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+}
+
+private struct CreateAlbumSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("这次出游叫什么")
+                    .font(.title.weight(.black))
+                TextField("例如：重庆周末小队", text: $name)
+                    .font(.title3.weight(.semibold))
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                Button {
+                    Task {
+                        if await store.createAlbum(name: name) != nil {
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Text("创建")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(primaryGradient, in: RoundedRectangle(cornerRadius: 16))
+                        .foregroundColor(.white)
+                }
+                .disabled(trimmedName.isEmpty || store.isBusy)
+                .opacity(trimmedName.isEmpty || store.isBusy ? 0.55 : 1)
+                Spacer()
+            }
+            .padding(22)
+            .background(AppBackground())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct UploadSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    @State private var pickerPresented = false
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("把手机里的朋友视角加进来")
+                    .font(.title.weight(.black))
+                TextField("不填写则默认为访客", text: $store.uploader)
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+
+                Button {
+                    pickerPresented = true
+                } label: {
+                    Label("从系统相册选择照片或 Live Photo", systemImage: "photo.on.rectangle.angled")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18))
+                        .foregroundColor(.white)
+                }
+                .disabled(store.isBusy)
+                .opacity(store.isBusy ? 0.55 : 1)
+
+                if !store.uploadProgressText.isEmpty {
+                    Text(store.uploadProgressText)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                Text("手机上可以一次多选；上传后先入库，再由后台生成预览和人物小相册。")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(22)
+            .background(AppBackground())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { dismiss() }
+                        .disabled(store.isBusy)
+                }
+            }
+            .onAppear {
+                store.selectAlbum(id: albumId)
+            }
+            .sheet(isPresented: $pickerPresented) {
+                LivePhotoPicker { assets in
+                    Task { await store.uploadAssets(assets) }
+                }
+            }
+        }
+    }
+}
+
+private struct AlbumCard: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(album.folders.prefix(6)) { folder in
+                        VStack(spacing: 8) {
+                            if let coverURL = store.folderCoverURL(album: album, folder: folder) {
+                                RemoteImage(url: coverURL, mode: .fill)
+                                    .frame(width: 64, height: 88)
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(.white, lineWidth: 3))
+                                    .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                            } else {
+                                Capsule()
+                                    .fill(.teal.opacity(0.12))
+                                    .frame(width: 64, height: 88)
+                                    .overlay(Image(systemName: "person.crop.circle").foregroundColor(.teal))
+                            }
+                            Text(folder.name)
+                                .font(.caption.weight(.bold))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+            Text(album.name)
+                .font(.system(size: 30, weight: .black))
+            Text("\(album.photos.count) 张朋友视角 · \(album.contributors.count) 位参与者")
+                .font(.headline)
+                .foregroundColor(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.teal.opacity(0.12)))
+        .shadow(color: .orange.opacity(0.08), radius: 20, y: 10)
+    }
+}
+
+private struct AlbumHero: View {
+    let album: Album
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(album.name)
+                .font(.system(size: 42, weight: .black))
+            HStack(spacing: 10) {
+                StatPill(text: "\(album.photos.count) 张朋友视角")
+                StatPill(text: "\(album.folders.count) 个小相册")
+                StatPill(text: "\(album.contributors.count) 位参与者")
+            }
+        }
+        .padding(.vertical, 14)
+    }
+}
+
+private struct FolderCard: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let folder: PhotoFolder
+    let compact: Bool
+
+    private var photoCount: Int {
+        store.photos(in: album, folder: folder).count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let coverURL = store.folderCoverURL(album: album, folder: folder) {
+                RemoteImage(url: coverURL, mode: .fill)
+                    .frame(height: compact ? 132 : 190)
+                    .clipped()
+            } else {
+                Rectangle()
+                    .fill(.teal.opacity(0.10))
+                    .frame(height: compact ? 132 : 190)
+                    .overlay(Image(systemName: "person.2.crop.square.stack").font(.title).foregroundColor(.teal))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(folder.name)
+                    .font(.title3.weight(.black))
+                    .lineLimit(1)
+                Text("\(photoCount) 张 · 最近 \(folder.updatedAt.map(formatDate) ?? "--")")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+        }
+        .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.12)))
+    }
+}
+
+private struct FolderSwitcher: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    @Binding var currentFolderId: String
+
+    var orderedFolders: [PhotoFolder] {
+        guard let current = album.folders.first(where: { $0.id == currentFolderId }) else { return album.folders }
+        return [current] + album.folders.filter { $0.id != currentFolderId }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(orderedFolders) { folder in
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                            currentFolderId = folder.id
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(folder.name)
+                                .font(.title2.weight(.black))
+                            Text("\(store.photos(in: album, folder: folder).count) 张照片")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(width: 150, alignment: .leading)
+                        .padding(16)
+                        .background(folder.id == currentFolderId ? Color.teal.opacity(0.12) : Color.white, in: RoundedRectangle(cornerRadius: 18))
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(folder.id == currentFolderId ? Color.teal : Color.gray.opacity(0.18), lineWidth: folder.id == currentFolderId ? 2 : 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct PhotoLibraryGrid: View {
+    let album: Album
+    let photos: [Photo]
+    @Binding var columnCount: Int
+    let zoomScale: CGFloat
+    @Binding var selectedPhoto: Photo?
+    let isSelecting: Bool
+    @Binding var selectedPhotoIds: Set<String>
+
+    private let tileSpacing: CGFloat = 1
+    private let minColumns = 2
+    private let maxColumns = 6
+
+    private var metrics: PhotoGridMetrics {
+        PhotoGridMetrics(
+            width: UIScreen.main.bounds.width,
+            photoCount: photos.count,
+            baseColumnCount: columnCount,
+            zoomScale: zoomScale,
+            spacing: tileSpacing,
+            minColumns: minColumns,
+            maxColumns: maxColumns
+        )
+    }
+
+    var body: some View {
+        let metrics = metrics
+
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                let position = metrics.position(for: index)
+                PhotoLibraryTile(
+                    album: album,
+                    photo: photo,
+                    tileSide: metrics.tileSide,
+                    displayColumnCount: metrics.displayColumnCount,
+                    selectedPhoto: $selectedPhoto,
+                    isSelecting: isSelecting,
+                    selectedPhotoIds: $selectedPhotoIds
+                )
+                .frame(width: metrics.tileSide, height: metrics.tileSide)
+                .position(x: position.x, y: position.y)
+            }
+        }
+        .frame(width: metrics.width, height: metrics.height, alignment: .topLeading)
+        .clipped()
+        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.9), value: columnCount)
+    }
+}
+
+private struct PhotoGridMetrics {
+    let width: CGFloat
+    let photoCount: Int
+    let baseColumnCount: Int
+    let zoomScale: CGFloat
+    let spacing: CGFloat
+    let minColumns: Int
+    let maxColumns: Int
+
+    var displayColumnCount: Int {
+        let count = (width + spacing) / (rawTileSide + spacing)
+        return min(max(Int(count.rounded()), minColumns), maxColumns)
+    }
+
+    var tileSide: CGFloat {
+        min(width, rawTileSide)
+    }
+
+    var height: CGFloat {
+        guard photoCount > 0 else { return 0 }
+        let rowCount = Int(ceil(Double(photoCount) / Double(displayColumnCount)))
+        return CGFloat(rowCount) * tileSide + CGFloat(max(0, rowCount - 1)) * spacing
+    }
+
+    private var clampedZoomScale: CGFloat {
+        min(max(zoomScale, 0.58), 1.75)
+    }
+
+    private var baseTileSide: CGFloat {
+        let availableWidth = width - CGFloat(baseColumnCount - 1) * spacing
+        return availableWidth / CGFloat(baseColumnCount)
+    }
+
+    private var rawTileSide: CGFloat {
+        max(48, baseTileSide * clampedZoomScale)
+    }
+
+    func position(for index: Int) -> CGPoint {
+        let row = index / displayColumnCount
+        let column = index % displayColumnCount
+        return CGPoint(
+            x: CGFloat(column) * (tileSide + spacing) + tileSide / 2,
+            y: CGFloat(row) * (tileSide + spacing) + tileSide / 2
+        )
+    }
+}
+
+private struct PhotoLibraryTile: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let photo: Photo
+    let tileSide: CGFloat
+    let displayColumnCount: Int
+    @Binding var selectedPhoto: Photo?
+    let isSelecting: Bool
+    @Binding var selectedPhotoIds: Set<String>
+
+    private var isSelected: Bool {
+        selectedPhotoIds.contains(photo.id)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button {
+                if isSelecting {
+                    if isSelected {
+                        selectedPhotoIds.remove(photo.id)
+                    } else {
+                        selectedPhotoIds.insert(photo.id)
+                    }
+                } else {
+                    selectedPhoto = photo
+                }
+            } label: {
+                ZStack(alignment: .bottomLeading) {
+                    RemoteImage(url: store.imageURL(photo.thumbnailUrl ?? photo.previewUrl ?? photo.imageUrl), mode: .fill)
+                        .frame(width: tileSide, height: tileSide)
+                        .clipped()
+
+                    if photo.isLivePhoto {
+                        LiveBadge(showText: displayColumnCount <= 3)
+                            .padding(displayColumnCount <= 3 ? 8 : 5)
+                    }
+                }
+                .frame(width: tileSide, height: tileSide)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isSelecting {
+                SelectionCheckmark(isSelected: isSelected)
+                    .padding(displayColumnCount >= 5 ? 4 : 8)
+            } else {
+                PhotoMenu(album: album, photo: photo, compact: displayColumnCount >= 5)
+                    .padding(displayColumnCount >= 5 ? 3 : 6)
+            }
+        }
+        .frame(width: tileSide, height: tileSide)
+        .clipped()
+    }
+}
+
+private struct SelectionTopBar: View {
+    @Binding var isSelecting: Bool
+    @Binding var selectedPhotoIds: Set<String>
+    let photos: [Photo]
+
+    private var allSelected: Bool {
+        !photos.isEmpty && photos.allSatisfy { selectedPhotoIds.contains($0.id) }
+    }
+
+    var body: some View {
+        HStack {
+            Button(allSelected ? "取消全选" : "全选") {
+                if allSelected {
+                    selectedPhotoIds.removeAll()
+                } else {
+                    selectedPhotoIds = Set(photos.map(\.id))
+                }
+            }
+            .disabled(!isSelecting || photos.isEmpty)
+            .opacity(isSelecting ? 1 : 0)
+
+            Spacer()
+
+            Button(isSelecting ? "取消" : "选择") {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    if isSelecting {
+                        selectedPhotoIds.removeAll()
+                    }
+                    isSelecting.toggle()
+                }
+            }
+            .font(.headline.weight(.bold))
+            .foregroundColor(.blue)
+        }
+        .font(.headline.weight(.semibold))
+    }
+}
+
+private struct SelectionCheckmark: View {
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? Color.blue : Color.black.opacity(0.2))
+            Circle()
+                .stroke(.white, lineWidth: 2)
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.black))
+                    .foregroundColor(.white)
+            }
+        }
+        .frame(width: 26, height: 26)
+    }
+}
+
+private struct SelectionBottomBar: View {
+    let count: Int
+    let onDelete: () -> Void
+    let onMore: () -> Void
+
+    var body: some View {
+        HStack {
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.title3.weight(.bold))
+            }
+            .disabled(count == 0)
+
+            Spacer()
+
+            Text("已选择 \(count) 项")
+                .font(.headline.weight(.semibold))
+                .foregroundColor(.primary)
+
+            Spacer()
+
+            Button(action: onMore) {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.title.weight(.bold))
+            }
+            .disabled(count == 0)
+        }
+        .padding(.horizontal, 26)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+    }
+}
+
+private struct LiveBadge: View {
+    let showText: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "livephoto")
+            if showText {
+                Text("LIVE")
+            }
+        }
+        .font(.caption2.weight(.black))
+        .foregroundColor(.white)
+        .padding(.horizontal, showText ? 7 : 5)
+        .padding(.vertical, 4)
+        .background(.black.opacity(0.38), in: Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+    }
+}
+
+private struct PhotoViewer: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    let photos: [Photo]
+    let initialPhotoId: String
+    @State private var selectedPhotoId: String
+
+    init(albumId: String, photos: [Photo], initialPhotoId: String) {
+        self.albumId = albumId
+        self.photos = photos
+        self.initialPhotoId = initialPhotoId
+        _selectedPhotoId = State(initialValue: initialPhotoId)
+    }
+
+    private var currentPhoto: Photo? {
+        photos.first(where: { $0.id == selectedPhotoId }) ?? photos.first
+    }
+    private var album: Album? {
+        store.album(id: albumId)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $selectedPhotoId) {
+                ForEach(photos) { photo in
+                    PhotoViewerPage(photo: photo)
+                        .tag(photo.id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+
+            if let currentPhoto {
+                VStack {
+                    HStack {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Label("返回", systemImage: "chevron.left")
+                                .labelStyle(.titleAndIcon)
+                                .font(.headline.weight(.semibold))
+                                .foregroundColor(.white)
+                        }
+                        Spacer()
+                        VStack(spacing: 2) {
+                            Text(formatViewerDate(currentPhoto.createdAt))
+                                .font(.headline.weight(.bold))
+                            Text(formatViewerTime(currentPhoto.createdAt))
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.white.opacity(0.72))
+                        }
+                        .foregroundColor(.white)
+                        Spacer()
+                        Menu {
+                            Button {
+                                Task { await store.saveToSystemPhotos(currentPhoto) }
+                            } label: {
+                                Label(currentPhoto.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
+                            }
+                            if let album {
+                                Button(role: .destructive) {
+                                    Task {
+                                        await store.deletePhoto(album: album, photo: currentPhoto)
+                                        dismiss()
+                                    }
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.title2.weight(.bold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 12)
+
+                    Spacer()
+                    PhotoViewerFilmstrip(photos: photos, selectedPhotoId: $selectedPhotoId)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(currentPhoto.originalName)
+                            .font(.headline)
+                        Text("\(currentPhoto.displayFolderNames) · \(currentPhoto.displayUploader)")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.72))
+                        SavePhotoButton(photo: currentPhoto)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 28)
+                }
+            }
+        }
+        .edgeSwipeBack { dismiss() }
+    }
+}
+
+private struct PhotoViewerFilmstrip: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let photos: [Photo]
+    @Binding var selectedPhotoId: String
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(photos) { photo in
+                        Button {
+                            selectedPhotoId = photo.id
+                        } label: {
+                            RemoteImage(url: store.imageURL(photo.thumbnailUrl ?? photo.previewUrl ?? photo.imageUrl), mode: .fill)
+                                .frame(width: 46, height: 46)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(photo.id == selectedPhotoId ? Color.white : Color.clear, lineWidth: 2)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .id(photo.id)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .frame(height: 58)
+            .onAppear {
+                proxy.scrollTo(selectedPhotoId, anchor: .center)
+            }
+            .onChange(of: selectedPhotoId) { newValue in
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
+        }
+    }
+}
+
+private struct PhotoViewerPage: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let photo: Photo
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if photo.isLivePhoto {
+                LivePhotoPlaybackView(photo: photo)
+                    .padding(.horizontal, 14)
+            } else {
+                RemoteImage(url: store.imageURL(photo.previewUrl ?? photo.imageUrl), mode: .fit)
+                    .padding(.horizontal, 14)
+            }
+        }
+    }
+}
+
+private struct SavePhotoButton: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let photo: Photo
+
+    var body: some View {
+        Button {
+            Task { await store.saveToSystemPhotos(photo) }
+        } label: {
+            Label(photo.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
+                .font(.headline.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .foregroundColor(.black)
+        }
+    }
+}
+
+private struct PhotoMenu: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let photo: Photo
+    var compact = false
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await store.saveToSystemPhotos(photo) }
+            } label: {
+                Label(photo.isLivePhoto ? "下载 Live Photo" : "下载照片", systemImage: "square.and.arrow.down")
+            }
+            Menu("移动到") {
+                ForEach(album.folders.filter { !$0.photoIds.orEmpty.contains(photo.id) }) { folder in
+                    Button(folder.name) {
+                        Task { await store.movePhoto(album: album, photo: photo, targetFolder: folder) }
+                    }
+                }
+            }
+            Button(role: .destructive) {
+                Task { await store.deletePhoto(album: album, photo: photo) }
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font((compact ? Font.caption : Font.headline).weight(.bold))
+                .padding(compact ? 7 : 10)
+                .background(.regularMaterial, in: Circle())
+                .foregroundColor(.primary)
+        }
+    }
+}
+
+private struct LivePhotoPlaybackView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let photo: Photo
+    @State private var livePhoto: PHLivePhoto?
+    @State private var videoURL: URL?
+    @State private var playbackToken = 0
+    @State private var isMotionPlaying = false
+    @State private var isLoading = true
+    @State private var errorText: String?
+
+    var body: some View {
+        ZStack {
+            if let livePhoto {
+                SystemLivePhotoView(livePhoto: livePhoto, playbackToken: playbackToken)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(3 / 4, contentMode: .fit)
+            } else {
+                RemoteImage(url: store.imageURL(photo.previewUrl ?? photo.imageUrl), mode: .fit)
+                    .overlay(.black.opacity(0.18))
+                    .aspectRatio(3 / 4, contentMode: .fit)
+            }
+
+            if let videoURL, isMotionPlaying {
+                LiveMotionVideoView(videoURL: videoURL, isPlaying: $isMotionPlaying)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(3 / 4, contentMode: .fit)
+                    .transition(.opacity)
+            }
+
+            VStack {
+                HStack {
+                    Button {
+                        playLiveMotion()
+                    } label: {
+                        Label("LIVE", systemImage: "livephoto")
+                            .font(.caption.weight(.black))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(.black.opacity(0.5), in: Capsule())
+                            .foregroundColor(.white)
+                    }
+                    .disabled(videoURL == nil && livePhoto == nil)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(14)
+
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .tint(.white)
+                    Text("正在加载 Live Photo")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                }
+                .padding(18)
+                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
+            }
+
+            if let errorText {
+                VStack(spacing: 10) {
+                    Image(systemName: "livephoto.slash")
+                        .font(.largeTitle)
+                    Text(errorText)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                }
+                .foregroundColor(.white)
+                .padding(18)
+                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
+            }
+        }
+        .task(id: photo.id) {
+            await loadLivePhoto()
+        }
+    }
+
+    private func loadLivePhoto() async {
+        isLoading = true
+        errorText = nil
+        do {
+            let resources = try await store.livePhotoResources(for: photo)
+            let live = try await requestLivePhoto(imageURL: resources.imageURL, videoURL: resources.videoURL)
+            videoURL = resources.videoURL
+            livePhoto = live
+            playLiveMotion()
+        } catch {
+            errorText = "Live Photo 预览失败\n\(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+
+    private func playLiveMotion() {
+        playbackToken += 1
+        guard videoURL != nil else { return }
+        isMotionPlaying = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            isMotionPlaying = true
+        }
+    }
+
+    private func requestLivePhoto(imageURL: URL, videoURL: URL) async throws -> PHLivePhoto {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = LivePhotoContinuationGate()
+            PHLivePhoto.request(
+                withResourceFileURLs: [imageURL, videoURL],
+                placeholderImage: nil,
+                targetSize: .zero,
+                contentMode: .aspectFit
+            ) { livePhoto, info in
+                if let livePhoto {
+                    gate.resume {
+                        continuation.resume(returning: livePhoto)
+                    }
+                } else if let error = info[PHLivePhotoInfoErrorKey] as? Error {
+                    gate.resume {
+                        continuation.resume(throwing: error)
+                    }
+                } else {
+                    gate.resume {
+                        continuation.resume(throwing: LivePhotoPreviewError.failed)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private final class LivePhotoContinuationGate {
+    private let lock = NSLock()
+    private var hasResumed = false
+
+    func resume(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !hasResumed else { return }
+        hasResumed = true
+        body()
+    }
+}
+
+private struct SystemLivePhotoView: UIViewRepresentable {
+    let livePhoto: PHLivePhoto
+    let playbackToken: Int
+
+    func makeUIView(context: Context) -> PHLivePhotoView {
+        let view = PHLivePhotoView()
+        view.contentMode = .scaleAspectFit
+        view.livePhoto = livePhoto
+        DispatchQueue.main.async {
+            view.startPlayback(with: .full)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: PHLivePhotoView, context: Context) {
+        uiView.livePhoto = livePhoto
+        guard context.coordinator.lastPlaybackToken != playbackToken else { return }
+        context.coordinator.lastPlaybackToken = playbackToken
+        DispatchQueue.main.async {
+            uiView.startPlayback(with: .full)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var lastPlaybackToken = -1
+    }
+}
+
+private struct LiveMotionVideoView: UIViewRepresentable {
+    let videoURL: URL
+    @Binding var isPlaying: Bool
+
+    func makeUIView(context: Context) -> PlayerLayerView {
+        let view = PlayerLayerView()
+        view.playerLayer.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerLayerView, context: Context) {
+        if context.coordinator.videoURL != videoURL {
+            context.coordinator.videoURL = videoURL
+            context.coordinator.player = AVPlayer(url: videoURL)
+            uiView.playerLayer.player = context.coordinator.player
+        }
+
+        guard isPlaying else {
+            context.coordinator.player?.pause()
+            return
+        }
+
+        context.coordinator.onFinished = {
+            isPlaying = false
+        }
+        context.coordinator.play()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator: NSObject {
+        var videoURL: URL?
+        var player: AVPlayer?
+        var observer: Any?
+        var onFinished: (() -> Void)?
+
+        func play() {
+            guard let player else { return }
+            player.seek(to: .zero)
+            observer.map { NotificationCenter.default.removeObserver($0) }
+            observer = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: player.currentItem,
+                queue: .main
+            ) { [weak self] _ in
+                self?.onFinished?()
+            }
+            player.play()
+        }
+
+        deinit {
+            observer.map { NotificationCenter.default.removeObserver($0) }
+        }
+    }
+}
+
+private final class PlayerLayerView: UIView {
+    override class var layerClass: AnyClass {
+        AVPlayerLayer.self
+    }
+
+    var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
+}
+
+private enum LivePhotoPreviewError: LocalizedError {
+    case failed
+
+    var errorDescription: String? {
+        "无法还原 Live Photo"
+    }
+}
+
+private struct FolderMenu: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let folder: PhotoFolder
+    let onDelete: () -> Void
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await store.downloadFolder(album: album, folder: folder) }
+            } label: {
+                Label("下载照片包", systemImage: "square.and.arrow.down")
+            }
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("删除小相册", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.headline.weight(.bold))
+                .padding(12)
+                .background(.ultraThinMaterial, in: Circle())
+                .foregroundColor(.primary)
+        }
+    }
+}
+
+private struct RemoteImage: View {
+    let url: URL?
+    let mode: ContentMode
+
+    var body: some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .empty:
+                Rectangle().fill(.teal.opacity(0.08)).overlay(ProgressView())
+            case .success(let image):
+                image.resizable().aspectRatio(contentMode: mode)
+            case .failure:
+                Rectangle().fill(.gray.opacity(0.12)).overlay(Image(systemName: "photo").foregroundColor(.secondary))
+            @unknown default:
+                EmptyView()
+            }
+        }
+    }
+}
+
+private struct BrandHeader: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(LinearGradient(colors: [.teal, .mint, .orange.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 64, height: 64)
+                .overlay(Text("SA").font(.title2.weight(.black)).foregroundColor(.white))
+                .overlay(alignment: .bottomTrailing) {
+                    Circle().fill(.red.opacity(0.72)).frame(width: 24, height: 24).overlay(Circle().stroke(.white, lineWidth: 4))
+                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("SharePhotos")
+                    .font(.system(size: 30, weight: .black))
+                    .foregroundColor(.primaryText)
+                Text("朋友拍的你，一键收齐")
+                    .font(.headline)
+                    .foregroundColor(.secondaryText)
+            }
+        }
+    }
+}
+
+private struct BackButton: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Text("返回")
+                .font(.headline.weight(.bold))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .background(Color.teal.opacity(0.12), in: Capsule())
+                .foregroundColor(.teal)
+        }
+    }
+}
+
+private struct StatPill: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct EmptyAlbumState: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 44))
+                .foregroundColor(.teal)
+            Text("暂无相册")
+                .font(.title2.weight(.black))
+                .foregroundColor(.primaryText)
+            Text("点下面的创建新相册，先开一个朋友照片局。")
+                .font(.subheadline)
+                .foregroundColor(.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 52)
+        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+private struct EmptyContentState: View {
+    let systemImage: String
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 38))
+                .foregroundColor(.teal)
+            Text(title)
+                .font(.headline.weight(.black))
+                .foregroundColor(.primaryText)
+                .multilineTextAlignment(.center)
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 36)
+        .padding(.horizontal, 18)
+        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.12)))
+    }
+}
+
+private struct OperationHUD: View {
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let progress = store.operationProgress {
+                ZStack {
+                    Circle()
+                        .stroke(.teal.opacity(0.18), lineWidth: 5)
+                    Circle()
+                        .trim(from: 0, to: CGFloat(max(0, min(progress, 1))))
+                        .stroke(.teal, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text("\(Int(progress * 100))")
+                        .font(.caption2.weight(.black))
+                        .foregroundColor(.teal)
+                }
+                .frame(width: 38, height: 38)
+            } else {
+                ProgressView()
+                    .tint(.teal)
+                    .frame(width: 38, height: 38)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.operationTitle)
+                    .font(.headline.weight(.bold))
+                    .foregroundColor(.primaryText)
+                Text(store.operationMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.15)))
+        .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+    }
+}
+
+private struct AppBackground: View {
+    var body: some View {
+        LinearGradient(colors: [Color(red: 0.99, green: 0.98, blue: 0.94), Color(red: 0.92, green: 0.98, blue: 0.97), Color(red: 1.0, green: 0.94, blue: 0.88)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .ignoresSafeArea()
+    }
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct EdgeSwipeBackModifier: ViewModifier {
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 18, coordinateSpace: .global)
+                    .onEnded { value in
+                        let beganAtLeftEdge = value.startLocation.x <= 28
+                        let isRightSwipe = value.translation.width > 80
+                        let isMostlyHorizontal = abs(value.translation.height) < 70
+                        if beganAtLeftEdge && isRightSwipe && isMostlyHorizontal {
+                            action()
+                        }
+                    }
+            )
+    }
+}
+
+private struct PhotoGridZoomModifier: ViewModifier {
+    @Binding var columnCount: Int
+    @Binding var zoomScale: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        zoomScale = min(max(value, 0.58), 1.75)
+                    }
+                    .onEnded { value in
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            let targetColumns = Int((CGFloat(columnCount) / min(max(value, 0.58), 1.75)).rounded())
+                            columnCount = min(max(targetColumns, 2), 6)
+                            zoomScale = 1
+                        }
+                    }
+            )
+    }
+}
+
+private extension View {
+    func edgeSwipeBack(_ action: @escaping () -> Void) -> some View {
+        modifier(EdgeSwipeBackModifier(action: action))
+    }
+
+    func photoGridZoom(columnCount: Binding<Int>, zoomScale: Binding<CGFloat>) -> some View {
+        modifier(PhotoGridZoomModifier(columnCount: columnCount, zoomScale: zoomScale))
+    }
+}
+
+private func formatDate(_ timestamp: Int?) -> String {
+    guard let timestamp else { return "--" }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MM/dd HH:mm"
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+}
+
+private func formatViewerDate(_ timestamp: Int?) -> String {
+    guard let timestamp else { return "照片" }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy年M月d日"
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+}
+
+private func formatViewerTime(_ timestamp: Int?) -> String {
+    guard let timestamp else { return "" }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm"
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+}
+
+private let primaryGradient = LinearGradient(
+    colors: [.teal, Color(red: 0.0, green: 0.42, blue: 0.36)],
+    startPoint: .topLeading,
+    endPoint: .bottomTrailing
+)
+
+private extension Color {
+    static let primaryText = Color(red: 0.07, green: 0.10, blue: 0.12)
+    static let secondaryText = Color(red: 0.38, green: 0.46, blue: 0.50)
+}
+
+private extension Optional where Wrapped == [String] {
+    var orEmpty: [String] { self ?? [] }
+}

@@ -9,6 +9,17 @@ const state = {
   uploadExpanded: false,
   allPhotosOpen: false,
   allPhotosLimit: 12,
+  photoGridColumns: 3,
+  photoGridZoomScale: 1,
+  photoGridPinch: null,
+  selectionMode: false,
+  selectedPhotoIds: [],
+  selectionScope: "",
+  viewerToken: 0,
+  viewerPhotoId: "",
+  viewerPhotos: [],
+  viewerIndex: -1,
+  viewerTouchStart: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -40,7 +51,12 @@ const folders = $("#folders");
 const folderDetail = $("#folderDetail");
 const photoViewer = $("#photoViewer");
 const viewerImage = $("#viewerImage");
+const viewerVideo = $("#viewerVideo");
 const viewerMeta = $("#viewerMeta");
+const viewerDownload = $("#viewerDownload");
+const viewerDelete = $("#viewerDelete");
+const viewerFilmstrip = $("#viewerFilmstrip");
+const viewerLivePlay = $("#viewerLivePlay");
 const closeViewer = $("#closeViewer");
 
 function pathPart(value) {
@@ -193,6 +209,9 @@ function sortedFolders(album) {
 }
 
 function pickFolderCoverPhoto(folder, photos) {
+  if (folder.coverPhotoId) {
+    return photos.find((photo) => photo.id === folder.coverPhotoId) || photos[0];
+  }
   if (folder.id === "group-photo" || folder.id === "no-face") {
     return photos[0];
   }
@@ -200,6 +219,7 @@ function pickFolderCoverPhoto(folder, photos) {
 }
 
 function folderCoverUrl(folder, photo) {
+  if (folder.coverUrl) return folder.coverUrl;
   if (!photo) return "";
   if (folder.id === "group-photo" || folder.id === "no-face") {
     return photo.coverUrl || photo.cardUrl || photo.url;
@@ -207,14 +227,400 @@ function folderCoverUrl(folder, photo) {
   return photo.faceUrl || photo.coverUrl || photo.cardUrl || photo.url;
 }
 
+function photoPreviewSrc(photo) {
+  const name = (photo.storedName || photo.originalName || "").toLowerCase();
+  if (photo.type === "live_photo" || name.endsWith(".heic") || name.endsWith(".heif")) {
+    return photo.previewUrl || photo.cardUrl || photo.coverUrl || photo.url;
+  }
+  return photo.cardUrl || photo.coverUrl || photo.url;
+}
+
+function photoViewerSrc(photo) {
+  const name = (photo.storedName || photo.originalName || "").toLowerCase();
+  if (photo.type === "live_photo" || name.endsWith(".heic") || name.endsWith(".heif")) {
+    return photo.previewUrl || photo.coverUrl || photo.cardUrl || photo.url;
+  }
+  return photo.url || photo.coverUrl || photo.cardUrl;
+}
+
+function renderPhotoMedia(photo, imageClass = "") {
+  const isLive = photo.type === "live_photo" && photo.videoUrl;
+  return `
+    <span class="photo-media ${isLive ? "live-photo-media" : ""}">
+      <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
+      ${
+        isLive
+          ? `
+            <video class="live-photo-video" src="${escapeHtml(photo.videoUrl)}" muted playsinline preload="metadata"></video>
+            <button class="live-photo-badge" type="button" aria-label="播放 Live Photo">Live</button>
+          `
+          : ""
+      }
+    </span>
+  `;
+}
+
+function renderDownloadActions(photo) {
+  return `
+    <a class="secondary image-download" href="${escapeHtml(photoDownloadUrl(photo))}" aria-label="${
+      photo.type === "live_photo" ? "下载完整 Live Photo" : "下载静态图"
+    }">↓</a>
+  `;
+}
+
+function photoDownloadUrl(photo) {
+  return photo.type === "live_photo" && photo.downloadLiveUrl ? photo.downloadLiveUrl : photo.downloadImageUrl || photo.url;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function touchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function photoGridMetrics(grid, scale = state.photoGridZoomScale) {
+  const width = grid.clientWidth || grid.getBoundingClientRect().width || window.innerWidth;
+  const spacing = Number(grid.dataset.spacing || 1);
+  const baseColumns = clamp(state.photoGridColumns || 3, 2, 6);
+  const clampedScale = clamp(scale || 1, 0.5, 1.75);
+  const baseTileSide = (width - (baseColumns - 1) * spacing) / baseColumns;
+  const rawTileSide = Math.max(48, baseTileSide * clampedScale);
+  const displayColumns = clamp(Math.round((width + spacing) / (rawTileSide + spacing)), 2, 6);
+  const tileSide = Math.min(width, rawTileSide);
+  return { width, spacing, displayColumns, tileSide };
+}
+
+function layoutPhotoGrid(grid, scale = state.photoGridZoomScale) {
+  if (!grid) return;
+  const tiles = Array.from(grid.querySelectorAll(".photo-library-tile"));
+  const { spacing, displayColumns, tileSide } = photoGridMetrics(grid, scale);
+  const rows = Math.ceil(tiles.length / displayColumns);
+  grid.style.height = `${rows * tileSide + Math.max(0, rows - 1) * spacing}px`;
+  grid.dataset.displayColumns = String(displayColumns);
+  grid.classList.toggle("compact-grid", displayColumns >= 5);
+  tiles.forEach((tile, index) => {
+    const row = Math.floor(index / displayColumns);
+    const column = index % displayColumns;
+    tile.style.width = `${tileSide}px`;
+    tile.style.height = `${tileSide}px`;
+    tile.style.transform = `translate3d(${column * (tileSide + spacing)}px, ${row * (tileSide + spacing)}px, 0)`;
+  });
+}
+
+function layoutPhotoGrids() {
+  document.querySelectorAll(".photo-library-grid").forEach((grid) => layoutPhotoGrid(grid));
+}
+
+function resetPhotoSelection() {
+  state.selectionMode = false;
+  state.selectedPhotoIds = [];
+  state.selectionScope = "";
+}
+
+function selectionScopeFor(album, mode) {
+  return `${album.id}:${mode}:${mode === "detail" ? state.currentFolderId : "all"}`;
+}
+
+function selectedPhotoSet() {
+  return new Set(state.selectedPhotoIds);
+}
+
+function selectedPhotosFrom(photos) {
+  const selected = selectedPhotoSet();
+  return photos.filter((photo) => selected.has(photo.id));
+}
+
+function isCurrentSelectionScope(scope) {
+  return state.selectionMode && state.selectionScope === scope;
+}
+
+function toggleSelection(scope, photoId) {
+  if (!isCurrentSelectionScope(scope)) {
+    state.selectionMode = true;
+    state.selectionScope = scope;
+    state.selectedPhotoIds = [];
+  }
+  if (state.selectedPhotoIds.includes(photoId)) {
+    state.selectedPhotoIds = state.selectedPhotoIds.filter((id) => id !== photoId);
+  } else {
+    state.selectedPhotoIds = [...state.selectedPhotoIds, photoId];
+  }
+}
+
+function renderSelectionHeader(photos, scope) {
+  const active = isCurrentSelectionScope(scope);
+  const allSelected = active && photos.length > 0 && photos.every((photo) => state.selectedPhotoIds.includes(photo.id));
+  return `
+    <div class="icloud-selection-toolbar">
+      <button class="secondary select-all-photos" type="button"${active ? "" : " disabled"}>${allSelected ? "取消全选" : "全选"}</button>
+      <button class="secondary toggle-selection-mode" type="button">${active ? "取消" : "选择"}</button>
+    </div>
+  `;
+}
+
+function renderSelectionBar(photos, scope, canMove) {
+  if (!isCurrentSelectionScope(scope)) return "";
+  const count = selectedPhotosFrom(photos).length;
+  return `
+    <div class="icloud-selection-bar">
+      <strong>已选择 ${count} 项</strong>
+      <div class="selection-actions">
+        <button class="secondary danger delete-selected" type="button" ${count ? "" : "disabled"} aria-label="删除所选">⌫</button>
+        <button class="secondary more-selected" type="button" ${count ? "" : "disabled"} aria-label="更多操作">•••</button>
+      </div>
+      <div class="selection-sheet hidden">
+        <button class="download-selected" type="button">下载 ${count} 个项目</button>
+        ${canMove ? `<button class="move-selected" type="button">移动到...</button>` : ""}
+        <button class="danger delete-selected" type="button">删除 ${count} 个项目</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderPhotoGrid(container, photos, options = {}) {
+  const {
+    album,
+    photoMoveTargets = [],
+    mode = "detail",
+    allPhotos = photos,
+  } = options;
+  const articleClass = mode === "all" ? "album-photo-card" : "detail-photo-card";
+  const buttonClass = mode === "all" ? "album-photo" : "detail-photo";
+  const metaClass = mode === "all" ? "photo-meta photo-library-meta" : "photo-meta photo-library-meta";
+  const scope = selectionScopeFor(album, mode);
+  const activeSelection = isCurrentSelectionScope(scope);
+  const selectedIds = selectedPhotoSet();
+  container.innerHTML = `
+    ${renderSelectionHeader(photos, scope)}
+    <div class="photo-library-grid" data-spacing="1">
+      ${photos
+        .map(
+          (photo) => `
+            <article class="photo-library-tile ${articleClass} ${photoMoveTargets.length ? "has-move" : ""} ${
+              photo.type === "live_photo" ? "live-photo-card" : ""
+            } ${activeSelection ? "selection-mode" : ""} ${selectedIds.has(photo.id) ? "is-selected" : ""}">
+              <button class="${buttonClass} photo-library-button" type="button" data-photo-id="${escapeHtml(photo.id)}">
+                ${renderPhotoMedia(photo)}
+                <span class="${metaClass}">
+                  <strong>${escapeHtml(photo.uploader)}</strong>
+                  <small>${formatDate(photo.createdAt)}</small>
+                </span>
+                <span class="photo-selection-check" aria-hidden="true">✓</span>
+              </button>
+              <button class="photo-menu-toggle" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="更多操作">...</button>
+              <div class="photo-correction">
+                ${
+                  photoMoveTargets.length
+                    ? `
+                      <select data-photo-target="${escapeHtml(photo.id)}" aria-label="移动照片到其他相册">
+                        <option value="">移到...</option>
+                        ${photoMoveTargets
+                          .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`)
+                          .join("")}
+                      </select>
+                      <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
+                    `
+                    : ""
+                }
+                <button class="secondary danger delete-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
+                ${renderDownloadActions(photo)}
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+    ${renderSelectionBar(photos, scope, Boolean(photoMoveTargets.length))}
+  `;
+
+  const grid = container.querySelector(".photo-library-grid");
+  layoutPhotoGrid(grid);
+  bindPhotoGridZoom(grid);
+  bindPhotoGridActions(container, album, photos, allPhotos, Boolean(photoMoveTargets.length), scope);
+  bindLivePhotoPlayback(container);
+}
+
+function bindPhotoGridActions(container, album, photos, viewerPhotos, canMove, scope) {
+  container.querySelectorAll(".photo-library-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const photo = photos.find((item) => item.id === button.dataset.photoId);
+      if (!photo) return;
+      if (isCurrentSelectionScope(scope)) {
+        toggleSelection(scope, photo.id);
+        render();
+      } else {
+        openPhotoViewer(photo, viewerPhotos);
+      }
+    });
+  });
+
+  container.querySelectorAll(".photo-menu-toggle").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const card = button.closest(".photo-library-tile");
+      const isOpen = card.classList.contains("menu-open");
+      container.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => {
+        item.classList.remove("menu-open");
+      });
+      if (!isOpen) card.classList.add("menu-open");
+    });
+  });
+
+  container.querySelectorAll(".photo-correction").forEach((panel) => {
+    panel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  });
+
+  if (canMove) {
+    container.querySelectorAll(".move-photo").forEach((button) => {
+      button.addEventListener("click", () => {
+        movePhotoToFolder(album.id, button.dataset.photoId).catch((error) => alert(error.message));
+      });
+    });
+  }
+
+  container.querySelectorAll(".delete-photo").forEach((button) => {
+    button.addEventListener("click", () => {
+      deletePhoto(album.id, button.dataset.photoId).catch((error) => alert(error.message));
+    });
+  });
+
+  const toggleSelectionButton = container.querySelector(".toggle-selection-mode");
+  if (toggleSelectionButton) {
+    toggleSelectionButton.addEventListener("click", () => {
+      if (isCurrentSelectionScope(scope)) {
+        resetPhotoSelection();
+      } else {
+        state.selectionMode = true;
+        state.selectionScope = scope;
+        state.selectedPhotoIds = [];
+      }
+      render();
+    });
+  }
+
+  const selectAllButton = container.querySelector(".select-all-photos");
+  if (selectAllButton) {
+    selectAllButton.addEventListener("click", () => {
+      const allIds = photos.map((photo) => photo.id);
+      const allSelected = allIds.every((id) => state.selectedPhotoIds.includes(id));
+      state.selectedPhotoIds = allSelected ? [] : allIds;
+      render();
+    });
+  }
+
+  container.querySelectorAll(".more-selected").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const sheet = container.querySelector(".selection-sheet");
+      if (sheet) sheet.classList.toggle("hidden");
+    });
+  });
+
+  container.querySelectorAll(".download-selected").forEach((button) => {
+    button.addEventListener("click", () => {
+      downloadSelectedPhotos(album.id, selectedPhotosFrom(photos)).catch((error) => alert(error.message));
+    });
+  });
+
+  container.querySelectorAll(".delete-selected").forEach((button) => {
+    button.addEventListener("click", () => {
+      deleteSelectedPhotos(album.id, selectedPhotosFrom(photos)).catch((error) => alert(error.message));
+    });
+  });
+
+  container.querySelectorAll(".move-selected").forEach((button) => {
+    button.addEventListener("click", () => {
+      moveSelectedPhotos(album, selectedPhotosFrom(photos)).catch((error) => alert(error.message));
+    });
+  });
+
+  container.onclick = (event) => {
+    if (event.target.closest(".photo-menu-toggle") || event.target.closest(".photo-correction") || event.target.closest(".selection-sheet")) return;
+    container.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => {
+      item.classList.remove("menu-open");
+    });
+    const sheet = container.querySelector(".selection-sheet");
+    if (sheet) sheet.classList.add("hidden");
+  };
+}
+
+function bindPhotoGridZoom(grid) {
+  if (!grid || grid.dataset.zoomBound === "true") return;
+  grid.dataset.zoomBound = "true";
+
+  grid.addEventListener(
+    "touchstart",
+    (event) => {
+      if (event.touches.length !== 2) return;
+      state.touchStart = null;
+      state.photoGridPinch = {
+        grid,
+        startDistance: touchDistance(event.touches),
+        startScale: state.photoGridZoomScale || 1,
+      };
+      grid.classList.add("is-pinching");
+      grid.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => item.classList.remove("menu-open"));
+      event.preventDefault();
+    },
+    { passive: false },
+  );
+
+  grid.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!state.photoGridPinch || state.photoGridPinch.grid !== grid || event.touches.length !== 2) return;
+      const nextScale = clamp((state.photoGridPinch.startScale * touchDistance(event.touches)) / state.photoGridPinch.startDistance, 0.5, 1.75);
+      state.photoGridZoomScale = nextScale;
+      layoutPhotoGrids();
+      event.preventDefault();
+    },
+    { passive: false },
+  );
+
+  grid.addEventListener(
+    "touchend",
+    (event) => {
+      if (!state.photoGridPinch || state.photoGridPinch.grid !== grid || event.touches.length >= 2) return;
+      const targetColumns = clamp(Math.round(state.photoGridColumns / state.photoGridZoomScale), 2, 6);
+      state.photoGridColumns = targetColumns;
+      state.photoGridZoomScale = 1;
+      state.photoGridPinch = null;
+      grid.classList.remove("is-pinching");
+      layoutPhotoGrids();
+      event.preventDefault();
+    },
+    { passive: false },
+  );
+
+  grid.addEventListener(
+    "touchcancel",
+    () => {
+      if (!state.photoGridPinch || state.photoGridPinch.grid !== grid) return;
+      state.photoGridZoomScale = 1;
+      state.photoGridPinch = null;
+      grid.classList.remove("is-pinching");
+      layoutPhotoGrids();
+    },
+    { passive: true },
+  );
+}
+
 function backToFolderList() {
   if (!state.currentFolderId) return;
+  resetPhotoSelection();
   state.currentFolderId = "";
   state.allPhotosOpen = false;
   render();
 }
 
 function returnToHome() {
+  resetPhotoSelection();
   state.currentAlbumId = "";
   state.currentFolderId = "";
   state.allPhotosOpen = false;
@@ -246,9 +652,9 @@ function renderHomeAlbums() {
       .map((folder) => {
         const folderPhotos = album.photos.filter((photo) => photoInFolder(photo, folder.id)).sort((a, b) => b.createdAt - a.createdAt);
         const coverPhoto = pickFolderCoverPhoto(folder, folderPhotos);
-        return { folder, photo: coverPhoto };
+        return { folder, photo: coverPhoto, coverUrl: folderCoverUrl(folder, coverPhoto) };
       })
-      .filter((item) => item.photo)
+      .filter((item) => item.coverUrl)
       .slice(0, 8);
     const card = document.createElement("section");
     card.className = "home-album-card";
@@ -259,9 +665,9 @@ function renderHomeAlbums() {
             folderPreviews.length
               ? folderPreviews
                   .map(
-                    ({ folder, photo }) => `
+                    ({ folder, coverUrl }) => `
                       <span class="home-face">
-                        <img src="${folderCoverUrl(folder, photo)}" alt="${escapeHtml(folderDisplayName(folder))}" loading="lazy" decoding="async" />
+                        <img src="${coverUrl}" alt="${escapeHtml(folderDisplayName(folder))}" loading="lazy" decoding="async" />
                         <small>${escapeHtml(folderDisplayName(folder))}</small>
                       </span>
                     `,
@@ -275,9 +681,11 @@ function renderHomeAlbums() {
           <small>${album.photos.length} 张朋友视角 · ${album.contributors.length} 位参与者</small>
         </span>
       </button>
+      <button class="home-album-rename" type="button" aria-label="重命名 ${escapeHtml(album.name)}">名</button>
       <button class="home-album-delete" type="button" aria-label="删除 ${escapeHtml(album.name)}">删</button>
     `;
     card.querySelector(".home-album-open").addEventListener("click", () => {
+      resetPhotoSelection();
       state.currentAlbumId = album.id;
       state.currentFolderId = "";
       state.allPhotosOpen = false;
@@ -286,6 +694,11 @@ function renderHomeAlbums() {
     });
     card.querySelector(".home-album-delete").addEventListener("click", () => {
       deleteAlbum(album.id).catch((error) => alert(error.message));
+    });
+    card.querySelector(".home-album-rename").addEventListener("click", () => {
+      const name = window.prompt("给这个相册换个名字", album.name);
+      if (name === null) return;
+      renameAlbum(album.id, name).catch((error) => alert(error.message));
     });
     homeAlbums.appendChild(card);
   });
@@ -314,6 +727,7 @@ function renderFolderNav(album, selectedFolder) {
       </button>
     `;
     item.querySelector(".album-select").addEventListener("click", () => {
+      resetPhotoSelection();
       state.currentFolderId = folder.id;
       render();
     });
@@ -425,6 +839,7 @@ function renderFolders(album) {
           <p>${photos.length} 张 · 最近 ${formatDate(Math.max(...photos.map((photo) => photo.createdAt)))}</p>
         </div>
         <div class="folder-actions">
+          <button class="secondary rename-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" data-folder-name="${escapeHtml(folderName)}" aria-label="重命名 ${escapeHtml(folderName)}">名</button>
           <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folderName)}">
             <button class="secondary icon-button" type="button" aria-label="下载 ${escapeHtml(folderName)}">↓</button>
           </a>
@@ -437,8 +852,8 @@ function renderFolders(album) {
             <figure class="folder-cover">
               <img src="${folderCoverUrl(folder, coverPhoto)}" alt="${escapeHtml(coverPhoto.originalName)}" loading="lazy" decoding="async" />
               <figcaption>
-                <strong>${escapeHtml(coverPhoto.originalName)}</strong>
-                <span>${escapeHtml(coverPhoto.uploader)}</span>
+                <strong>${escapeHtml(coverPhoto.uploader)}</strong>
+                <span>${formatDate(coverPhoto.createdAt)}</span>
               </figcaption>
             </figure>
           `
@@ -452,6 +867,16 @@ function renderFolders(album) {
   folders.insertAdjacentElement("afterend", toggleUploadForm);
   toggleUploadForm.insertAdjacentElement("afterend", uploadForm);
   uploadForm.insertAdjacentElement("afterend", allPhotos);
+
+  folders.querySelectorAll(".rename-folder").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const currentName = button.dataset.folderName || "";
+      const name = window.prompt("给这个小相册换个名字", currentName);
+      if (name === null) return;
+      renameFolderById(album.id, button.dataset.folderId, name).catch((error) => alert(error.message));
+    });
+  });
 
   folders.querySelectorAll(".delete-folder").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -470,80 +895,12 @@ function renderFolderDetail(album, folder) {
 
   const photos = album.photos.filter((photo) => photoInFolder(photo, folder.id));
   const photoMoveTargets = album.folders.filter((item) => item.id !== folder.id);
-  folderDetail.innerHTML = `
-    <div class="detail-grid masonry">
-      ${photos
-        .map(
-          (photo, index) => `
-            <article class="detail-photo-card">
-              <button class="detail-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="${index < 6 ? "eager" : "lazy"}" decoding="async" />
-                <span>
-                  <strong>${escapeHtml(photo.originalName)}</strong>
-                  <small>${escapeHtml(photo.uploader)} · ${formatDate(photo.createdAt)}</small>
-                </span>
-              </button>
-              <button class="photo-menu-toggle" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="更多操作">...</button>
-              <div class="photo-correction">
-                <select data-photo-target="${escapeHtml(photo.id)}" aria-label="移动照片到其他相册">
-                  <option value="">移到...</option>
-                  ${photoMoveTargets
-                    .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`)
-                    .join("")}
-                </select>
-                <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
-                <button class="secondary danger delete-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
-              </div>
-            </article>
-          `,
-        )
-        .join("")}
-    </div>
-  `;
-
-  folderDetail.querySelectorAll(".detail-photo").forEach((button) => {
-    button.addEventListener("click", () => {
-      const photo = photos.find((item) => item.id === button.dataset.photoId);
-      if (photo) openPhotoViewer(photo);
-    });
+  renderPhotoGrid(folderDetail, photos, {
+    album,
+    photoMoveTargets,
+    mode: "detail",
+    allPhotos: photos,
   });
-
-  folderDetail.querySelectorAll(".photo-menu-toggle").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const card = button.closest(".detail-photo-card");
-      const isOpen = card.classList.contains("menu-open");
-      folderDetail.querySelectorAll(".detail-photo-card.menu-open").forEach((item) => {
-        item.classList.remove("menu-open");
-      });
-      if (!isOpen) card.classList.add("menu-open");
-    });
-  });
-
-  folderDetail.querySelectorAll(".photo-correction").forEach((panel) => {
-    panel.addEventListener("click", (event) => {
-      event.stopPropagation();
-    });
-  });
-
-  folderDetail.querySelectorAll(".move-photo").forEach((button) => {
-    button.addEventListener("click", () => {
-      movePhotoToFolder(album.id, button.dataset.photoId).catch((error) => alert(error.message));
-    });
-  });
-
-  folderDetail.querySelectorAll(".delete-photo").forEach((button) => {
-    button.addEventListener("click", () => {
-      deletePhoto(album.id, button.dataset.photoId).catch((error) => alert(error.message));
-    });
-  });
-
-  folderDetail.onclick = (event) => {
-    if (event.target.closest(".photo-menu-toggle") || event.target.closest(".photo-correction")) return;
-    folderDetail.querySelectorAll(".detail-photo-card.menu-open").forEach((item) => {
-      item.classList.remove("menu-open");
-    });
-  };
 }
 
 function renderAllPhotos(album) {
@@ -566,6 +923,7 @@ function renderAllPhotos(album) {
       </button>
     `;
     $("#openAllPhotos").addEventListener("click", () => {
+      resetPhotoSelection();
       state.allPhotosOpen = true;
       state.allPhotosLimit = 12;
       state.uploadExpanded = false;
@@ -585,24 +943,7 @@ function renderAllPhotos(album) {
         <p>已显示 ${visiblePhotos.length} / ${sortedPhotos.length} 张，向下滑继续加载</p>
       </div>
     </div>
-    <div class="all-photo-grid masonry">
-      ${visiblePhotos
-        .map(
-          (photo) => `
-            <article class="album-photo-card">
-              <button class="album-photo" type="button" data-photo-id="${escapeHtml(photo.id)}">
-                <img src="${photo.cardUrl || photo.url}" alt="${escapeHtml(photo.originalName)}" loading="lazy" decoding="async" />
-                <span>
-                  <strong>${escapeHtml(photo.originalName)}</strong>
-                  <small>${escapeHtml([photoStatusText(photo) || photoDisplayFolderNames(photo).join(" / "), photo.uploader].filter(Boolean).join(" · "))}</small>
-                </span>
-              </button>
-              <button class="delete-photo-badge" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
-            </article>
-          `,
-        )
-        .join("")}
-    </div>
+    <div id="allPhotosGridMount"></div>
     ${
       hasMore
         ? `<button id="loadMorePhotos" class="secondary load-more-photos" type="button">再看 ${Math.min(12, sortedPhotos.length - visiblePhotos.length)} 张</button>`
@@ -611,6 +952,7 @@ function renderAllPhotos(album) {
   `;
 
   $("#backFromAllPhotos").addEventListener("click", () => {
+    resetPhotoSelection();
     state.allPhotosOpen = false;
     render();
   });
@@ -620,16 +962,10 @@ function renderAllPhotos(album) {
       loadMoreAllPhotos();
     });
   }
-  allPhotos.querySelectorAll(".album-photo").forEach((button) => {
-    button.addEventListener("click", () => {
-      const photo = album.photos.find((item) => item.id === button.dataset.photoId);
-      if (photo) openPhotoViewer(photo);
-    });
-  });
-  allPhotos.querySelectorAll(".delete-photo-badge").forEach((badge) => {
-    badge.addEventListener("click", () => {
-      deletePhoto(album.id, badge.dataset.photoId).catch((error) => alert(error.message));
-    });
+  renderPhotoGrid($("#allPhotosGridMount"), visiblePhotos, {
+    album,
+    mode: "all",
+    allPhotos: sortedPhotos,
   });
 }
 
@@ -659,6 +995,20 @@ async function deleteAlbum(albumId) {
   render();
 }
 
+async function renameAlbum(albumId, name) {
+  const nextName = (name || "").trim();
+  if (!nextName) {
+    throw new Error("名称不能为空");
+  }
+  const payload = await api(`/api/albums/${pathPart(albumId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nextName }),
+  });
+  state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+  render();
+}
+
 async function deleteFolder(albumId, folderId) {
   const album = state.albums.find((item) => item.id === albumId);
   const folder = album ? album.folders.find((item) => item.id === folderId) : null;
@@ -678,6 +1028,20 @@ async function deleteFolder(albumId, folderId) {
   if (state.currentFolderId === folderId) {
     state.currentFolderId = "";
   }
+  render();
+}
+
+async function renameFolderById(albumId, folderId, name) {
+  const nextName = (name || "").trim();
+  if (!nextName) {
+    throw new Error("名称不能为空");
+  }
+  const payload = await api(`/api/albums/${pathPart(albumId)}/folders/${pathPart(folderId)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nextName }),
+  });
+  state.albums = state.albums.map((album) => (album.id === payload.album.id ? payload.album : album));
   render();
 }
 
@@ -742,6 +1106,83 @@ async function movePhotoToFolder(albumId, photoId) {
   render();
 }
 
+function updateAlbumFromPayload(payload) {
+  if (!payload || !payload.album) return;
+  state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
+}
+
+async function downloadSelectedPhotos(albumId, photos) {
+  if (!photos.length) return;
+  const response = await fetch(`/api/albums/${pathPart(albumId)}/photos/download-selected`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photoIds: photos.map((photo) => photo.id) }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `下载失败：${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `SharePhotos-${photos.length}项.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+}
+
+async function deleteSelectedPhotos(albumId, photos) {
+  if (!photos.length) return;
+  if (!window.confirm(`确定删除选中的 ${photos.length} 张照片吗？`)) return;
+  const payload = await api(`/api/albums/${pathPart(albumId)}/photos/delete-selected`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photoIds: photos.map((photo) => photo.id) }),
+  });
+  updateAlbumFromPayload(payload);
+  resetPhotoSelection();
+  if (photoViewer.open && photos.some((photo) => photo.id === state.viewerPhotoId)) {
+    photoViewer.close();
+  }
+  const currentAlbum = getCurrentAlbum();
+  if (currentAlbum && state.currentFolderId && !currentAlbum.folders.some((folder) => folder.id === state.currentFolderId)) {
+    state.currentFolderId = "";
+  }
+  render();
+}
+
+async function moveSelectedPhotos(album, photos) {
+  if (!state.currentFolderId || !photos.length) return;
+  const targets = album.folders.filter((folder) => folder.id !== state.currentFolderId);
+  if (!targets.length) {
+    alert("暂无可移动到的小相册");
+    return;
+  }
+  const choice = window.prompt(
+    `移动到哪个小相册？\n${targets.map((folder, index) => `${index + 1}. ${folderDisplayName(folder)}`).join("\n")}\n请输入序号`,
+  );
+  if (choice === null) return;
+  const target = targets[Number(choice) - 1];
+  if (!target) {
+    alert("没有找到这个小相册");
+    return;
+  }
+  let latestAlbum = album;
+  for (const photo of photos) {
+    const payload = await api(`/api/albums/${pathPart(album.id)}/photos/${pathPart(photo.id)}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetFolderId: target.id }),
+    });
+    latestAlbum = payload.album;
+  }
+  state.albums = state.albums.map((item) => (item.id === latestAlbum.id ? latestAlbum : item));
+  resetPhotoSelection();
+  render();
+}
+
 async function deletePhoto(albumId, photoId) {
   const album = state.albums.find((item) => item.id === albumId);
   const photo = album ? album.photos.find((item) => item.id === photoId) : null;
@@ -755,21 +1196,161 @@ async function deletePhoto(albumId, photoId) {
   if (currentAlbum && state.currentFolderId && !currentAlbum.folders.some((folder) => folder.id === state.currentFolderId)) {
     state.currentFolderId = "";
   }
-  if (photoViewer.open && viewerImage.src.includes(photo.url)) {
+  if (photoViewer.open && state.viewerPhotoId === photo.id) {
     photoViewer.close();
   }
   render();
 }
 
-function openPhotoViewer(photo) {
-  viewerImage.src = photo.url;
-  viewerImage.alt = photo.originalName;
-  viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
-  if (typeof photoViewer.showModal === "function") {
-    photoViewer.showModal();
+function openPhotoViewer(photo, photos = []) {
+  const viewerPhotos = photos.length ? photos : [photo];
+  const viewerIndex = Math.max(0, viewerPhotos.findIndex((item) => item.id === photo.id));
+  state.viewerPhotos = viewerPhotos;
+  state.viewerIndex = viewerIndex;
+  showViewerPhoto(viewerPhotos[viewerIndex] || photo);
+}
+
+function showViewerPhoto(photo) {
+  const token = state.viewerToken + 1;
+  state.viewerToken = token;
+  state.viewerPhotoId = photo.id;
+  photoViewer.classList.add("loading");
+  viewerImage.removeAttribute("src");
+  viewerImage.alt = "";
+  viewerVideo.pause();
+  viewerVideo.removeAttribute("src");
+  viewerVideo.load();
+  viewerVideo.classList.add("hidden");
+  viewerLivePlay.classList.add("hidden");
+  photoViewer.classList.remove("live-playing");
+  viewerMeta.textContent = "正在打开原图...";
+  viewerDownload.href = photoDownloadUrl(photo);
+  viewerDownload.setAttribute("download", "");
+  viewerDelete.dataset.photoId = photo.id;
+  renderViewerFilmstrip();
+  if (photo.type === "live_photo" && photo.downloadLiveUrl) {
+    viewerVideo.src = photo.videoUrl;
+    viewerVideo.classList.remove("hidden");
+    viewerLivePlay.classList.remove("hidden");
   } else {
+    viewerDownload.href = photoDownloadUrl(photo);
+  }
+  if (!photoViewer.open && typeof photoViewer.showModal === "function") {
+    photoViewer.showModal();
+  } else if (!photoViewer.open) {
     photoViewer.setAttribute("open", "");
   }
+
+  const nextImage = new Image();
+  nextImage.onload = () => {
+    if (state.viewerToken !== token) return;
+    viewerImage.src = photoViewerSrc(photo);
+    viewerImage.alt = photo.originalName;
+    viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
+    renderViewerFilmstrip();
+    photoViewer.classList.remove("loading");
+    if (photo.type === "live_photo" && photo.videoUrl) {
+      playViewerLive();
+    }
+  };
+  nextImage.onerror = () => {
+    if (state.viewerToken !== token) return;
+    viewerMeta.textContent = "原图加载失败，请稍后再试";
+    photoViewer.classList.remove("loading");
+  };
+  nextImage.src = photoViewerSrc(photo);
+}
+
+function renderViewerFilmstrip() {
+  if (!viewerFilmstrip) return;
+  viewerFilmstrip.innerHTML = state.viewerPhotos
+    .map(
+      (photo, index) => `
+        <button class="viewer-thumb ${index === state.viewerIndex ? "active" : ""}" type="button" data-index="${index}" aria-label="查看 ${escapeHtml(photo.originalName)}">
+          <img src="${photoPreviewSrc(photo)}" alt="" loading="lazy" decoding="async" />
+        </button>
+      `,
+    )
+    .join("");
+  viewerFilmstrip.querySelectorAll(".viewer-thumb").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextIndex = Number(button.dataset.index);
+      const photo = state.viewerPhotos[nextIndex];
+      if (!photo) return;
+      state.viewerIndex = nextIndex;
+      showViewerPhoto(photo);
+    });
+  });
+  const active = viewerFilmstrip.querySelector(".viewer-thumb.active");
+  if (active) {
+    active.scrollIntoView({ inline: "center", block: "nearest" });
+  }
+}
+
+function bindLivePhotoPlayback(root) {
+  root.querySelectorAll(".live-photo-card").forEach((card) => {
+    const video = card.querySelector(".live-photo-video");
+    const badge = card.querySelector(".live-photo-badge");
+    if (!video || !badge || card.dataset.liveBound === "1") return;
+    card.dataset.liveBound = "1";
+
+    const stop = () => {
+      video.pause();
+      video.currentTime = 0;
+      card.classList.remove("live-playing");
+    };
+
+    const play = () => {
+      card.classList.add("live-playing");
+      video.currentTime = 0;
+      video.play().catch(() => {
+        card.classList.remove("live-playing");
+      });
+    };
+
+    badge.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (card.classList.contains("live-playing")) {
+        stop();
+      } else {
+        play();
+      }
+    });
+    video.addEventListener("ended", stop);
+  });
+}
+
+function stopViewerLive() {
+  if (viewerVideo.classList.contains("hidden")) return;
+  viewerVideo.pause();
+  viewerVideo.currentTime = 0;
+  photoViewer.classList.remove("live-playing");
+}
+
+function playViewerLive() {
+  if (viewerVideo.classList.contains("hidden")) return;
+  photoViewer.classList.add("live-playing");
+  viewerVideo.currentTime = 0;
+  viewerVideo.play().catch(() => {
+    photoViewer.classList.remove("live-playing");
+  });
+}
+
+function toggleViewerLivePlayback() {
+  if (photoViewer.classList.contains("live-playing")) {
+    stopViewerLive();
+  } else {
+    playViewerLive();
+  }
+}
+
+function showAdjacentViewerPhoto(direction) {
+  if (!state.viewerPhotos.length) return;
+  const nextIndex = state.viewerIndex + direction;
+  if (nextIndex < 0 || nextIndex >= state.viewerPhotos.length) return;
+  state.viewerIndex = nextIndex;
+  showViewerPhoto(state.viewerPhotos[nextIndex]);
 }
 
 async function createAlbum(event) {
@@ -817,7 +1398,9 @@ async function uploadPhotos(event) {
     };
     photosInput.value = "";
     selectedFiles.textContent = defaultSelectedFilesText();
-    uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人`;
+    uploadStatus.textContent = `收到 ${payload.queued || files.length} 张，已经放进照片池，后台开始分人${
+      payload.ignored ? `；${payload.ignored} 个文件未匹配到照片` : ""
+    }`;
     render();
   } finally {
     state.uploading = false;
@@ -843,6 +1426,7 @@ folders.addEventListener("click", (event) => {
   if (event.target.closest("a")) return;
   const folder = event.target.closest(".folder");
   if (!folder) return;
+  resetPhotoSelection();
   state.currentFolderId = folder.dataset.folderId;
   render();
 });
@@ -852,6 +1436,7 @@ folders.addEventListener("keydown", (event) => {
   const folder = event.target.closest(".folder");
   if (!folder) return;
   event.preventDefault();
+  resetPhotoSelection();
   state.currentFolderId = folder.dataset.folderId;
   render();
 });
@@ -913,9 +1498,66 @@ closeViewer.addEventListener("click", () => {
   photoViewer.close();
 });
 
+viewerLivePlay.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleViewerLivePlayback();
+});
+
+viewerDelete.addEventListener("click", () => {
+  const album = getCurrentAlbum();
+  const photoId = viewerDelete.dataset.photoId || state.viewerPhotoId;
+  if (!album || !photoId) return;
+  deletePhoto(album.id, photoId).catch((error) => alert(error.message));
+});
+
+viewerVideo.addEventListener("ended", () => {
+  stopViewerLive();
+});
+
+photoViewer.addEventListener("touchstart", (event) => {
+  if (!photoViewer.open || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  state.viewerTouchStart = { x: touch.clientX, y: touch.clientY };
+});
+
+photoViewer.addEventListener("touchend", (event) => {
+  if (!photoViewer.open || !state.viewerTouchStart || event.changedTouches.length !== 1) return;
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - state.viewerTouchStart.x;
+  const dy = touch.clientY - state.viewerTouchStart.y;
+  state.viewerTouchStart = null;
+  if (Math.abs(dx) < 60 || Math.abs(dy) > 80) return;
+  showAdjacentViewerPhoto(dx < 0 ? 1 : -1);
+});
+
 photoViewer.addEventListener("click", (event) => {
   if (event.target === photoViewer) {
     photoViewer.close();
+  }
+});
+
+photoViewer.addEventListener("close", () => {
+  state.viewerToken += 1;
+  state.viewerPhotoId = "";
+  state.viewerPhotos = [];
+  state.viewerIndex = -1;
+  state.viewerTouchStart = null;
+  photoViewer.classList.remove("loading");
+  stopViewerLive();
+  viewerVideo.removeAttribute("src");
+  viewerVideo.load();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!photoViewer.open) return;
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    showAdjacentViewerPhoto(-1);
+  }
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    showAdjacentViewerPhoto(1);
   }
 });
 
@@ -955,6 +1597,10 @@ window.addEventListener("scroll", () => {
   if (remaining < 420) {
     loadMoreAllPhotos();
   }
+});
+
+window.addEventListener("resize", () => {
+  layoutPhotoGrids();
 });
 
 loadAlbums().catch((error) => {

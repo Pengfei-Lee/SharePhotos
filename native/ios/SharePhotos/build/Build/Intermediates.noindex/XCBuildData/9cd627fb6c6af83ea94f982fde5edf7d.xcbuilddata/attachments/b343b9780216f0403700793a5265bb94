@@ -1,0 +1,89 @@
+{
+  "" : {
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotos-primary.dia",
+    "emit-module-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotos-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotos-primary-emit-module.dia",
+    "pch" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotos-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotos-primary.swiftdeps"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/ContentView.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/LivePhotoPicker.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoPicker~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/LivePhotoSaveService.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/LivePhotoSaveService~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/Models.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/Models~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/PhotoKitLivePhotoExporter.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/PhotoKitLivePhotoExporter~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosAPI.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosAPI~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosApp.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosApp~partial.swiftmodule"
+  },
+  "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/SharePhotos/SharePhotosStore.swift" : {
+    "const-values" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.swiftconstvalues",
+    "dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.d",
+    "diagnostics" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.dia",
+    "index-unit-output-path" : "/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.o",
+    "llvm-bc" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.bc",
+    "object" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.o",
+    "swift-dependencies" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore.swiftdeps",
+    "swiftmodule" : "/Users/lipengfei/.codex/worktrees/d083/New project/native/ios/SharePhotos/build/Build/Intermediates.noindex/SharePhotos.build/Debug-iphoneos/SharePhotos.build/Objects-normal/arm64/SharePhotosStore~partial.swiftmodule"
+  }
+}
