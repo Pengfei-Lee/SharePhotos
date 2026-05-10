@@ -390,7 +390,6 @@ function renderPhotoGrid(container, photos, options = {}) {
   } = options;
   const articleClass = mode === "all" ? "album-photo-card" : "detail-photo-card";
   const buttonClass = mode === "all" ? "album-photo" : "detail-photo";
-  const metaClass = mode === "all" ? "photo-meta photo-library-meta" : "photo-meta photo-library-meta";
   const scope = selectionScopeFor(album, mode);
   const activeSelection = isCurrentSelectionScope(scope);
   const selectedIds = selectedPhotoSet();
@@ -405,30 +404,8 @@ function renderPhotoGrid(container, photos, options = {}) {
             } ${activeSelection ? "selection-mode" : ""} ${selectedIds.has(photo.id) ? "is-selected" : ""}">
               <button class="${buttonClass} photo-library-button" type="button" data-photo-id="${escapeHtml(photo.id)}">
                 ${renderPhotoMedia(photo)}
-                <span class="${metaClass}">
-                  <strong>${escapeHtml(photo.uploader)}</strong>
-                  <small>${formatDate(photo.createdAt)}</small>
-                </span>
                 <span class="photo-selection-check" aria-hidden="true">✓</span>
               </button>
-              <button class="photo-menu-toggle" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="更多操作">...</button>
-              <div class="photo-correction">
-                ${
-                  photoMoveTargets.length
-                    ? `
-                      <select data-photo-target="${escapeHtml(photo.id)}" aria-label="移动照片到其他相册">
-                        <option value="">移到...</option>
-                        ${photoMoveTargets
-                          .map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(folderDisplayName(target))}</option>`)
-                          .join("")}
-                      </select>
-                      <button class="secondary move-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="移动照片">移</button>
-                    `
-                    : ""
-                }
-                <button class="secondary danger delete-photo icon-button" type="button" data-photo-id="${escapeHtml(photo.id)}" aria-label="删除照片">删</button>
-                ${renderDownloadActions(photo)}
-              </div>
             </article>
           `,
         )
@@ -455,24 +432,6 @@ function bindPhotoGridActions(container, album, photos, viewerPhotos, canMove, s
       } else {
         openPhotoViewer(photo, viewerPhotos);
       }
-    });
-  });
-
-  container.querySelectorAll(".photo-menu-toggle").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const card = button.closest(".photo-library-tile");
-      const isOpen = card.classList.contains("menu-open");
-      container.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => {
-        item.classList.remove("menu-open");
-      });
-      if (!isOpen) card.classList.add("menu-open");
-    });
-  });
-
-  container.querySelectorAll(".photo-correction").forEach((panel) => {
-    panel.addEventListener("click", (event) => {
-      event.stopPropagation();
     });
   });
 
@@ -541,10 +500,7 @@ function bindPhotoGridActions(container, album, photos, viewerPhotos, canMove, s
   });
 
   container.onclick = (event) => {
-    if (event.target.closest(".photo-menu-toggle") || event.target.closest(".photo-correction") || event.target.closest(".selection-sheet")) return;
-    container.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => {
-      item.classList.remove("menu-open");
-    });
+    if (event.target.closest(".selection-sheet")) return;
     const sheet = container.querySelector(".selection-sheet");
     if (sheet) sheet.classList.add("hidden");
   };
@@ -565,7 +521,6 @@ function bindPhotoGridZoom(grid) {
         startScale: state.photoGridZoomScale || 1,
       };
       grid.classList.add("is-pinching");
-      grid.querySelectorAll(".photo-library-tile.menu-open").forEach((item) => item.classList.remove("menu-open"));
       event.preventDefault();
     },
     { passive: false },
@@ -1126,7 +1081,7 @@ async function downloadSelectedPhotos(albumId, photos) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `SharePhotos-${photos.length}项.zip`;
+  link.download = `PicMe-${photos.length}项.zip`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -1246,7 +1201,7 @@ function showViewerPhoto(photo) {
     if (state.viewerToken !== token) return;
     viewerImage.src = photoViewerSrc(photo);
     viewerImage.alt = photo.originalName;
-    viewerMeta.textContent = `${photo.originalName} · ${photo.uploader} · ${formatDate(photo.createdAt)}`;
+    viewerMeta.textContent = "";
     renderViewerFilmstrip();
     photoViewer.classList.remove("loading");
     if (photo.type === "live_photo" && photo.videoUrl) {

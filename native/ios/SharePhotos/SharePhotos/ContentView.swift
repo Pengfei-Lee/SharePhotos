@@ -381,43 +381,55 @@ private struct FolderDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            if let album {
-                VStack(alignment: .leading, spacing: 18) {
-                    BackButton { dismiss() }
-                        .padding(.horizontal, 18)
-                    FolderSwitcher(album: album, currentFolderId: $activeFolderId)
-                        .padding(.horizontal, 18)
-                    SelectionTopBar(
-                        isSelecting: $isSelecting,
-                        selectedPhotoIds: $selectedPhotoIds,
-                        photos: photos
-                    )
-                    .padding(.horizontal, 18)
-                    Text("\(photos.count) 张照片")
-                        .font(.system(size: 42, weight: .black))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 18)
-                    if photos.isEmpty {
-                        EmptyContentState(
-                            systemImage: "photo",
-                            title: "这个小相册暂时为空",
-                            message: "照片可能还在整理，或已被移动到其他小相册。"
+        ZStack {
+            ScrollView {
+                if let album {
+                    VStack(alignment: .leading, spacing: 18) {
+                        BackButton { dismiss() }
+                            .padding(.horizontal, 18)
+                        FolderSwitcher(album: album, currentFolderId: $activeFolderId)
+                            .padding(.horizontal, 18)
+                        SelectionTopBar(
+                            isSelecting: $isSelecting,
+                            selectedPhotoIds: $selectedPhotoIds,
+                            photos: photos
                         )
                         .padding(.horizontal, 18)
-                    } else {
-                        PhotoLibraryGrid(
-                            album: album,
-                            photos: photos,
-                            columnCount: $gridColumnCount,
-                            zoomScale: gridZoomScale,
-                            selectedPhoto: $selectedPhoto,
-                            isSelecting: isSelecting,
-                            selectedPhotoIds: $selectedPhotoIds
-                        )
+                        Text("\(photos.count) 张照片")
+                            .font(.system(size: 42, weight: .black))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 18)
+                        if photos.isEmpty {
+                            EmptyContentState(
+                                systemImage: "photo",
+                                title: "这个小相册暂时为空",
+                                message: "照片可能还在整理，或已被移动到其他小相册。"
+                            )
+                            .padding(.horizontal, 18)
+                        } else {
+                            PhotoLibraryGrid(
+                                album: album,
+                                photos: photos,
+                                columnCount: $gridColumnCount,
+                                zoomScale: gridZoomScale,
+                                selectedPhoto: $selectedPhoto,
+                                isSelecting: isSelecting,
+                                selectedPhotoIds: $selectedPhotoIds
+                            )
+                        }
+                    }
+                    .padding(.vertical, 18)
+                }
+            }
+
+            if let photo = selectedPhoto {
+                PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = nil
                     }
                 }
-                .padding(.vertical, 18)
+                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
+                .zIndex(10)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -449,9 +461,6 @@ private struct FolderDetailView: View {
             if let album, !album.folders.contains(where: { $0.id == activeFolderId }), let first = album.folders.first {
                 activeFolderId = first.id
             }
-        }
-        .fullScreenCover(item: $selectedPhoto) { photo in
-            PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id)
         }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
@@ -504,48 +513,60 @@ private struct AllPhotosView: View {
     }
 
     var body: some View {
-        ScrollView {
-            if let album {
-                VStack(alignment: .leading, spacing: 18) {
-                    BackButton { dismiss() }
-                        .padding(.horizontal, 18)
-                    SelectionTopBar(
-                        isSelecting: $isSelecting,
-                        selectedPhotoIds: $selectedPhotoIds,
-                        photos: visiblePhotos
-                    )
-                    .padding(.horizontal, 18)
-                    Text("\(album.photos.count) 张照片")
-                        .font(.system(size: 42, weight: .black))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 18)
-                    if album.photos.isEmpty {
-                        EmptyContentState(
-                            systemImage: "photo.stack",
-                            title: "还没有上传照片",
-                            message: "返回相册详情，点上传照片添加朋友视角。"
+        ZStack {
+            ScrollView {
+                if let album {
+                    VStack(alignment: .leading, spacing: 18) {
+                        BackButton { dismiss() }
+                            .padding(.horizontal, 18)
+                        SelectionTopBar(
+                            isSelecting: $isSelecting,
+                            selectedPhotoIds: $selectedPhotoIds,
+                            photos: visiblePhotos
                         )
                         .padding(.horizontal, 18)
-                    } else {
-                        PhotoLibraryGrid(
-                            album: album,
-                            photos: visiblePhotos,
-                            columnCount: $gridColumnCount,
-                            zoomScale: gridZoomScale,
-                            selectedPhoto: $selectedPhoto,
-                            isSelecting: isSelecting,
-                            selectedPhotoIds: $selectedPhotoIds
-                        )
+                        Text("\(album.photos.count) 张照片")
+                            .font(.system(size: 42, weight: .black))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 18)
+                        if album.photos.isEmpty {
+                            EmptyContentState(
+                                systemImage: "photo.stack",
+                                title: "还没有上传照片",
+                                message: "返回相册详情，点上传照片添加朋友视角。"
+                            )
+                            .padding(.horizontal, 18)
+                        } else {
+                            PhotoLibraryGrid(
+                                album: album,
+                                photos: visiblePhotos,
+                                columnCount: $gridColumnCount,
+                                zoomScale: gridZoomScale,
+                                selectedPhoto: $selectedPhoto,
+                                isSelecting: isSelecting,
+                                selectedPhotoIds: $selectedPhotoIds
+                            )
+                        }
+                        if limit < album.photos.count {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .onAppear {
+                                    limit = min(limit + 12, album.photos.count)
+                                }
+                        }
                     }
-                    if limit < album.photos.count {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .onAppear {
-                                limit = min(limit + 12, album.photos.count)
-                            }
+                    .padding(.vertical, 18)
+                }
+            }
+
+            if let photo = selectedPhoto {
+                PhotoViewer(albumId: albumId, photos: visiblePhotos, initialPhotoId: photo.id) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = nil
                     }
                 }
-                .padding(.vertical, 18)
+                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
+                .zIndex(10)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -569,9 +590,6 @@ private struct AllPhotosView: View {
         .edgeSwipeBack { dismiss() }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
         .task { await store.refreshAlbum(id: albumId) }
-        .fullScreenCover(item: $selectedPhoto) { photo in
-            PhotoViewer(albumId: albumId, photos: visiblePhotos, initialPhotoId: photo.id)
-        }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
                 Button("保存到系统相册") {
@@ -956,7 +974,9 @@ private struct PhotoLibraryTile: View {
                         selectedPhotoIds.insert(photo.id)
                     }
                 } else {
-                    selectedPhoto = photo
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = photo
+                    }
                 }
             } label: {
                 ZStack(alignment: .bottomLeading) {
@@ -977,9 +997,6 @@ private struct PhotoLibraryTile: View {
             if isSelecting {
                 SelectionCheckmark(isSelected: isSelected)
                     .padding(displayColumnCount >= 5 ? 4 : 8)
-            } else {
-                PhotoMenu(album: album, photo: photo, compact: displayColumnCount >= 5)
-                    .padding(displayColumnCount >= 5 ? 3 : 6)
             }
         }
         .frame(width: tileSide, height: tileSide)
@@ -1102,12 +1119,14 @@ private struct PhotoViewer: View {
     let albumId: String
     let photos: [Photo]
     let initialPhotoId: String
+    var onClose: (() -> Void)?
     @State private var selectedPhotoId: String
 
-    init(albumId: String, photos: [Photo], initialPhotoId: String) {
+    init(albumId: String, photos: [Photo], initialPhotoId: String, onClose: (() -> Void)? = nil) {
         self.albumId = albumId
         self.photos = photos
         self.initialPhotoId = initialPhotoId
+        self.onClose = onClose
         _selectedPhotoId = State(initialValue: initialPhotoId)
     }
 
@@ -1117,10 +1136,44 @@ private struct PhotoViewer: View {
     private var album: Album? {
         store.album(id: albumId)
     }
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        VStack(spacing: 0) {
+            if let currentPhoto {
+                HStack {
+                    Button {
+                        close()
+                    } label: {
+                        Label("返回", systemImage: "chevron.left")
+                            .labelStyle(.titleAndIcon)
+                            .font(.headline.weight(.semibold))
+                            .foregroundColor(.blue)
+                    }
+                    Spacer()
+                    VStack(spacing: 2) {
+                        Text(formatViewerDate(currentPhoto.createdAt))
+                            .font(.headline.weight(.bold))
+                        Text(formatViewerTime(currentPhoto.createdAt))
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    .foregroundColor(.primary)
+                    Spacer()
+                    ViewerMenu(album: album, photo: currentPhoto, onClose: close)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
+                .background(Color.white)
+            }
+
             TabView(selection: $selectedPhotoId) {
                 ForEach(photos) { photo in
                     PhotoViewerPage(photo: photo)
@@ -1128,71 +1181,52 @@ private struct PhotoViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            PhotoViewerFilmstrip(photos: photos, selectedPhotoId: $selectedPhotoId)
 
             if let currentPhoto {
-                VStack {
-                    HStack {
-                        Button {
-                            dismiss()
-                        } label: {
-                            Label("返回", systemImage: "chevron.left")
-                                .labelStyle(.titleAndIcon)
-                                .font(.headline.weight(.semibold))
-                                .foregroundColor(.white)
-                        }
-                        Spacer()
-                        VStack(spacing: 2) {
-                            Text(formatViewerDate(currentPhoto.createdAt))
-                                .font(.headline.weight(.bold))
-                            Text(formatViewerTime(currentPhoto.createdAt))
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(.white.opacity(0.72))
-                        }
-                        .foregroundColor(.white)
-                        Spacer()
-                        Menu {
-                            Button {
-                                Task { await store.saveToSystemPhotos(currentPhoto) }
-                            } label: {
-                                Label(currentPhoto.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
-                            }
-                            if let album {
-                                Button(role: .destructive) {
-                                    Task {
-                                        await store.deletePhoto(album: album, photo: currentPhoto)
-                                        dismiss()
-                                    }
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.title2.weight(.bold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 12)
-
-                    Spacer()
-                    PhotoViewerFilmstrip(photos: photos, selectedPhotoId: $selectedPhotoId)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(currentPhoto.originalName)
-                            .font(.headline)
-                        Text("\(currentPhoto.displayFolderNames) · \(currentPhoto.displayUploader)")
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.72))
-                        SavePhotoButton(photo: currentPhoto)
-                    }
-                    .foregroundColor(.white)
+                SavePhotoButton(photo: currentPhoto)
                     .padding(.horizontal, 20)
+                    .padding(.top, 10)
                     .padding(.bottom, 28)
-                }
             }
         }
-        .edgeSwipeBack { dismiss() }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white.ignoresSafeArea())
+        .preferredColorScheme(.light)
+        .edgeSwipeBack { close() }
+    }
+}
+
+private struct ViewerMenu: View {
+    let album: Album?
+    let photo: Photo
+    let onClose: () -> Void
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await store.saveToSystemPhotos(photo) }
+            } label: {
+                Label(photo.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
+            }
+            if let album {
+                Button(role: .destructive) {
+                    Task {
+                        await store.deletePhoto(album: album, photo: photo)
+                        onClose()
+                    }
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title2.weight(.bold))
+                .foregroundColor(.blue)
+        }
     }
 }
 
@@ -1215,7 +1249,7 @@ private struct PhotoViewerFilmstrip: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .stroke(photo.id == selectedPhotoId ? Color.white : Color.clear, lineWidth: 2)
+                                        .stroke(photo.id == selectedPhotoId ? Color.blue : Color.clear, lineWidth: 2)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -1225,6 +1259,7 @@ private struct PhotoViewerFilmstrip: View {
                 .padding(.horizontal, 20)
             }
             .frame(height: 58)
+            .background(Color.white)
             .onAppear {
                 proxy.scrollTo(selectedPhotoId, anchor: .center)
             }
@@ -1243,15 +1278,16 @@ private struct PhotoViewerPage: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.white
             if photo.isLivePhoto {
                 LivePhotoPlaybackView(photo: photo)
-                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 RemoteImage(url: store.imageURL(photo.previewUrl ?? photo.imageUrl), mode: .fit)
-                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
 
@@ -1267,8 +1303,8 @@ private struct SavePhotoButton: View {
                 .font(.headline.weight(.bold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .foregroundColor(.black)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .foregroundColor(.blue)
         }
     }
 }
@@ -1609,22 +1645,77 @@ private struct RemoteImage: View {
 private struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(LinearGradient(colors: [.teal, .mint, .orange.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 64, height: 64)
-                .overlay(Text("SA").font(.title2.weight(.black)).foregroundColor(.white))
-                .overlay(alignment: .bottomTrailing) {
-                    Circle().fill(.red.opacity(0.72)).frame(width: 24, height: 24).overlay(Circle().stroke(.white, lineWidth: 4))
-                }
+            PicMeLogo(size: 64)
             VStack(alignment: .leading, spacing: 4) {
-                Text("SharePhotos")
-                    .font(.system(size: 30, weight: .black))
-                    .foregroundColor(.primaryText)
-                Text("朋友拍的你，一键收齐")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("识我")
+                        .font(.system(size: 30, weight: .black))
+                        .foregroundColor(.primaryText)
+                    Text("PicMe")
+                        .font(.system(size: 23, weight: .bold))
+                        .foregroundStyle(LinearGradient(colors: [.picmeAqua, .picmeViolet], startPoint: .leading, endPoint: .trailing))
+                }
+                Text("自动找到属于你的旅行照片")
                     .font(.headline)
                     .foregroundColor(.secondaryText)
             }
         }
+    }
+}
+
+private struct PicMeLogo: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(LinearGradient(colors: [.picmeMist, .picmeGlassBlue, .picmeLavender], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay {
+                    RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                        .stroke(.white.opacity(0.74), lineWidth: 1)
+                }
+            Circle()
+                .stroke(Color.picmeAqua.opacity(0.18), lineWidth: max(1.5, size * 0.026))
+                .frame(width: size * 0.62, height: size * 0.62)
+                .rotationEffect(.degrees(-18))
+            Circle()
+                .trim(from: 0.04, to: 0.26)
+                .stroke(Color.picmeViolet.opacity(0.32), style: StrokeStyle(lineWidth: max(1.5, size * 0.032), lineCap: .round))
+                .frame(width: size * 0.72, height: size * 0.72)
+                .rotationEffect(.degrees(18))
+            SelfPointerSymbol()
+                .stroke(Color.picmeInk, style: StrokeStyle(lineWidth: max(2.5, size * 0.06), lineCap: .round, lineJoin: .round))
+                .frame(width: size * 0.55, height: size * 0.58)
+            Circle()
+                .fill(Color.picmeAqua)
+                .frame(width: size * 0.1, height: size * 0.1)
+                .overlay {
+                    Circle().stroke(Color.picmeAqua.opacity(0.18), lineWidth: size * 0.12)
+                }
+                .offset(x: size * 0.08, y: size * 0.2)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: .picmeInk.opacity(0.12), radius: 16, x: 0, y: 10)
+    }
+}
+
+private struct SelfPointerSymbol: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let cx = rect.midX
+        let headRadius = rect.width * 0.16
+        path.addEllipse(in: CGRect(x: cx - headRadius, y: rect.minY + rect.height * 0.05, width: headRadius * 2, height: headRadius * 2))
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.2, y: rect.maxY * 0.92))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - rect.width * 0.2, y: rect.maxY * 0.92),
+            control: CGPoint(x: cx, y: rect.height * 0.52)
+        )
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.13, y: rect.height * 0.62))
+        path.addQuadCurve(
+            to: CGPoint(x: cx + rect.width * 0.14, y: rect.height * 0.73),
+            control: CGPoint(x: rect.minX + rect.width * 0.43, y: rect.height * 0.53)
+        )
+        return path
     }
 }
 
@@ -1839,6 +1930,12 @@ private let primaryGradient = LinearGradient(
 private extension Color {
     static let primaryText = Color(red: 0.07, green: 0.10, blue: 0.12)
     static let secondaryText = Color(red: 0.38, green: 0.46, blue: 0.50)
+    static let picmeMist = Color(red: 0.98, green: 0.99, blue: 1.00)
+    static let picmeGlassBlue = Color(red: 0.87, green: 0.96, blue: 0.98)
+    static let picmeLavender = Color(red: 0.86, green: 0.88, blue: 0.97)
+    static let picmeInk = Color(red: 0.19, green: 0.34, blue: 0.43)
+    static let picmeAqua = Color(red: 0.29, green: 0.66, blue: 0.78)
+    static let picmeViolet = Color(red: 0.46, green: 0.39, blue: 0.86)
 }
 
 private extension Optional where Wrapped == [String] {
