@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
+import oss2
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/sharephotos-matplotlib")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
@@ -53,10 +54,49 @@ THUMB_SPECS = {
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp"}
 LIVE_IMAGE_EXTS = {".heic", ".heif"}
 LIVE_VIDEO_EXTS = {".mov", ".mp4"}
+OSS_ENDPOINT = os.environ.get("OSS_ENDPOINT", "").strip()
+OSS_BUCKET = os.environ.get("OSS_BUCKET", "").strip()
+OSS_ACCESS_KEY_ID = os.environ.get("OSS_ACCESS_KEY_ID", "").strip()
+OSS_ACCESS_KEY_SECRET = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
+OSS_PREFIX = os.environ.get("OSS_PREFIX", "sharephotos").strip().strip("/")
 
 mimetypes.add_type("image/heic", ".heic")
 mimetypes.add_type("image/heif", ".heif")
 mimetypes.add_type("video/quicktime", ".mov")
+
+OSS_CLIENT = None
+if OSS_ENDPOINT and OSS_BUCKET and OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET:
+    OSS_CLIENT = oss2.Bucket(
+        oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET),
+        OSS_ENDPOINT,
+        OSS_BUCKET,
+    )
+
+
+def oss_enabled():
+    return OSS_CLIENT is not None
+
+
+def oss_key(*parts):
+    clean = [str(item).strip("/") for item in parts if str(item).strip("/")]
+    if OSS_PREFIX:
+        clean.insert(0, OSS_PREFIX)
+    return "/".join(clean)
+
+
+def oss_public_url(key):
+    endpoint = OSS_ENDPOINT.replace("https://", "").replace("http://", "").strip("/")
+    return "https://%s.%s/%s" % (OSS_BUCKET, endpoint, key)
+
+
+def oss_upload_path(path, key, content_type=None):
+    if not oss_enabled() or not path.exists():
+        return
+    headers = {}
+    if content_type:
+        headers["Content-Type"] = content_type
+    with path.open("rb") as fh:
+        OSS_CLIENT.put_object(key, fh, headers=headers)
 
 
 def ensure_store():
@@ -151,6 +191,8 @@ def generate_preview(album_id, stored_name):
         try:
             image = Image.open(source).convert("RGB")
             image.save(target, "JPEG", quality=88)
+            if oss_enabled():
+                oss_upload_path(target, oss_key("previews", album_id, "%s.jpg" % stored_name), "image/jpeg")
             return target
         except Exception:
             return None
@@ -162,6 +204,8 @@ def generate_preview(album_id, stored_name):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
+    if oss_enabled():
+        oss_upload_path(target, oss_key("previews", album_id, "%s.jpg" % stored_name), "image/jpeg")
     return target
 
 
@@ -197,6 +241,8 @@ def generate_thumbnail(album_id, stored_name, size):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
+    if oss_enabled():
+        oss_upload_path(target, oss_key("thumbs", album_id, size, "%s.jpg" % stored_name), "image/jpeg")
     return target
 
 
@@ -259,6 +305,8 @@ def generate_face_thumbnail(album_id, stored_name):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
+    if oss_enabled():
+        oss_upload_path(target, oss_key("face-thumbs", album_id, "%s.jpg" % stored_name), "image/jpeg")
     return target
 
 
@@ -270,10 +318,14 @@ def find_album(db, album_id):
 
 
 def thumb_url(photo, size):
+    if oss_enabled():
+        return oss_public_url(oss_key("thumbs", photo.get("albumId", ""), size, "%s.jpg" % photo.get("storedName", "")))
     return "/thumbs/%s/%s/%s" % (photo.get("albumId", ""), size, quote(photo.get("storedName", "")))
 
 
 def preview_url(photo):
+    if oss_enabled():
+        return oss_public_url(oss_key("previews", photo.get("albumId", ""), "%s.jpg" % photo.get("storedName", "")))
     return "/previews/%s/%s" % (photo.get("albumId", ""), quote(photo.get("storedName", "")))
 
 
@@ -285,8 +337,13 @@ def photo_public_urls(album_id, photo):
     item["coverUrl"] = thumb_url(item, "cover")
     item["previewUrl"] = preview_url(item)
     item["thumbnailUrl"] = item["cardUrl"]
-    item["imageUrl"] = item.get("url") or "/uploads/%s/%s" % (album_id, item.get("storedName", ""))
-    item["faceUrl"] = "/face-thumbs/%s/%s" % (album_id, quote(item.get("storedName", "")))
+    default_image = "/uploads/%s/%s" % (album_id, item.get("storedName", ""))
+    item["imageUrl"] = item.get("url") or default_image
+    if oss_enabled():
+        item["imageUrl"] = oss_public_url(oss_key("uploads", album_id, item.get("storedName", "")))
+        if item.get("liveVideoStoredName"):
+            item["videoUrl"] = oss_public_url(oss_key("uploads", album_id, item["liveVideoStoredName"]))
+    item["faceUrl"] = oss_public_url(oss_key("face-thumbs", album_id, "%s.jpg" % item.get("storedName", ""))) if oss_enabled() else "/face-thumbs/%s/%s" % (album_id, quote(item.get("storedName", "")))
     return item
 
 
@@ -384,15 +441,19 @@ def public_album(album):
         item["previewUrl"] = preview_url(item)
         item["thumbnailUrl"] = item["cardUrl"]
         item["imageUrl"] = item.get("url") or "/uploads/%s/%s" % (album["id"], item.get("storedName", ""))
+        if oss_enabled():
+            item["imageUrl"] = oss_public_url(oss_key("uploads", album["id"], item.get("storedName", "")))
         item["image_url"] = item["imageUrl"]
         item["preview_url"] = item["previewUrl"]
         item["thumbnail_url"] = item["thumbnailUrl"]
         if item.get("liveVideoStoredName"):
             item["videoUrl"] = "/uploads/%s/%s" % (album["id"], item["liveVideoStoredName"])
+            if oss_enabled():
+                item["videoUrl"] = oss_public_url(oss_key("uploads", album["id"], item["liveVideoStoredName"]))
             item["video_url"] = item["videoUrl"]
             item["downloadLiveUrl"] = "/api/albums/%s/photos/%s/download-live" % (album["id"], item["id"])
         item["downloadImageUrl"] = "/api/albums/%s/photos/%s/download-image" % (album["id"], item["id"])
-        item["faceUrl"] = "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
+        item["faceUrl"] = oss_public_url(oss_key("face-thumbs", album["id"], "%s.jpg" % item.get("storedName", ""))) if oss_enabled() else "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
         ids = photo_folder_ids(item)
         if ids:
             original_names = item.get("folderNames", [])
@@ -1176,6 +1237,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 target = album_dir / stored_name
                 with target.open("wb") as out:
                     shutil.copyfileobj(image_file.file, out)
+                if oss_enabled():
+                    oss_upload_path(target, oss_key("uploads", album_id, stored_name), mimetypes.guess_type(str(target))[0] or "application/octet-stream")
 
                 photo = {
                     "id": uuid.uuid4().hex[:12],
@@ -1193,6 +1256,8 @@ class AppHandler(BaseHTTPRequestHandler):
                     video_stored_name = "%s%s" % (digest, video_suffix)
                     with (album_dir / video_stored_name).open("wb") as out:
                         shutil.copyfileobj(video_file.file, out)
+                    if oss_enabled():
+                        oss_upload_path(album_dir / video_stored_name, oss_key("uploads", album_id, video_stored_name), mimetypes.guess_type(video_stored_name)[0] or "application/octet-stream")
                     photo["liveVideoOriginalName"] = video_original
                     photo["liveVideoStoredName"] = video_stored_name
 
