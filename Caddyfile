@@ -1,3 +1,7 @@
 lpf023.com {
     reverse_proxy sharephotos:8000
 }
+
+picme.me {
+    reverse_proxy sharephotos:8000
+}
