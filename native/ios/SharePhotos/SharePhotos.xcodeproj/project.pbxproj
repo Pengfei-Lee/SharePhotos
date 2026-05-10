@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		6BDE4EFD6D3980C9447D0D71 /* LivePhotoSaveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CC7084A7E638BC09ACC505 /* LivePhotoSaveService.swift */; };
+		AA1100000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA1100000000000000000002 /* Assets.xcassets */; };
 		7E8921305D1A42570B4FD3B0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02E5C9D6C4536843DBB00E4D /* ContentView.swift */; };
 		881D1C49611C84711BF8E94F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF3BFFE282E18EF7D2C7CC5 /* Models.swift */; };
 		8A5D497CA9ED07368A1DCF96 /* PhotoKitLivePhotoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF75DF8EF0B5B0142AD6B46 /* PhotoKitLivePhotoExporter.swift */; };
@@ -24,6 +25,7 @@
 		5BF75DF8EF0B5B0142AD6B46 /* PhotoKitLivePhotoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoKitLivePhotoExporter.swift; sourceTree = "<group>"; };
 		7BF3BFFE282E18EF7D2C7CC5 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		80BBC12B958008B2597F1870 /* SharePhotosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePhotosApp.swift; sourceTree = "<group>"; };
+		AA1100000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C5E9475F525F58937908DD82 /* SharePhotos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SharePhotos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD71AB34E008F193E0BBC4A7 /* SharePhotosStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePhotosStore.swift; sourceTree = "<group>"; };
 		D2CC7084A7E638BC09ACC505 /* LivePhotoSaveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoSaveService.swift; sourceTree = "<group>"; };
@@ -53,6 +55,7 @@
 				18884DEC14E72736F73F4658 /* SharePhotosAPI.swift */,
 				80BBC12B958008B2597F1870 /* SharePhotosApp.swift */,
 				CD71AB34E008F193E0BBC4A7 /* SharePhotosStore.swift */,
+				AA1100000000000000000002 /* Assets.xcassets */,
 			);
 			path = SharePhotos;
 			sourceTree = "<group>";
@@ -82,6 +85,7 @@
 			buildPhases = (
 				3D591D9946ED43D18F59F370 /* Sources */,
 				E8DFFD4F98193BCDBAA13C77 /* Frameworks */,
+				AA1100000000000000000003 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -123,6 +127,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA1100000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA1100000000000000000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3D591D9946ED43D18F59F370 /* Sources */ = {
@@ -271,7 +286,7 @@
 		BEA09C25410F97B020056DA0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -280,7 +295,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.sharephotos.app;
-				PRODUCT_NAME = SharePhotos;
+				PRODUCT_NAME = PicMe;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -293,7 +308,7 @@
 		E412C1F01C8C0267B5E161FA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -302,7 +317,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.sharephotos.app;
-				PRODUCT_NAME = SharePhotos;
+				PRODUCT_NAME = PicMe;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
