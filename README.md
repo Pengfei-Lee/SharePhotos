@@ -62,6 +62,51 @@ docker compose up -d --build
 
 不要删除 `data/`，里面有照片、缩略图和 `db.json`；不要删除 `models/`，否则下次启动会重新下载人脸识别模型。
 
+## OSS 环境变量配置（阿里云）
+
+如果你希望**原图、缩略图、预览图都上传到阿里云 OSS**，并且让前端直接访问 OSS URL，需要配置以下环境变量：
+
+- `OSS_ENDPOINT`：OSS 地域节点，例如 `https://oss-cn-hangzhou.aliyuncs.com`
+- `OSS_BUCKET`：Bucket 名称，例如 `my-sharephotos`
+- `OSS_ACCESS_KEY_ID`：阿里云 AccessKey ID
+- `OSS_ACCESS_KEY_SECRET`：阿里云 AccessKey Secret
+- `OSS_PREFIX`（可选）：对象存储前缀目录，默认是 `sharephotos`
+
+> 不配置以上变量时，系统会保持原有本地存储逻辑。
+
+### 方式一：本地直接启动时配置
+
+```bash
+export OSS_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com"
+export OSS_BUCKET="your-bucket-name"
+export OSS_ACCESS_KEY_ID="your-access-key-id"
+export OSS_ACCESS_KEY_SECRET="your-access-key-secret"
+export OSS_PREFIX="sharephotos"
+
+python3 server.py
+```
+
+### 方式二：Docker Compose 配置
+
+在 `docker-compose.yml` 的服务里增加 `environment`（示例）：
+
+```yaml
+services:
+  sharephotos:
+    environment:
+      OSS_ENDPOINT: https://oss-cn-hangzhou.aliyuncs.com
+      OSS_BUCKET: your-bucket-name
+      OSS_ACCESS_KEY_ID: your-access-key-id
+      OSS_ACCESS_KEY_SECRET: your-access-key-secret
+      OSS_PREFIX: sharephotos
+```
+
+然后重启：
+
+```bash
+docker compose up -d --build
+```
+
 ## 验证路径
 
 1. 创建一个相册。
@@ -90,4 +135,3 @@ docker compose up -d --build
 3. 一级相册要加上专属分享链接（二维码）才能加入，以及加入链接可选设置密码的机制
 4. 一级相册和二级相册都要支持重命名【子相册封面右上角新增小的“名”按钮，点击可给小相册改名，还可以进一步优化】
 5. 下载最好不是压缩包，而是直接下载到系统相册里面
-

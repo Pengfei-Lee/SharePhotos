@@ -5,3 +5,4 @@ onnxruntime==1.19.2
 scikit-learn==1.6.1
 Pillow==10.4.0
 pillow-heif==0.18.0
+oss2==2.18.6
