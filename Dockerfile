@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY public ./public
 COPY server.py .
+COPY face_worker.py .
 
 RUN useradd --create-home --shell /usr/sbin/nologin app \
     && mkdir -p /app/data /tmp/sharephotos-matplotlib \
