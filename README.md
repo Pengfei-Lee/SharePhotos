@@ -135,3 +135,46 @@ docker compose up -d --build
 3. 一级相册要加上专属分享链接（二维码）才能加入，以及加入链接可选设置密码的机制
 4. 一级相册和二级相册都要支持重命名【子相册封面右上角新增小的“名”按钮，点击可给小相册改名，还可以进一步优化】
 5. 下载最好不是压缩包，而是直接下载到系统相册里面
+
+
+## 人脸识别独立部署（Redis 队列解耦）
+
+已支持将人脸识别从主服务中拆分为独立 Worker：
+
+- `sharephotos`（主服务）：仅负责上传与 API，上传后把任务写入 Redis 队列
+- `face-worker`（新服务）：从 Redis 队列消费任务并执行人脸识别入库
+- `redis`：任务队列
+
+### Docker Compose（推荐）
+
+`docker-compose.yml` 已内置 `redis` 和 `face-worker`。直接启动：
+
+```bash
+docker compose up -d --build
+```
+
+### 环境变量
+
+- `FACE_WORKER_MODE=redis`：开启 Redis 队列模式
+- `REDIS_URL=redis://redis:6379/0`：Redis 连接地址
+- `FACE_QUEUE_NAME`（可选）：队列名，默认 `sharephotos:face:jobs`
+
+### 本地分离启动示例
+
+终端 1（API 服务）：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL=redis://127.0.0.1:6379/0
+python3 server.py
+```
+
+终端 2（Worker）：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL=redis://127.0.0.1:6379/0
+python3 face_worker.py
+```
+
+不设置 `FACE_WORKER_MODE=redis` 时，系统保持原本的进程内队列+线程消费模式，前后端接口保持不变。
