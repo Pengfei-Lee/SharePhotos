@@ -23,6 +23,11 @@ import cv2
 import numpy as np
 
 try:
+    import redis
+except Exception:
+    redis = None
+
+try:
     from PIL import Image
     from pillow_heif import register_heif_opener
 
@@ -46,6 +51,16 @@ DB_FILE = DATA / "db.json"
 LOCK = threading.Lock()
 JOB_QUEUE = queue.Queue()
 QUEUED_PHOTOS = set()
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+FACE_QUEUE_NAME = os.environ.get("FACE_QUEUE_NAME", "sharephotos:face:jobs").strip() or "sharephotos:face:jobs"
+FACE_WORKER_MODE = os.environ.get("FACE_WORKER_MODE", "inline").strip().lower()
+REDIS_CLIENT = None
+if REDIS_URL and redis is not None:
+    try:
+        REDIS_CLIENT = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        REDIS_CLIENT.ping()
+    except Exception:
+        REDIS_CLIENT = None
 THUMB_SPECS = {
     "tiny": (96, 72),
     "card": (420, 78),
@@ -924,12 +939,41 @@ def reanalyze_album(album):
     return album
 
 
+def use_redis_queue():
+    return REDIS_CLIENT is not None and FACE_WORKER_MODE == "redis"
+
+
+def push_face_job(album_id, photo_id):
+    payload = json.dumps({"albumId": album_id, "photoId": photo_id}, ensure_ascii=False)
+    if use_redis_queue():
+        REDIS_CLIENT.lpush(FACE_QUEUE_NAME, payload)
+    else:
+        JOB_QUEUE.put((album_id, photo_id))
+
+
+def pop_face_job(timeout=3):
+    if use_redis_queue():
+        item = REDIS_CLIENT.brpop(FACE_QUEUE_NAME, timeout=max(int(timeout), 1))
+        if not item:
+            return None
+        try:
+            payload = json.loads(item[1])
+            return payload.get("albumId"), payload.get("photoId")
+        except Exception:
+            return None
+    try:
+        return JOB_QUEUE.get(timeout=max(float(timeout), 0.1))
+    except queue.Empty:
+        return None
+
+
 def enqueue_photo_job(album_id, photo_id):
     key = (album_id, photo_id)
-    if key in QUEUED_PHOTOS:
-        return
-    QUEUED_PHOTOS.add(key)
-    JOB_QUEUE.put(key)
+    with LOCK:
+        if key in QUEUED_PHOTOS:
+            return
+        QUEUED_PHOTOS.add(key)
+    push_face_job(album_id, photo_id)
 
 
 def enqueue_pending_jobs():
@@ -996,12 +1040,19 @@ def process_photo_job(album_id, photo_id):
 
 def photo_worker():
     while True:
-        album_id, photo_id = JOB_QUEUE.get()
+        job = pop_face_job(timeout=3)
+        if not job:
+            continue
+        album_id, photo_id = job
+        if not album_id or not photo_id:
+            continue
         try:
             process_photo_job(album_id, photo_id)
         finally:
-            QUEUED_PHOTOS.discard((album_id, photo_id))
-            JOB_QUEUE.task_done()
+            with LOCK:
+                QUEUED_PHOTOS.discard((album_id, photo_id))
+            if not use_redis_queue():
+                JOB_QUEUE.task_done()
 
 
 def assign_face_folder(album, embedding, engine):
@@ -1625,7 +1676,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
 def main():
     ensure_store()
-    threading.Thread(target=photo_worker, daemon=True).start()
+    if FACE_WORKER_MODE != "redis":
+        threading.Thread(target=photo_worker, daemon=True).start()
     enqueue_pending_jobs()
     port = int(os.environ.get("PORT", "8000"))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), AppHandler)

@@ -11,9 +11,32 @@ services:
     environment:
       - PORT=8000
       - DATA_DIR=/app/data
+      - FACE_WORKER_MODE=redis
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data
       - ./models:/home/app/.insightface
+
+  face-worker:
+    container_name: sharephotos-face-worker
+    build: .
+    image: sharephotos:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - DATA_DIR=/app/data
+      - FACE_WORKER_MODE=redis
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./models:/home/app/.insightface
+    command: ["python", "face_worker.py"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: sharephotos-redis
+    restart: unless-stopped
 
   caddy:
     image: caddy:2
