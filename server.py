@@ -85,7 +85,13 @@ class StoreLock:
 LOCK = StoreLock()
 JOB_QUEUE = queue.Queue()
 QUEUED_PHOTOS = set()
+REDIS_HOST = os.environ.get("REDIS_HOST", "redis").strip() or "redis"
+REDIS_PORT = os.environ.get("REDIS_PORT", "6379").strip() or "6379"
+REDIS_DB = os.environ.get("REDIS_DB", "0").strip() or "0"
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "").strip()
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+if not REDIS_URL and REDIS_PASSWORD:
+    REDIS_URL = "redis://:%s@%s:%s/%s" % (REDIS_PASSWORD, REDIS_HOST, REDIS_PORT, REDIS_DB)
 FACE_QUEUE_NAME = os.environ.get("FACE_QUEUE_NAME", "sharephotos:face:jobs").strip() or "sharephotos:face:jobs"
 FACE_QUEUE_SET_NAME = os.environ.get("FACE_QUEUE_SET_NAME", "%s:queued" % FACE_QUEUE_NAME).strip() or "%s:queued" % FACE_QUEUE_NAME
 FACE_WORKER_MODE = os.environ.get("FACE_WORKER_MODE", "inline").strip().lower()
