@@ -11,8 +11,15 @@ services:
     environment:
       - PORT=8000
       - DATA_DIR=/app/data
-      - FACE_WORKER_MODE=redis
-      - REDIS_URL=redis://redis:6379/0
+      - FACE_WORKER_MODE=${FACE_WORKER_MODE:-remote}
+      - WORKER_TOKEN=${WORKER_TOKEN:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_BUCKET=${OSS_BUCKET:-}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
+      - OSS_PREFIX=${OSS_PREFIX:-}
+      - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
     volumes:
       - ./data:/app/data
       - ./models:/home/app/.insightface
@@ -21,6 +28,8 @@ services:
     container_name: sharephotos-face-worker
     build: .
     image: sharephotos:latest
+    profiles:
+      - server-worker
     restart: unless-stopped
     depends_on:
       - redis
@@ -28,6 +37,12 @@ services:
       - DATA_DIR=/app/data
       - FACE_WORKER_MODE=redis
       - REDIS_URL=redis://redis:6379/0
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_BUCKET=${OSS_BUCKET:-}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
+      - OSS_PREFIX=${OSS_PREFIX:-}
+      - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
     volumes:
       - ./data:/app/data
       - ./models:/home/app/.insightface
@@ -37,6 +52,8 @@ services:
     image: redis:7-alpine
     container_name: sharephotos-redis
     restart: unless-stopped
+    profiles:
+      - server-worker
 
   caddy:
     image: caddy:2
