@@ -158,17 +158,42 @@ docker compose up -d --build
 
 ### Docker Compose（推荐）
 
-`docker-compose.yml` 已内置 `redis` 和 `face-worker`。直接启动：
+`docker-compose.yml` 已内置 `redis` 和 `face-worker`，通过 `server-worker` profile 启动。Redis 支持通过环境变量配置密码并开放远程访问端口。
 
 ```bash
-docker compose up -d --build
+REDIS_PASSWORD="换成强密码"
+docker compose --profile server-worker up -d --build
 ```
 
 ### 环境变量
 
 - `FACE_WORKER_MODE=redis`：开启 Redis 队列模式
-- `REDIS_URL=redis://redis:6379/0`：Redis 连接地址
+- `REDIS_PASSWORD`：Redis 密码，不要写进代码，建议放 `.env`
+- `REDIS_HOST=redis`（可选）：Redis 主机，容器内默认 `redis`
+- `REDIS_PORT=6379`（可选）：宿主机开放端口，默认 `6379`
+- `REDIS_DB=0`（可选）：Redis DB 编号
+- `REDIS_URL=redis://:你的密码@redis:6379/0`：容器内 Redis 连接地址
 - `FACE_QUEUE_NAME`（可选）：队列名，默认 `sharephotos:face:jobs`
+
+示例 `.env`：
+
+```bash
+REDIS_PASSWORD=replace-with-a-strong-password
+REDIS_HOST=redis
+REDIS_DB=0
+REDIS_URL=redis://:replace-with-a-strong-password@redis:6379/0
+REDIS_PORT=6379
+```
+
+如果没有配置 `REDIS_URL`，主服务和 `face-worker` 都会自动使用 `REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、`REDIS_PASSWORD` 拼出连接地址。
+
+如果要从服务器外部连接 Redis，地址通常是：
+
+```bash
+redis://:replace-with-a-strong-password@你的服务器IP:6379/0
+```
+
+远程开放 Redis 端口有安全风险，生产环境建议同时配置云安全组/防火墙，只允许你的固定 IP 访问。
 
 ### 本地分离启动示例
 
@@ -176,7 +201,7 @@ docker compose up -d --build
 
 ```bash
 export FACE_WORKER_MODE=redis
-export REDIS_URL=redis://127.0.0.1:6379/0
+export REDIS_URL=redis://:replace-with-a-strong-password@127.0.0.1:6379/0
 python3 server.py
 ```
 
@@ -184,7 +209,7 @@ python3 server.py
 
 ```bash
 export FACE_WORKER_MODE=redis
-export REDIS_URL=redis://127.0.0.1:6379/0
+export REDIS_URL=redis://:replace-with-a-strong-password@127.0.0.1:6379/0
 python3 face_worker.py
 ```
 
