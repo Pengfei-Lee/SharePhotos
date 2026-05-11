@@ -7,13 +7,14 @@ import os
 import queue
 import re
 import shutil
+import tempfile
 import threading
 import time
 import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 import oss2
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/sharephotos-matplotlib")
@@ -26,6 +27,11 @@ try:
     import redis
 except Exception:
     redis = None
+
+try:
+    import fcntl
+except Exception:
+    fcntl = None
 
 try:
     from PIL import Image
@@ -48,12 +54,43 @@ UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
 PREVIEWS = DATA / "previews"
 DB_FILE = DATA / "db.json"
-LOCK = threading.Lock()
+
+
+class StoreLock:
+    def __init__(self):
+        self._thread_lock = threading.RLock()
+        self._depth = 0
+        self._file = None
+
+    def __enter__(self):
+        self._thread_lock.acquire()
+        if self._depth == 0 and fcntl is not None:
+            DATA.mkdir(parents=True, exist_ok=True)
+            self._file = (DATA / "db.lock").open("a+")
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_EX)
+        self._depth += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._depth -= 1
+        if self._depth == 0 and self._file is not None:
+            try:
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._file.close()
+                self._file = None
+        self._thread_lock.release()
+
+
+LOCK = StoreLock()
 JOB_QUEUE = queue.Queue()
 QUEUED_PHOTOS = set()
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 FACE_QUEUE_NAME = os.environ.get("FACE_QUEUE_NAME", "sharephotos:face:jobs").strip() or "sharephotos:face:jobs"
+FACE_QUEUE_SET_NAME = os.environ.get("FACE_QUEUE_SET_NAME", "%s:queued" % FACE_QUEUE_NAME).strip() or "%s:queued" % FACE_QUEUE_NAME
 FACE_WORKER_MODE = os.environ.get("FACE_WORKER_MODE", "inline").strip().lower()
+WORKER_API_URL = os.environ.get("WORKER_API_URL", "").strip().rstrip("/")
+WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "").strip()
 REDIS_CLIENT = None
 if REDIS_URL and redis is not None:
     try:
@@ -73,23 +110,101 @@ OSS_ENDPOINT = os.environ.get("OSS_ENDPOINT", "").strip()
 OSS_BUCKET = os.environ.get("OSS_BUCKET", "").strip()
 OSS_ACCESS_KEY_ID = os.environ.get("OSS_ACCESS_KEY_ID", "").strip()
 OSS_ACCESS_KEY_SECRET = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
-OSS_PREFIX = os.environ.get("OSS_PREFIX", "sharephotos").strip().strip("/")
+OSS_PREFIX = os.environ.get("OSS_PREFIX", "").strip().strip("/")
+OSS_SIGNED_URL_EXPIRES = int(os.environ.get("OSS_SIGNED_URL_EXPIRES", "3600") or "3600")
 
 mimetypes.add_type("image/heic", ".heic")
 mimetypes.add_type("image/heif", ".heif")
 mimetypes.add_type("video/quicktime", ".mov")
 
-OSS_CLIENT = None
-if OSS_ENDPOINT and OSS_BUCKET and OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET:
-    OSS_CLIENT = oss2.Bucket(
-        oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET),
-        OSS_ENDPOINT,
-        OSS_BUCKET,
-    )
+class OSSService:
+    def __init__(self):
+        self.endpoint = OSS_ENDPOINT
+        self.bucket_name = OSS_BUCKET
+        self.prefix = OSS_PREFIX
+        self.expires = OSS_SIGNED_URL_EXPIRES
+        self.bucket = None
+        if OSS_ENDPOINT and OSS_BUCKET and OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET:
+            self.bucket = oss2.Bucket(
+                oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET),
+                OSS_ENDPOINT,
+                OSS_BUCKET,
+            )
+
+    def enabled(self):
+        return self.bucket is not None
+
+    def normalize_endpoint(self):
+        return self.endpoint.replace("https://", "").replace("http://", "").strip("/")
+
+    def public_url(self, object_key):
+        if not object_key:
+            return ""
+        return "https://%s.%s/%s" % (self.bucket_name, self.normalize_endpoint(), object_key)
+
+    def generateObjectKey(self, resource_type, album_id=None, photo_id=None, ext="", user_id=None):
+        ext = ext.lower()
+        if ext and not ext.startswith("."):
+            ext = ".%s" % ext
+        segments = []
+        if self.prefix:
+            segments.append(self.prefix)
+        if resource_type == "original":
+            segments.extend(["original", album_id, "%s%s" % (photo_id, ext)])
+        elif resource_type == "preview":
+            segments.extend(["preview", album_id, "%s.jpg" % photo_id])
+        elif resource_type == "thumb":
+            segments.extend(["thumb", album_id, "%s.webp" % photo_id])
+        elif resource_type == "faces":
+            segments.extend(["faces", user_id or album_id or "unknown", "%s.jpg" % photo_id])
+        elif resource_type == "avatars":
+            segments.extend(["avatars", "%s.jpg" % (user_id or photo_id)])
+        else:
+            segments.extend([resource_type, album_id or "common", "%s%s" % (photo_id or uuid.uuid4(), ext)])
+        return "/".join(str(item).strip("/") for item in segments if str(item).strip("/"))
+
+    def uploadFile(self, path, object_key, mime_type=None, resource_type=None):
+        if not self.enabled() or not path or not Path(path).exists():
+            return {}
+        path = Path(path)
+        content_type = mime_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        headers = {"Content-Type": content_type}
+        with path.open("rb") as fh:
+            self.bucket.put_object(object_key, fh, headers=headers)
+        return {
+            "object_key": object_key,
+            "oss_url": self.public_url(object_key),
+            "resource_type": resource_type or "",
+            "mime_type": content_type,
+            "file_size": path.stat().st_size,
+        }
+
+    def deleteFile(self, object_key):
+        if self.enabled() and object_key:
+            try:
+                self.bucket.delete_object(object_key)
+            except Exception:
+                pass
+
+    def generateSignedUrl(self, object_key, expires=None):
+        if not self.enabled() or not object_key:
+            return ""
+        return self.bucket.sign_url("GET", object_key, int(expires or self.expires), slash_safe=True)
+
+    def downloadFile(self, object_key, target):
+        if not self.enabled() or not object_key:
+            return None
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.bucket.get_object_to_file(object_key, str(target))
+        return target
+
+
+OSS_SERVICE = OSSService()
 
 
 def oss_enabled():
-    return OSS_CLIENT is not None
+    return OSS_SERVICE.enabled()
 
 
 def oss_key(*parts):
@@ -99,19 +214,135 @@ def oss_key(*parts):
     return "/".join(clean)
 
 
-def oss_public_url(key):
-    endpoint = OSS_ENDPOINT.replace("https://", "").replace("http://", "").strip("/")
-    return "https://%s.%s/%s" % (OSS_BUCKET, endpoint, key)
+def oss_signed_url(key):
+    return OSS_SERVICE.generateSignedUrl(key)
 
 
 def oss_upload_path(path, key, content_type=None):
-    if not oss_enabled() or not path.exists():
+    return OSS_SERVICE.uploadFile(path, key, content_type)
+
+
+def oss_direct_url(key):
+    return OSS_SERVICE.public_url(key) if oss_enabled() and key else ""
+
+
+def oss_signed_or_empty(key):
+    return oss_signed_url(key) if oss_enabled() and key else ""
+
+
+def resource_field(prefix, name):
+    if not prefix:
+        return name
+    return "%s%s" % (prefix, name[0].upper() + name[1:])
+
+
+def apply_resource_metadata(target, metadata, prefix=""):
+    if not metadata:
         return
-    headers = {}
-    if content_type:
-        headers["Content-Type"] = content_type
-    with path.open("rb") as fh:
-        OSS_CLIENT.put_object(key, fh, headers=headers)
+    target[resource_field(prefix, "objectKey")] = metadata.get("object_key", "")
+    target[resource_field(prefix, "ossUrl")] = metadata.get("oss_url", "")
+    target[resource_field(prefix, "resourceType")] = metadata.get("resource_type", "")
+    target[resource_field(prefix, "mimeType")] = metadata.get("mime_type", "")
+    target[resource_field(prefix, "fileSize")] = metadata.get("file_size", 0)
+    if not prefix:
+        target["object_key"] = metadata.get("object_key", "")
+        target["oss_url"] = metadata.get("oss_url", "")
+        target["resource_type"] = metadata.get("resource_type", "")
+        target["mime_type"] = metadata.get("mime_type", "")
+        target["file_size"] = metadata.get("file_size", 0)
+    else:
+        snake_prefix = re.sub(r"(?<!^)(?=[A-Z])", "_", prefix).lower()
+        target["%s_object_key" % snake_prefix] = metadata.get("object_key", "")
+        target["%s_oss_url" % snake_prefix] = metadata.get("oss_url", "")
+        target["%s_resource_type" % snake_prefix] = metadata.get("resource_type", "")
+        target["%s_mime_type" % snake_prefix] = metadata.get("mime_type", "")
+        target["%s_file_size" % snake_prefix] = metadata.get("file_size", 0)
+
+
+def photo_object_key(photo, *names):
+    for name in names:
+        value = photo.get(name)
+        if value:
+            return value
+    return ""
+
+
+def original_object_key(photo):
+    return photo_object_key(photo, "object_key", "objectKey")
+
+
+def live_video_object_key(photo):
+    return photo_object_key(photo, "liveVideo_object_key", "live_video_object_key", "liveVideoObjectKey")
+
+
+def preview_object_key(photo):
+    return photo_object_key(photo, "preview_object_key", "previewObjectKey")
+
+
+def thumb_object_key(photo):
+    return photo_object_key(photo, "thumb_object_key", "thumbObjectKey")
+
+
+def face_object_key(photo):
+    return photo_object_key(photo, "face_object_key", "faceObjectKey")
+
+
+def migrate_local_resources_to_oss(db):
+    if not oss_enabled():
+        return False
+    changed = False
+    for album in db.get("albums", []):
+        album_id = album.get("id") or ""
+        for photo in album.get("photos", []):
+            photo_id = photo.get("id") or str(uuid.uuid4())
+            if not photo.get("id"):
+                photo["id"] = photo_id
+                changed = True
+            stored_name = photo.get("storedName") or ""
+            source = UPLOADS / album_id / stored_name
+            if source.exists() and not original_object_key(photo):
+                key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=source.suffix)
+                metadata = OSS_SERVICE.uploadFile(source, key, mimetypes.guess_type(stored_name)[0], "original")
+                apply_resource_metadata(photo, metadata)
+                changed = True
+            video_name = photo.get("liveVideoStoredName") or ""
+            video_source = UPLOADS / album_id / video_name
+            if video_source.exists() and not live_video_object_key(photo):
+                key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=video_source.suffix)
+                metadata = OSS_SERVICE.uploadFile(video_source, key, mimetypes.guess_type(video_name)[0], "original")
+                apply_resource_metadata(photo, metadata, "liveVideo")
+                changed = True
+            preview_source = PREVIEWS / album_id / ("%s.jpg" % stored_name)
+            if preview_source.exists() and not preview_object_key(photo):
+                key = OSS_SERVICE.generateObjectKey("preview", album_id=album_id, photo_id=photo_id)
+                metadata = OSS_SERVICE.uploadFile(preview_source, key, "image/jpeg", "preview")
+                apply_resource_metadata(photo, metadata, "preview")
+                changed = True
+            thumb_source = THUMBS / album_id / "cover" / ("%s.jpg" % stored_name)
+            if thumb_source.exists() and not thumb_object_key(photo):
+                tmp = tempfile.NamedTemporaryFile(prefix="picme-migrate-thumb-", suffix=".webp", delete=False)
+                tmp.close()
+                target = Path(tmp.name)
+                try:
+                    image = cv2.imread(str(thumb_source), cv2.IMREAD_COLOR)
+                    if image is not None:
+                        ok, encoded = cv2.imencode(".webp", image, [int(cv2.IMWRITE_WEBP_QUALITY), 78])
+                        if ok:
+                            target.write_bytes(encoded.tobytes())
+                            key = OSS_SERVICE.generateObjectKey("thumb", album_id=album_id, photo_id=photo_id)
+                            metadata = OSS_SERVICE.uploadFile(target, key, "image/webp", "thumb")
+                            apply_resource_metadata(photo, metadata, "thumb")
+                            changed = True
+                finally:
+                    target.unlink(missing_ok=True)
+            face_source = THUMBS / album_id / "face" / ("%s.jpg" % stored_name)
+            if face_source.exists() and not face_object_key(photo):
+                user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
+                key = OSS_SERVICE.generateObjectKey("faces", album_id=album_id, photo_id=photo_id, user_id=user_id)
+                metadata = OSS_SERVICE.uploadFile(face_source, key, "image/jpeg", "faces")
+                apply_resource_metadata(photo, metadata, "face")
+                changed = True
+    return changed
 
 
 def ensure_store():
@@ -127,6 +358,8 @@ def load_db():
     ensure_store()
     with DB_FILE.open("r", encoding="utf-8") as fh:
         db = json.load(fh)
+    if migrate_local_resources_to_oss(db):
+        write_db(db)
     if sync_all_folder_covers(db):
         write_db(db)
     return db
@@ -162,6 +395,40 @@ def unique_archive_name(filename, used_names):
         index += 1
     used_names.add(candidate)
     return candidate
+
+
+def oss_read_bytes(object_key):
+    if not oss_enabled() or not object_key:
+        return None
+    try:
+        return OSS_SERVICE.bucket.get_object(object_key).read()
+    except Exception:
+        return None
+
+
+def write_resource_to_archive(archive, album_id, photo, used_names, video=False, folder_name=None):
+    if video:
+        stored_name = photo.get("liveVideoStoredName")
+        original_name = photo.get("liveVideoOriginalName") or stored_name
+        object_key = live_video_object_key(photo)
+    else:
+        stored_name = photo.get("storedName")
+        original_name = photo.get("originalName") or stored_name
+        object_key = original_object_key(photo)
+    if not stored_name:
+        return False
+    arcname = unique_archive_name(original_name or stored_name, used_names)
+    if folder_name:
+        arcname = "%s/%s" % (folder_name, arcname)
+    source = UPLOADS / album_id / stored_name
+    if source.exists():
+        archive.write(source, arcname=arcname)
+        return True
+    body = oss_read_bytes(object_key)
+    if body is not None:
+        archive.writestr(arcname, body)
+        return True
+    return False
 
 
 def remove_thumbnails(album_id, stored_name=None):
@@ -206,8 +473,6 @@ def generate_preview(album_id, stored_name):
         try:
             image = Image.open(source).convert("RGB")
             image.save(target, "JPEG", quality=88)
-            if oss_enabled():
-                oss_upload_path(target, oss_key("previews", album_id, "%s.jpg" % stored_name), "image/jpeg")
             return target
         except Exception:
             return None
@@ -219,8 +484,6 @@ def generate_preview(album_id, stored_name):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
-    if oss_enabled():
-        oss_upload_path(target, oss_key("previews", album_id, "%s.jpg" % stored_name), "image/jpeg")
     return target
 
 
@@ -256,8 +519,6 @@ def generate_thumbnail(album_id, stored_name, size):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
-    if oss_enabled():
-        oss_upload_path(target, oss_key("thumbs", album_id, size, "%s.jpg" % stored_name), "image/jpeg")
     return target
 
 
@@ -320,9 +581,149 @@ def generate_face_thumbnail(album_id, stored_name):
     if not ok:
         return None
     target.write_bytes(encoded.tobytes())
-    if oss_enabled():
-        oss_upload_path(target, oss_key("face-thumbs", album_id, "%s.jpg" % stored_name), "image/jpeg")
     return target
+
+
+def local_upload_path(album_id, photo):
+    stored_name = photo.get("storedName") or ""
+    return UPLOADS / album_id / stored_name
+
+
+def materialize_photo_source(album_id, photo):
+    source = local_upload_path(album_id, photo)
+    if source.exists():
+        return source, lambda: None
+    key = original_object_key(photo)
+    if not oss_enabled() or not key:
+        return None, lambda: None
+    suffix = Path(photo.get("storedName") or photo.get("originalName") or "source.jpg").suffix or ".jpg"
+    tmp = tempfile.NamedTemporaryFile(prefix="picme-source-", suffix=suffix, delete=False)
+    tmp.close()
+    target = Path(tmp.name)
+    try:
+        OSS_SERVICE.downloadFile(key, target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        return None, lambda: None
+    return target, lambda: target.unlink(missing_ok=True)
+
+
+def readable_source_for_path(source):
+    source = Path(source)
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is not None:
+        return source, lambda: None
+    if source.suffix.lower() in LIVE_IMAGE_EXTS and Image is not None:
+        tmp = tempfile.NamedTemporaryFile(prefix="picme-readable-", suffix=".jpg", delete=False)
+        tmp.close()
+        target = Path(tmp.name)
+        try:
+            Image.open(source).convert("RGB").save(target, "JPEG", quality=90)
+            return target, lambda: target.unlink(missing_ok=True)
+        except Exception:
+            target.unlink(missing_ok=True)
+    return None, lambda: None
+
+
+def generate_preview_for_photo(album_id, photo, source):
+    if not oss_enabled():
+        return generate_preview(album_id, photo.get("storedName", ""))
+    readable, cleanup = readable_source_for_path(source)
+    if not readable:
+        return None
+    tmp = tempfile.NamedTemporaryFile(prefix="picme-preview-", suffix=".jpg", delete=False)
+    tmp.close()
+    target = Path(tmp.name)
+    try:
+        image = cv2.imread(str(readable), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if not ok:
+            return None
+        target.write_bytes(encoded.tobytes())
+        key = OSS_SERVICE.generateObjectKey("preview", album_id=album_id, photo_id=photo["id"])
+        metadata = OSS_SERVICE.uploadFile(target, key, "image/jpeg", "preview")
+        apply_resource_metadata(photo, metadata, "preview")
+        return target
+    finally:
+        cleanup()
+        target.unlink(missing_ok=True)
+
+
+def generate_thumbnail_for_photo(album_id, photo, source):
+    if not oss_enabled():
+        generate_all_thumbnails(album_id, photo.get("storedName", ""))
+        return None
+    readable, cleanup = readable_source_for_path(source)
+    if not readable:
+        return None
+    tmp = tempfile.NamedTemporaryFile(prefix="picme-thumb-", suffix=".webp", delete=False)
+    tmp.close()
+    target = Path(tmp.name)
+    try:
+        image = cv2.imread(str(readable), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        height, width = image.shape[:2]
+        max_width = 900
+        scale = min(1.0, max_width / max(width, 1))
+        if scale < 1.0:
+            image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".webp", image, [int(cv2.IMWRITE_WEBP_QUALITY), 78])
+        if not ok:
+            return None
+        target.write_bytes(encoded.tobytes())
+        key = OSS_SERVICE.generateObjectKey("thumb", album_id=album_id, photo_id=photo["id"])
+        metadata = OSS_SERVICE.uploadFile(target, key, "image/webp", "thumb")
+        apply_resource_metadata(photo, metadata, "thumb")
+        return target
+    finally:
+        cleanup()
+        target.unlink(missing_ok=True)
+
+
+def generate_face_thumbnail_for_photo(album_id, photo, source, user_id=None):
+    if not oss_enabled():
+        return generate_face_thumbnail(album_id, photo.get("storedName", ""))
+    readable, cleanup = readable_source_for_path(source)
+    if not readable:
+        return None
+    tmp = tempfile.NamedTemporaryFile(prefix="picme-face-", suffix=".jpg", delete=False)
+    tmp.close()
+    target = Path(tmp.name)
+    try:
+        image = cv2.imread(str(readable), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        box = detect_primary_face_box(image)
+        if not box:
+            return None
+        height, width = image.shape[:2]
+        x1, y1, x2, y2 = box
+        face_w = max(1.0, x2 - x1)
+        face_h = max(1.0, y2 - y1)
+        size = max(face_w, face_h) * 2.15
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2 - face_h * 0.08
+        left = int(max(0, round(cx - size / 2)))
+        top = int(max(0, round(cy - size / 2)))
+        right = int(min(width, round(cx + size / 2)))
+        bottom = int(min(height, round(cy + size / 2)))
+        if right <= left or bottom <= top:
+            return None
+        crop = cv2.resize(image[top:bottom, left:right], (420, 420), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+        if not ok:
+            return None
+        target.write_bytes(encoded.tobytes())
+        key = OSS_SERVICE.generateObjectKey("faces", album_id=album_id, photo_id=photo["id"], user_id=user_id or album_id)
+        metadata = OSS_SERVICE.uploadFile(target, key, "image/jpeg", "faces")
+        apply_resource_metadata(photo, metadata, "face")
+        return target
+    finally:
+        cleanup()
+        target.unlink(missing_ok=True)
 
 
 def find_album(db, album_id):
@@ -334,13 +735,17 @@ def find_album(db, album_id):
 
 def thumb_url(photo, size):
     if oss_enabled():
-        return oss_public_url(oss_key("thumbs", photo.get("albumId", ""), size, "%s.jpg" % photo.get("storedName", "")))
+        signed = oss_signed_or_empty(thumb_object_key(photo)) or oss_signed_or_empty(preview_object_key(photo)) or oss_signed_or_empty(original_object_key(photo))
+        if signed:
+            return signed
     return "/thumbs/%s/%s/%s" % (photo.get("albumId", ""), size, quote(photo.get("storedName", "")))
 
 
 def preview_url(photo):
     if oss_enabled():
-        return oss_public_url(oss_key("previews", photo.get("albumId", ""), "%s.jpg" % photo.get("storedName", "")))
+        signed = oss_signed_or_empty(preview_object_key(photo)) or oss_signed_or_empty(original_object_key(photo))
+        if signed:
+            return signed
     return "/previews/%s/%s" % (photo.get("albumId", ""), quote(photo.get("storedName", "")))
 
 
@@ -355,10 +760,13 @@ def photo_public_urls(album_id, photo):
     default_image = "/uploads/%s/%s" % (album_id, item.get("storedName", ""))
     item["imageUrl"] = item.get("url") or default_image
     if oss_enabled():
-        item["imageUrl"] = oss_public_url(oss_key("uploads", album_id, item.get("storedName", "")))
-        if item.get("liveVideoStoredName"):
-            item["videoUrl"] = oss_public_url(oss_key("uploads", album_id, item["liveVideoStoredName"]))
-    item["faceUrl"] = oss_public_url(oss_key("face-thumbs", album_id, "%s.jpg" % item.get("storedName", ""))) if oss_enabled() else "/face-thumbs/%s/%s" % (album_id, quote(item.get("storedName", "")))
+        signed = oss_signed_or_empty(original_object_key(item))
+        if signed:
+            item["imageUrl"] = signed
+        video_signed = oss_signed_or_empty(live_video_object_key(item))
+        if video_signed:
+            item["videoUrl"] = video_signed
+    item["faceUrl"] = (oss_signed_or_empty(face_object_key(item)) if oss_enabled() else "") or ("/face-thumbs/%s/%s" % (album_id, quote(item.get("storedName", ""))))
     return item
 
 
@@ -383,6 +791,14 @@ def folder_cover_url(album_id, folder, photo):
     return item.get("faceUrl") or item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or ""
 
 
+def folder_cover_object_key(folder, photo):
+    if not photo or not oss_enabled():
+        return ""
+    if folder_uses_scene_cover(folder):
+        return thumb_object_key(photo) or preview_object_key(photo) or original_object_key(photo)
+    return face_object_key(photo) or thumb_object_key(photo) or preview_object_key(photo) or original_object_key(photo)
+
+
 def sync_folder_covers(album):
     folders = album.get("folders", [])
     if not folders:
@@ -396,6 +812,7 @@ def sync_folder_covers(album):
             "coverPhotoId": folder.get("coverPhotoId"),
             "coverUrl": folder.get("coverUrl"),
             "cover_url": folder.get("cover_url"),
+            "coverObjectKey": folder.get("coverObjectKey"),
         }
         folder_photos = [
             photo for photo in album.get("photos", [])
@@ -408,12 +825,19 @@ def sync_folder_covers(album):
         folder["updatedAt"] = folder_photos[0].get("createdAt", folder.get("updatedAt")) if folder_photos else folder.get("updatedAt")
         if cover_photo:
             folder["coverPhotoId"] = cover_photo["id"]
-            folder["coverUrl"] = folder_cover_url(album["id"], folder, cover_photo)
+            cover_key = folder_cover_object_key(folder, cover_photo)
+            if cover_key:
+                folder["coverObjectKey"] = cover_key
+                folder["coverUrl"] = oss_direct_url(cover_key)
+            else:
+                folder.pop("coverObjectKey", None)
+                folder["coverUrl"] = folder_cover_url(album["id"], folder, cover_photo)
             folder["cover_url"] = folder["coverUrl"]
         else:
             folder.pop("coverPhotoId", None)
             folder.pop("coverUrl", None)
             folder.pop("cover_url", None)
+            folder.pop("coverObjectKey", None)
         after = {
             "photoIds": folder.get("photoIds"),
             "photoCount": folder.get("photoCount"),
@@ -421,6 +845,7 @@ def sync_folder_covers(album):
             "coverPhotoId": folder.get("coverPhotoId"),
             "coverUrl": folder.get("coverUrl"),
             "cover_url": folder.get("cover_url"),
+            "coverObjectKey": folder.get("coverObjectKey"),
         }
         changed = changed or before != after
     return changed
@@ -441,6 +866,9 @@ def public_album(album):
         if folder.get("id") == "pending":
             continue
         item = {key: value for key, value in folder.items() if key not in {"embedding", "embeddingCount", "embeddingEngine"}}
+        if oss_enabled() and item.get("coverObjectKey"):
+            item["coverUrl"] = oss_signed_or_empty(item["coverObjectKey"])
+            item["cover_url"] = item["coverUrl"]
         if item.get("id") == "no-face" or item.get("name") == "未识别人脸":
             item["name"] = "其他"
         visible["folders"].append(item)
@@ -457,18 +885,22 @@ def public_album(album):
         item["thumbnailUrl"] = item["cardUrl"]
         item["imageUrl"] = item.get("url") or "/uploads/%s/%s" % (album["id"], item.get("storedName", ""))
         if oss_enabled():
-            item["imageUrl"] = oss_public_url(oss_key("uploads", album["id"], item.get("storedName", "")))
+            signed = oss_signed_or_empty(original_object_key(item))
+            if signed:
+                item["imageUrl"] = signed
         item["image_url"] = item["imageUrl"]
         item["preview_url"] = item["previewUrl"]
         item["thumbnail_url"] = item["thumbnailUrl"]
         if item.get("liveVideoStoredName"):
             item["videoUrl"] = "/uploads/%s/%s" % (album["id"], item["liveVideoStoredName"])
             if oss_enabled():
-                item["videoUrl"] = oss_public_url(oss_key("uploads", album["id"], item["liveVideoStoredName"]))
+                signed = oss_signed_or_empty(live_video_object_key(item))
+                if signed:
+                    item["videoUrl"] = signed
             item["video_url"] = item["videoUrl"]
             item["downloadLiveUrl"] = "/api/albums/%s/photos/%s/download-live" % (album["id"], item["id"])
         item["downloadImageUrl"] = "/api/albums/%s/photos/%s/download-image" % (album["id"], item["id"])
-        item["faceUrl"] = oss_public_url(oss_key("face-thumbs", album["id"], "%s.jpg" % item.get("storedName", ""))) if oss_enabled() else "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
+        item["faceUrl"] = (oss_signed_or_empty(face_object_key(item)) if oss_enabled() else "") or "/face-thumbs/%s/%s" % (album["id"], quote(item.get("storedName", "")))
         ids = photo_folder_ids(item)
         if ids:
             original_names = item.get("folderNames", [])
@@ -755,6 +1187,19 @@ def prune_empty_folders(album):
     sync_photo_folder_names(album)
 
 
+def delete_oss_photo_resources(photo):
+    keys = {
+        original_object_key(photo),
+        live_video_object_key(photo),
+        preview_object_key(photo),
+        thumb_object_key(photo),
+        face_object_key(photo),
+    }
+    for key in keys:
+        if key:
+            OSS_SERVICE.deleteFile(key)
+
+
 def remove_photo(album, photo_id):
     photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
     if not photo:
@@ -762,6 +1207,7 @@ def remove_photo(album, photo_id):
     album["photos"] = [item for item in album.get("photos", []) if item["id"] != photo_id]
     still_used = any(item.get("storedName") == photo.get("storedName") for item in album.get("photos", []))
     if not still_used:
+        delete_oss_photo_resources(photo)
         source = UPLOADS / album["id"] / photo["storedName"]
         if source.exists():
             source.unlink()
@@ -769,6 +1215,7 @@ def remove_photo(album, photo_id):
         remove_preview(album["id"], photo["storedName"])
     video_name = photo.get("liveVideoStoredName")
     if video_name and not any(item.get("liveVideoStoredName") == video_name for item in album.get("photos", [])):
+        OSS_SERVICE.deleteFile(live_video_object_key(photo))
         video_source = UPLOADS / album["id"] / video_name
         if video_source.exists():
             video_source.unlink()
@@ -810,6 +1257,7 @@ def remove_folder(album, folder_id):
         still_used = any(item.get("storedName") == photo.get("storedName") for item in album.get("photos", []))
         if still_used:
             continue
+        delete_oss_photo_resources(photo)
         source = UPLOADS / album["id"] / photo["storedName"]
         if source.exists():
             source.unlink()
@@ -832,7 +1280,10 @@ def remove_folder(album, folder_id):
     }, ""
 
 
-def remove_album_files(album_id):
+def remove_album_files(album_id, album=None):
+    if album:
+        for photo in album.get("photos", []):
+            delete_oss_photo_resources(photo)
     album_dir = UPLOADS / album_id
     if album_dir.exists():
         shutil.rmtree(album_dir)
@@ -917,8 +1368,19 @@ def reclassify_photo(album, photo_id):
     photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
     if not photo:
         return None, "照片不存在"
-    image_path = UPLOADS / album["id"] / photo["storedName"]
-    folders, note = classify_photo(album, image_path)
+    image_path, cleanup = materialize_photo_source(album["id"], photo)
+    if not image_path:
+        return None, "源文件不存在"
+    try:
+        readable, cleanup_readable = readable_source_for_path(image_path)
+        if not readable:
+            return None, "图片无法读取"
+        try:
+            folders, note = classify_photo(album, readable)
+        finally:
+            cleanup_readable()
+    finally:
+        cleanup()
     apply_photo_folders(photo, folders, "重新识别：%s" % note)
     return photo, ""
 
@@ -928,8 +1390,16 @@ def reanalyze_album(album):
     photos = sorted(album.get("photos", []), key=lambda item: item.get("createdAt", 0))
     album["folders"] = []
     for photo in photos:
-        image_path = UPLOADS / album["id"] / photo["storedName"]
-        folders, note = classify_photo(album, image_path)
+        image_path, cleanup = materialize_photo_source(album["id"], photo)
+        readable, cleanup_readable = readable_source_for_path(image_path) if image_path else (None, lambda: None)
+        if readable:
+            try:
+                folders, note = classify_photo(album, readable)
+            finally:
+                cleanup_readable()
+        else:
+            folders, note = [get_no_face_folder(album)], "源文件不存在"
+        cleanup()
         apply_photo_folders(photo, folders, "全量重分析：%s" % note)
     for folder in album.get("folders", []):
         previous_name = previous_names.get(folder["id"])
@@ -941,6 +1411,10 @@ def reanalyze_album(album):
 
 def use_redis_queue():
     return REDIS_CLIENT is not None and FACE_WORKER_MODE == "redis"
+
+
+def use_remote_worker():
+    return FACE_WORKER_MODE == "remote"
 
 
 def push_face_job(album_id, photo_id):
@@ -968,23 +1442,33 @@ def pop_face_job(timeout=3):
 
 
 def enqueue_photo_job(album_id, photo_id):
+    if use_remote_worker():
+        return
     key = (album_id, photo_id)
-    with LOCK:
-        if key in QUEUED_PHOTOS:
+    if use_redis_queue():
+        added = REDIS_CLIENT.sadd(FACE_QUEUE_SET_NAME, "%s:%s" % key)
+        if not added:
             return
-        QUEUED_PHOTOS.add(key)
+    else:
+        with LOCK:
+            if key in QUEUED_PHOTOS:
+                return
+            QUEUED_PHOTOS.add(key)
     push_face_job(album_id, photo_id)
 
 
 def enqueue_pending_jobs():
+    pending = []
     with LOCK:
         db = load_db()
         for album in db.get("albums", []):
             for photo in album.get("photos", []):
                 if photo.get("status") in {"queued", "preparing", "processing"}:
                     photo["status"] = "queued"
-                    enqueue_photo_job(album["id"], photo["id"])
+                    pending.append((album["id"], photo["id"]))
         save_db(db)
+    for album_id, photo_id in pending:
+        enqueue_photo_job(album_id, photo_id)
 
 
 def process_photo_job(album_id, photo_id):
@@ -992,50 +1476,85 @@ def process_photo_job(album_id, photo_id):
         db = load_db()
         album = find_album(db, album_id)
         if not album:
+            cleanup_source()
             return
         photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
         if not photo:
+            cleanup_source()
             return
         photo["status"] = "preparing"
         photo["classification"] = "正在生成预览图"
         sync_photo_folder_names(album)
         save_db(db)
 
-    generate_all_thumbnails(album_id, photo["storedName"])
+    source, cleanup_source = materialize_photo_source(album_id, photo)
+    derivative_updates = {}
+    try:
+        if not source:
+            raise ValueError("图片源文件不存在")
+        generate_preview_for_photo(album_id, photo, source)
+        generate_thumbnail_for_photo(album_id, photo, source)
+        derivative_updates = {
+            key: value for key, value in photo.items()
+            if key.startswith(("preview", "thumb")) or key.startswith(("preview_", "thumb_"))
+        }
+    except Exception as error:
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if album:
+                target = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+                if target:
+                    target["classification"] = "预览图生成失败：%s" % error
+                    save_db(db)
 
     with LOCK:
         db = load_db()
         album = find_album(db, album_id)
         if not album:
+            cleanup_source()
             return
         photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
         if not photo:
+            cleanup_source()
             return
         photo["status"] = "processing"
         photo["classification"] = "正在识别人脸"
+        photo.update(derivative_updates)
         sync_photo_folder_names(album)
         save_db(db)
+
+    try:
+        readable, cleanup_readable = readable_source_for_path(source) if source else (None, lambda: None)
+        if not readable:
+            raise ValueError("图片无法生成预览图")
+        try:
+            analysis = analyze_photo_faces(readable)
+        finally:
+            cleanup_readable()
+    except Exception as error:
+        analysis = {"status": "failed", "note": str(error)}
 
     with LOCK:
         db = load_db()
         album = find_album(db, album_id)
         if not album:
+            cleanup_source()
             return
         photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
         if not photo:
+            cleanup_source()
             return
-        image_path = readable_image_path(album_id, photo["storedName"])
+        apply_face_analysis(album, photo, analysis)
+        face_user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
         try:
-            if not image_path:
-                raise ValueError("图片无法生成预览图")
-            photo_folders, classification_note = classify_photo(album, image_path)
-            photo["status"] = "ready"
-            apply_photo_folders(photo, photo_folders, classification_note)
-        except Exception as error:
-            photo["status"] = "failed"
-            apply_photo_folders(photo, [get_no_face_folder(album)], "识别失败：%s" % error)
+            if source:
+                generate_face_thumbnail_for_photo(album_id, photo, source, face_user_id)
+        except Exception:
+            pass
         prune_empty_folders(album)
         save_db(db)
+    cleanup_source()
 
 
 def photo_worker():
@@ -1049,9 +1568,11 @@ def photo_worker():
         try:
             process_photo_job(album_id, photo_id)
         finally:
-            with LOCK:
-                QUEUED_PHOTOS.discard((album_id, photo_id))
-            if not use_redis_queue():
+            if use_redis_queue():
+                REDIS_CLIENT.srem(FACE_QUEUE_SET_NAME, "%s:%s" % (album_id, photo_id))
+            else:
+                with LOCK:
+                    QUEUED_PHOTOS.discard((album_id, photo_id))
                 JOB_QUEUE.task_done()
 
 
@@ -1097,6 +1618,74 @@ def classify_photo(album, image_path):
     return [folder], folder_note
 
 
+def analyze_photo_faces(image_path):
+    app = get_insightface_app()
+    if app:
+        image = cv2.imread(str(image_path))
+        if image is None:
+            return {"status": "failed", "note": "图片无法读取"}
+        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        if not faces:
+            return {"status": "no_face", "note": "未检测到人脸", "engine": "insightface", "faces": []}
+        faces = sorted(faces, key=lambda face: bbox_area(face.bbox), reverse=True)
+        embeddings = []
+        for face in faces:
+            embedding = np.asarray(face.normed_embedding, dtype=np.float32)
+            norm = float(np.linalg.norm(embedding)) + 1e-6
+            embeddings.append((embedding / norm).round(6).tolist())
+        return {
+            "status": "ready",
+            "engine": "insightface",
+            "faceCount": len(embeddings),
+            "embeddings": embeddings,
+            "note": "",
+        }
+
+    embedding, note, meta = extract_opencv_embedding(image_path)
+    if not embedding:
+        return {"status": "no_face", "note": note, "engine": meta.get("engine") or "opencv", "faces": []}
+    return {
+        "status": "ready",
+        "engine": meta.get("engine") or "opencv",
+        "faceCount": 1,
+        "embeddings": [embedding],
+        "note": "",
+    }
+
+
+def apply_face_analysis(album, photo, analysis):
+    status = analysis.get("status")
+    if status == "failed":
+        photo["status"] = "failed"
+        apply_photo_folders(photo, [get_no_face_folder(album)], "识别失败：%s" % (analysis.get("note") or "未知错误"))
+        return
+    if status == "no_face":
+        photo["status"] = "ready"
+        apply_photo_folders(photo, [get_no_face_folder(album)], analysis.get("note") or "未检测到人脸")
+        return
+
+    embeddings = analysis.get("embeddings") or []
+    engine = analysis.get("engine") or "opencv"
+    if not embeddings:
+        photo["status"] = "ready"
+        apply_photo_folders(photo, [get_no_face_folder(album)], analysis.get("note") or "未检测到人脸")
+        return
+
+    person_folders = []
+    notes = []
+    for embedding in embeddings:
+        folder, note = assign_face_folder(album, embedding, engine)
+        if folder["id"] not in [item["id"] for item in person_folders]:
+            person_folders.append(folder)
+        notes.append(note)
+    photo["status"] = "ready"
+    if len(embeddings) > 1:
+        folders = [get_group_folder(album)] + person_folders
+        apply_photo_folders(photo, folders, "合照：识别到 %d 张人脸，%d 个人物文件夹" % (len(embeddings), len(person_folders)))
+    else:
+        apply_photo_folders(photo, person_folders, notes[0] if notes else "匹配到已有人物（%s）" % engine)
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "SharedAlbumDemo/0.1"
 
@@ -1113,6 +1702,24 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def send_error_json(self, message, status=400):
         self.send_json({"error": message}, status)
+
+    def request_origin(self):
+        proto = self.headers.get("X-Forwarded-Proto") or "http"
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost:%s" % os.environ.get("PORT", "8000")
+        return "%s://%s" % (proto, host)
+
+    def absolute_url(self, value):
+        if not value:
+            return ""
+        if re.match(r"^https?://", value):
+            return value
+        return urljoin(self.request_origin(), value)
+
+    def worker_authorized(self):
+        if WORKER_TOKEN and self.headers.get("X-Worker-Token") != WORKER_TOKEN:
+            self.send_error_json("Unauthorized worker", 401)
+            return False
+        return True
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1157,6 +1764,11 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path == "/api/worker/jobs/claim":
+            return self.claim_worker_job()
+        match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)/complete$", path)
+        if match:
+            return self.complete_worker_job(match.group(1), match.group(2))
         if path == "/api/albums":
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
@@ -1253,7 +1865,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 album["contributors"].append(uploader)
 
             album_dir = UPLOADS / album_id
-            album_dir.mkdir(parents=True, exist_ok=True)
+            if not oss_enabled():
+                album_dir.mkdir(parents=True, exist_ok=True)
             pending_folder = get_pending_folder(album)
             queued = []
             grouped = {}
@@ -1283,16 +1896,34 @@ class AppHandler(BaseHTTPRequestHandler):
 
                 image_file, original, suffix = image_item
                 video_item = video_items[0] if heic_item and video_items else None
-                digest = hashlib.sha1(("%s-%s-%s" % (time.time(), key, original)).encode("utf-8")).hexdigest()[:12]
-                stored_name = "%s%s" % (digest, suffix)
-                target = album_dir / stored_name
-                with target.open("wb") as out:
-                    shutil.copyfileobj(image_file.file, out)
+                photo_id = str(uuid.uuid4())
+                stored_name = "%s%s" % (photo_id, suffix)
+                mime_type = mimetypes.guess_type(stored_name)[0] or "application/octet-stream"
                 if oss_enabled():
-                    oss_upload_path(target, oss_key("uploads", album_id, stored_name), mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+                    tmp = tempfile.NamedTemporaryFile(prefix="picme-upload-", suffix=suffix, delete=False)
+                    tmp.close()
+                    target = Path(tmp.name)
+                    try:
+                        with target.open("wb") as out:
+                            shutil.copyfileobj(image_file.file, out)
+                        object_key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=suffix)
+                        image_metadata = OSS_SERVICE.uploadFile(target, object_key, mime_type, "original")
+                    finally:
+                        target.unlink(missing_ok=True)
+                else:
+                    target = album_dir / stored_name
+                    with target.open("wb") as out:
+                        shutil.copyfileobj(image_file.file, out)
+                    image_metadata = {
+                        "object_key": "",
+                        "oss_url": "",
+                        "resource_type": "original",
+                        "mime_type": mime_type,
+                        "file_size": target.stat().st_size,
+                    }
 
                 photo = {
-                    "id": uuid.uuid4().hex[:12],
+                    "id": photo_id,
                     "type": "live_photo" if video_item else "photo",
                     "originalName": original,
                     "storedName": stored_name,
@@ -1301,25 +1932,51 @@ class AppHandler(BaseHTTPRequestHandler):
                     "createdAt": int(time.time()),
                     "status": "queued",
                 }
+                apply_resource_metadata(photo, image_metadata)
 
                 if video_item:
                     video_file, video_original, video_suffix = video_item
-                    video_stored_name = "%s%s" % (digest, video_suffix)
-                    with (album_dir / video_stored_name).open("wb") as out:
-                        shutil.copyfileobj(video_file.file, out)
+                    video_stored_name = "%s%s" % (photo_id, video_suffix)
+                    video_mime_type = mimetypes.guess_type(video_stored_name)[0] or "application/octet-stream"
                     if oss_enabled():
-                        oss_upload_path(album_dir / video_stored_name, oss_key("uploads", album_id, video_stored_name), mimetypes.guess_type(video_stored_name)[0] or "application/octet-stream")
+                        tmp = tempfile.NamedTemporaryFile(prefix="picme-live-", suffix=video_suffix, delete=False)
+                        tmp.close()
+                        video_target = Path(tmp.name)
+                        try:
+                            with video_target.open("wb") as out:
+                                shutil.copyfileobj(video_file.file, out)
+                            video_key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=video_suffix)
+                            video_metadata = OSS_SERVICE.uploadFile(video_target, video_key, video_mime_type, "original")
+                        finally:
+                            video_target.unlink(missing_ok=True)
+                    else:
+                        video_target = album_dir / video_stored_name
+                        with video_target.open("wb") as out:
+                            shutil.copyfileobj(video_file.file, out)
+                        video_metadata = {
+                            "object_key": "",
+                            "oss_url": "",
+                            "resource_type": "original",
+                            "mime_type": video_mime_type,
+                            "file_size": video_target.stat().st_size,
+                        }
                     photo["liveVideoOriginalName"] = video_original
                     photo["liveVideoStoredName"] = video_stored_name
+                    apply_resource_metadata(photo, video_metadata, "liveVideo")
 
                 apply_photo_folders(photo, [pending_folder], "已上传，等待后台识别")
                 album["photos"].append(photo)
                 created.append(photo)
                 queued.append(photo["id"])
             save_db(db)
+            response_album = public_album(album)
+            response_created = [
+                item for item in response_album.get("photos", [])
+                if item.get("id") in queued
+            ]
         for photo_id in queued:
             enqueue_photo_job(album_id, photo_id)
-        return self.send_json({"photos": created, "album": public_album(album), "queued": len(created), "ignored": ignored}, 202)
+        return self.send_json({"photos": response_created, "album": response_album, "queued": len(created), "ignored": ignored}, 202)
 
     def read_json_body(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -1328,6 +1985,65 @@ class AppHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8") or "{}"), ""
         except json.JSONDecodeError:
             return None, "Invalid JSON"
+
+    def claim_worker_job(self):
+        if not self.worker_authorized():
+            return
+        with LOCK:
+            db = load_db()
+            for album in db.get("albums", []):
+                for photo in album.get("photos", []):
+                    if photo.get("status") not in {"queued", "preparing", "processing"}:
+                        continue
+                    photo["status"] = "processing"
+                    photo["classification"] = "正在识别人脸"
+                    source, cleanup_source = materialize_photo_source(album["id"], photo)
+                    if source:
+                        try:
+                            generate_preview_for_photo(album["id"], photo, source)
+                            generate_thumbnail_for_photo(album["id"], photo, source)
+                        finally:
+                            cleanup_source()
+                    sync_photo_folder_names(album)
+                    save_db(db)
+                    public_photo = photo_public_urls(album["id"], photo)
+                    source_url = self.absolute_url(public_photo.get("previewUrl") or public_photo.get("imageUrl"))
+                    return self.send_json({
+                        "job": {
+                            "albumId": album["id"],
+                            "photoId": photo["id"],
+                            "photo": public_photo,
+                            "sourceUrl": source_url,
+                        }
+                    })
+        return self.send_json({"job": None})
+
+    def complete_worker_job(self, album_id, photo_id):
+        if not self.worker_authorized():
+            return
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        analysis = payload.get("analysis") or payload
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+            if not photo:
+                return self.send_error_json("Photo not found", 404)
+            apply_face_analysis(album, photo, analysis)
+            source, cleanup_source = materialize_photo_source(album_id, photo)
+            if source:
+                try:
+                    face_user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
+                    generate_face_thumbnail_for_photo(album_id, photo, source, face_user_id)
+                finally:
+                    cleanup_source()
+            prune_empty_folders(album)
+            save_db(db)
+        return self.send_json({"album": public_album(album)})
 
     def reanalyze_album_request(self, album_id):
         with LOCK:
@@ -1490,7 +2206,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if not album:
                 return self.send_error_json("Album not found", 404)
             db["albums"] = [item for item in db["albums"] if item["id"] != album_id]
-            remove_album_files(album_id)
+            remove_album_files(album_id, album)
             save_db(db)
         return self.send_json({"deletedAlbumId": album_id})
 
@@ -1506,15 +2222,11 @@ class AppHandler(BaseHTTPRequestHandler):
         photos = [photo for photo in album["photos"] if folder_id in photo_folder_ids(photo)]
         zip_path = DATA / ("%s-%s.zip" % (album_id, folder_id))
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            used_names = set()
             for photo in photos:
-                source = UPLOADS / album_id / photo["storedName"]
-                if source.exists():
-                    archive.write(source, arcname="%s/%s" % (folder["name"], photo["originalName"]))
-                video_name = photo.get("liveVideoStoredName")
-                if video_name:
-                    video_source = UPLOADS / album_id / video_name
-                    if video_source.exists():
-                        archive.write(video_source, arcname="%s/%s" % (folder["name"], photo.get("liveVideoOriginalName") or video_name))
+                write_resource_to_archive(archive, album_id, photo, used_names, folder_name=folder["name"])
+                if photo.get("liveVideoStoredName"):
+                    write_resource_to_archive(archive, album_id, photo, used_names, video=True, folder_name=folder["name"])
 
         body = zip_path.read_bytes()
         filename = "%s-%s.zip" % (slugify(album["name"]), slugify(folder["name"]))
@@ -1553,16 +2265,9 @@ class AppHandler(BaseHTTPRequestHandler):
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             used_names = set()
             for photo in photos:
-                source = UPLOADS / album_id / photo["storedName"]
-                if source.exists():
-                    name = unique_archive_name(photo.get("originalName") or photo["storedName"], used_names)
-                    archive.write(source, arcname=name)
-                video_name = photo.get("liveVideoStoredName")
-                if video_name:
-                    video_source = UPLOADS / album_id / video_name
-                    if video_source.exists():
-                        name = unique_archive_name(photo.get("liveVideoOriginalName") or video_name, used_names)
-                        archive.write(video_source, arcname=name)
+                write_resource_to_archive(archive, album_id, photo, used_names)
+                if photo.get("liveVideoStoredName"):
+                    write_resource_to_archive(archive, album_id, photo, used_names, video=True)
 
         filename = "%s-selected-%d.zip" % (slugify(album.get("name") or "photos"), len(photos))
         return self.send_download(zip_path, filename, "application/zip")
@@ -1571,11 +2276,14 @@ class AppHandler(BaseHTTPRequestHandler):
         if not path.exists() or path.is_dir():
             return self.send_error_json("File not found", 404)
         body = path.read_bytes()
-        filename = filename or path.name
-        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or path.name
+        return self.send_bytes_download(body, filename or path.name, content_type or mimetypes.guess_type(str(path))[0])
+
+    def send_bytes_download(self, body, filename, content_type=None):
+        filename = filename or "download"
+        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or "download"
         encoded_filename = quote(filename.encode("utf-8"))
         self.send_response(200)
-        self.send_header("Content-Type", content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream")
         self.send_header(
             "Content-Disposition",
             'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (ascii_filename, encoded_filename),
@@ -1597,6 +2305,14 @@ class AppHandler(BaseHTTPRequestHandler):
         if not photo:
             return self.send_error_json("Photo not found", 404)
         source = UPLOADS / album_id / photo["storedName"]
+        if not source.exists() and oss_enabled():
+            body = oss_read_bytes(original_object_key(photo))
+            if body is not None:
+                return self.send_bytes_download(
+                    body,
+                    photo.get("originalName") or photo["storedName"],
+                    photo.get("mime_type") or photo.get("mimeType"),
+                )
         return self.send_download(source, photo.get("originalName") or photo["storedName"])
 
     def download_live_photo(self, album_id, photo_id):
@@ -1608,12 +2324,20 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("不是 Live Photo")
         image_source = UPLOADS / album_id / photo["storedName"]
         video_source = UPLOADS / album_id / video_name
-        if not image_source.exists() or not video_source.exists():
+        image_body = None if image_source.exists() else oss_read_bytes(original_object_key(photo))
+        video_body = None if video_source.exists() else oss_read_bytes(live_video_object_key(photo))
+        if (not image_source.exists() and image_body is None) or (not video_source.exists() and video_body is None):
             return self.send_error_json("Live Photo 文件不完整", 404)
         zip_path = DATA / ("%s-%s-live.zip" % (album_id, photo_id))
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(image_source, arcname=photo.get("originalName") or photo["storedName"])
-            archive.write(video_source, arcname=photo.get("liveVideoOriginalName") or video_name)
+            if image_source.exists():
+                archive.write(image_source, arcname=photo.get("originalName") or photo["storedName"])
+            else:
+                archive.writestr(photo.get("originalName") or photo["storedName"], image_body)
+            if video_source.exists():
+                archive.write(video_source, arcname=photo.get("liveVideoOriginalName") or video_name)
+            else:
+                archive.writestr(photo.get("liveVideoOriginalName") or video_name, video_body)
         filename = "%s-live.zip" % slugify(Path(photo.get("originalName") or "live-photo").stem)
         return self.send_download(zip_path, filename, "application/zip")
 
@@ -1676,7 +2400,9 @@ class AppHandler(BaseHTTPRequestHandler):
 
 def main():
     ensure_store()
-    if FACE_WORKER_MODE != "redis":
+    if FACE_WORKER_MODE == "redis" and not use_redis_queue():
+        raise RuntimeError("FACE_WORKER_MODE=redis 但 Redis 不可用，请检查 REDIS_URL 或改用 inline 模式")
+    if FACE_WORKER_MODE not in {"redis", "remote"}:
         threading.Thread(target=photo_worker, daemon=True).start()
     enqueue_pending_jobs()
     port = int(os.environ.get("PORT", "8000"))

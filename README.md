@@ -64,41 +64,52 @@ docker compose up -d --build
 
 ## OSS 环境变量配置（阿里云）
 
-如果你希望**原图、缩略图、预览图都上传到阿里云 OSS**，并且让前端直接访问 OSS URL，需要配置以下环境变量：
+如果你希望**原图、Live Photo、缩略图、预览图都统一上传到阿里云 OSS**，需要配置以下环境变量。建议 Bucket 保持私有读写，前端只使用服务端生成的签名 URL，不会暴露 AccessKey Secret。
 
-- `OSS_ENDPOINT`：OSS 地域节点，例如 `https://oss-cn-hangzhou.aliyuncs.com`
-- `OSS_BUCKET`：Bucket 名称，例如 `my-sharephotos`
+- `OSS_ENDPOINT`：OSS 地域节点，例如 `https://oss-cn-chengdu.aliyuncs.com`
+- `OSS_BUCKET`：Bucket 名称，例如 `picme-photos`
 - `OSS_ACCESS_KEY_ID`：阿里云 AccessKey ID
 - `OSS_ACCESS_KEY_SECRET`：阿里云 AccessKey Secret
-- `OSS_PREFIX`（可选）：对象存储前缀目录，默认是 `sharephotos`
+- `OSS_PREFIX`（可选）：对象存储总前缀，默认空。一般不需要配置，系统会直接写入 `original/`、`preview/`、`thumb/` 等前缀
+- `OSS_SIGNED_URL_EXPIRES`（可选）：签名 URL 有效期，默认 `3600` 秒
 
-> 不配置以上变量时，系统会保持原有本地存储逻辑。
+OSS 不需要手动创建目录。对象上传时会按 object key 自动形成类似目录的前缀：
+
+```text
+original/{albumId}/{photoId}.heic
+original/{albumId}/{photoId}.mov
+preview/{albumId}/{photoId}.jpg
+thumb/{albumId}/{photoId}.webp
+faces/{userId}/{photoId}.jpg
+avatars/{userId}.jpg
+```
+
+数据库会保存 `object_key`、`oss_url`、`resource_type`、`mime_type`、`file_size` 等资源元数据；接口返回给前端的是服务端签名后的临时访问地址。后续接 CDN、STS 临时凭证或 AI 分类前缀（例如 `ai/group/`、`ai/person/`）时，可以继续沿用同一套 object key 规则。
+
+> 不配置 OSS 变量时，系统会保持本地文件存储逻辑，便于本地开发。
 
 ### 方式一：本地直接启动时配置
 
 ```bash
-export OSS_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com"
+export OSS_ENDPOINT="https://oss-cn-chengdu.aliyuncs.com"
 export OSS_BUCKET="your-bucket-name"
 export OSS_ACCESS_KEY_ID="your-access-key-id"
 export OSS_ACCESS_KEY_SECRET="your-access-key-secret"
-export OSS_PREFIX="sharephotos"
+export OSS_SIGNED_URL_EXPIRES="3600"
 
 python3 server.py
 ```
 
 ### 方式二：Docker Compose 配置
 
-在 `docker-compose.yml` 的服务里增加 `environment`（示例）：
+`docker-compose.yml` 已预留 OSS 环境变量，可通过 `.env` 或服务器环境变量配置：
 
-```yaml
-services:
-  sharephotos:
-    environment:
-      OSS_ENDPOINT: https://oss-cn-hangzhou.aliyuncs.com
-      OSS_BUCKET: your-bucket-name
-      OSS_ACCESS_KEY_ID: your-access-key-id
-      OSS_ACCESS_KEY_SECRET: your-access-key-secret
-      OSS_PREFIX: sharephotos
+```bash
+OSS_ENDPOINT=https://oss-cn-chengdu.aliyuncs.com
+OSS_BUCKET=picme-photos
+OSS_ACCESS_KEY_ID=your-access-key-id
+OSS_ACCESS_KEY_SECRET=your-access-key-secret
+OSS_SIGNED_URL_EXPIRES=3600
 ```
 
 然后重启：
@@ -178,3 +189,25 @@ python3 face_worker.py
 ```
 
 不设置 `FACE_WORKER_MODE=redis` 时，系统保持原本的进程内队列+线程消费模式，前后端接口保持不变。
+
+### 本地机器远程做人脸识别
+
+如果生产服务器 CPU 不适合跑模型，可以让生产后端只负责上传与入库，本地 Mac 负责识别：
+
+生产服务端：
+
+```bash
+export FACE_WORKER_MODE=remote
+export WORKER_TOKEN=替换成一段随机密钥
+docker compose up -d --build
+```
+
+本地 Mac：
+
+```bash
+export WORKER_API_URL=http://服务器IP
+export WORKER_TOKEN=替换成同一段随机密钥
+python3 face_worker.py
+```
+
+远程 Worker 会从生产后端领取 `queued/preparing/processing` 状态的照片，下载后在本机执行人脸识别，并把识别结果回写到生产后端。
