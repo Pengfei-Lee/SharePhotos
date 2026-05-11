@@ -193,6 +193,21 @@ REDIS_PORT=6379
 redis://:replace-with-a-strong-password@你的服务器IP:6379/0
 ```
 
+例如你的主服务服务器 IP 是 `45.32.31.111`，另一台 Worker 机器上可以配置：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL="redis://:replace-with-a-strong-password@45.32.31.111:6379/0"
+python3 face_worker.py
+```
+
+`docker-compose.yml` 会通过下面这行把 Redis 暴露到宿主机，`REDIS_PORT` 不填时默认映射到宿主机 `6379`：
+
+```yaml
+ports:
+  - "${REDIS_PORT:-6379}:6379"
+```
+
 远程开放 Redis 端口有安全风险，生产环境建议同时配置云安全组/防火墙，只允许你的固定 IP 访问。
 
 ### 本地分离启动示例
