@@ -380,8 +380,6 @@ def load_db():
         db = json.load(fh)
     if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
         write_db(db)
-    if repair_missing_oss_display_resources(db):
-        write_db(db)
     if sync_all_folder_covers(db):
         write_db(db)
     return db
@@ -628,36 +626,6 @@ def materialize_photo_source(album_id, photo):
         target.unlink(missing_ok=True)
         return None, lambda: None
     return target, lambda: target.unlink(missing_ok=True)
-
-
-def repair_missing_oss_display_resources(db):
-    if not oss_enabled():
-        return False
-    changed = False
-    for album in db.get("albums", []):
-        album_id = album.get("id") or ""
-        for photo in album.get("photos", []):
-            if not original_object_key(photo):
-                continue
-            needs_preview = not preview_object_key(photo)
-            needs_thumb = not thumb_object_key(photo)
-            if not needs_preview and not needs_thumb:
-                continue
-            source, cleanup = materialize_photo_source(album_id, photo)
-            if not source:
-                continue
-            try:
-                if needs_preview:
-                    generate_preview_for_photo(album_id, photo, source)
-                    changed = bool(preview_object_key(photo)) or changed
-                if needs_thumb:
-                    generate_thumbnail_for_photo(album_id, photo, source)
-                    changed = bool(thumb_object_key(photo)) or changed
-            except Exception as error:
-                print("OSS display resource repair failed for %s/%s: %s" % (album_id, photo.get("id"), error))
-            finally:
-                cleanup()
-    return changed
 
 
 def readable_source_for_path(source):
