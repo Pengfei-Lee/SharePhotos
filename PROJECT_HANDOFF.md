@@ -225,26 +225,26 @@ FACE_WORKER_MODE=redis python3 face_worker.py
 
 当前策略：
 
-- 监听 `dev` 分支。
+- 监听 `master` 分支。
 - SSH 到生产服务器。
 - 进入 `~/SharePhotos`。
-- 强制同步到 `origin/dev`。
+- 强制同步到 `origin/master`。
 - 删除旧的 `sharephotos-face-worker` 容器。
 - 只启动 `sharephotos redis caddy`。
 
 当前部署命令逻辑：
 
 ```bash
-git fetch origin dev
-git checkout dev
-git reset --hard origin/dev
+git fetch origin master
+git checkout master
+git reset --hard origin/master
 docker rm -f sharephotos-face-worker || true
 docker compose up -d --build sharephotos redis caddy
 ```
 
 注意：
 
-- `git reset --hard origin/dev` 会覆盖服务器上已跟踪文件的本地改动。
+- `git reset --hard origin/master` 会覆盖服务器上已跟踪文件的本地改动。
 - `.env` 通常是未跟踪文件，不会被覆盖。
 - 如果服务器上手工改了 `Caddyfile` 且没有提交，会被覆盖。
 
@@ -386,4 +386,3 @@ native/ios/SharePhotos/
 5. 查看 `face_worker.py`，理解远程 worker 消费任务方式。
 6. 本地用已有数据启动 Web H5，确认基础功能。
 7. 再进入 iOS 工程调试真机体验。
-
