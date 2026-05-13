@@ -380,6 +380,8 @@ def load_db():
         db = json.load(fh)
     if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
         write_db(db)
+    if repair_missing_oss_display_resources(db):
+        write_db(db)
     if sync_all_folder_covers(db):
         write_db(db)
     return db
@@ -628,6 +630,36 @@ def materialize_photo_source(album_id, photo):
     return target, lambda: target.unlink(missing_ok=True)
 
 
+def repair_missing_oss_display_resources(db):
+    if not oss_enabled():
+        return False
+    changed = False
+    for album in db.get("albums", []):
+        album_id = album.get("id") or ""
+        for photo in album.get("photos", []):
+            if not original_object_key(photo):
+                continue
+            needs_preview = not preview_object_key(photo)
+            needs_thumb = not thumb_object_key(photo)
+            if not needs_preview and not needs_thumb:
+                continue
+            source, cleanup = materialize_photo_source(album_id, photo)
+            if not source:
+                continue
+            try:
+                if needs_preview:
+                    generate_preview_for_photo(album_id, photo, source)
+                    changed = bool(preview_object_key(photo)) or changed
+                if needs_thumb:
+                    generate_thumbnail_for_photo(album_id, photo, source)
+                    changed = bool(thumb_object_key(photo)) or changed
+            except Exception as error:
+                print("OSS display resource repair failed for %s/%s: %s" % (album_id, photo.get("id"), error))
+            finally:
+                cleanup()
+    return changed
+
+
 def readable_source_for_path(source):
     source = Path(source)
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
@@ -664,7 +696,8 @@ def generate_preview_for_photo(album_id, photo, source):
         target.write_bytes(encoded.tobytes())
         key = OSS_SERVICE.generateObjectKey("preview", album_id=album_id, photo_id=photo["id"])
         metadata = OSS_SERVICE.uploadFile(target, key, "image/jpeg", "preview")
-        apply_resource_metadata(photo, metadata, "preview")
+        if metadata:
+            apply_resource_metadata(photo, metadata, "preview")
         return target
     finally:
         cleanup()
@@ -696,7 +729,8 @@ def generate_thumbnail_for_photo(album_id, photo, source):
         target.write_bytes(encoded.tobytes())
         key = OSS_SERVICE.generateObjectKey("thumb", album_id=album_id, photo_id=photo["id"])
         metadata = OSS_SERVICE.uploadFile(target, key, "image/webp", "thumb")
-        apply_resource_metadata(photo, metadata, "thumb")
+        if metadata:
+            apply_resource_metadata(photo, metadata, "thumb")
         return target
     finally:
         cleanup()
@@ -1919,6 +1953,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 photo_id = str(uuid.uuid4())
                 stored_name = "%s%s" % (photo_id, suffix)
                 mime_type = mimetypes.guess_type(stored_name)[0] or "application/octet-stream"
+                image_source_for_derivatives = None
                 if oss_enabled():
                     tmp = tempfile.NamedTemporaryFile(prefix="picme-upload-", suffix=suffix, delete=False)
                     tmp.close()
@@ -1928,9 +1963,12 @@ class AppHandler(BaseHTTPRequestHandler):
                             shutil.copyfileobj(image_file.file, out)
                         object_key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=suffix)
                         image_metadata = OSS_SERVICE.uploadFile(target, object_key, mime_type, "original")
-                    finally:
+                        image_source_for_derivatives = target
+                    except Exception:
                         target.unlink(missing_ok=True)
+                        raise
                     if not image_metadata:
+                        target.unlink(missing_ok=True)
                         return self.send_error_json("OSS upload failed", 502)
                 else:
                     target = album_dir / stored_name
@@ -1955,6 +1993,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     "status": "queued",
                 }
                 apply_resource_metadata(photo, image_metadata)
+                if oss_enabled() and image_source_for_derivatives:
+                    try:
+                        generate_preview_for_photo(album_id, photo, image_source_for_derivatives)
+                        generate_thumbnail_for_photo(album_id, photo, image_source_for_derivatives)
+                    except Exception as error:
+                        print("OSS derivative generation failed for %s: %s" % (photo_id, error))
+                    finally:
+                        image_source_for_derivatives.unlink(missing_ok=True)
 
                 if video_item:
                     video_file, video_original, video_suffix = video_item
