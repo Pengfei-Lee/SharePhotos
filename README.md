@@ -72,6 +72,7 @@ docker compose up -d --build
 - `OSS_ACCESS_KEY_SECRET`：阿里云 AccessKey Secret
 - `OSS_PREFIX`（可选）：对象存储总前缀，默认空。一般不需要配置，系统会直接写入 `original/`、`preview/`、`thumb/` 等前缀
 - `OSS_SIGNED_URL_EXPIRES`（可选）：签名 URL 有效期，默认 `3600` 秒
+- `OSS_AUTO_MIGRATE`（可选）：是否在启动/读库时把历史本地文件迁移到 OSS，默认 `0`。确认 OSS 权限和网络正常后再设为 `1`
 
 OSS 不需要手动创建目录。对象上传时会按 object key 自动形成类似目录的前缀：
 
@@ -110,6 +111,7 @@ OSS_BUCKET=picme-photos
 OSS_ACCESS_KEY_ID=your-access-key-id
 OSS_ACCESS_KEY_SECRET=your-access-key-secret
 OSS_SIGNED_URL_EXPIRES=3600
+OSS_AUTO_MIGRATE=0
 ```
 
 然后重启：
