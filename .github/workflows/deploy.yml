@@ -3,7 +3,7 @@ name: Auto Deploy
 on:
   push:
     branches:
-      - master   # 你用哪个分支就写哪个
+      - master
 
 jobs:
   deploy:
@@ -18,5 +18,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd ~/SharePhotos
-            git pull
-            docker compose up -d --build
+            git fetch origin master
+            git checkout master
+            git reset --hard origin/master
+            docker compose up -d --build sharephotos

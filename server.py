@@ -117,7 +117,12 @@ OSS_BUCKET = os.environ.get("OSS_BUCKET", "").strip()
 OSS_ACCESS_KEY_ID = os.environ.get("OSS_ACCESS_KEY_ID", "").strip()
 OSS_ACCESS_KEY_SECRET = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
 OSS_PREFIX = os.environ.get("OSS_PREFIX", "").strip().strip("/")
-OSS_SIGNED_URL_EXPIRES = int(os.environ.get("OSS_SIGNED_URL_EXPIRES", "3600") or "3600")
+OSS_AUTO_MIGRATE = os.environ.get("OSS_AUTO_MIGRATE", "").strip().lower() in {"1", "true", "yes", "on"}
+try:
+    OSS_SIGNED_URL_EXPIRES = int(os.environ.get("OSS_SIGNED_URL_EXPIRES", "3600") or "3600")
+except (TypeError, ValueError):
+    print("Invalid OSS_SIGNED_URL_EXPIRES, fallback to 3600")
+    OSS_SIGNED_URL_EXPIRES = 3600
 
 mimetypes.add_type("image/heic", ".heic")
 mimetypes.add_type("image/heif", ".heif")
@@ -170,13 +175,17 @@ class OSSService:
         return "/".join(str(item).strip("/") for item in segments if str(item).strip("/"))
 
     def uploadFile(self, path, object_key, mime_type=None, resource_type=None):
-        if not self.enabled() or not path or not Path(path).exists():
+        if not self.enabled() or not path or not Path(path).is_file():
             return {}
         path = Path(path)
         content_type = mime_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         headers = {"Content-Type": content_type}
-        with path.open("rb") as fh:
-            self.bucket.put_object(object_key, fh, headers=headers)
+        try:
+            with path.open("rb") as fh:
+                self.bucket.put_object(object_key, fh, headers=headers)
+        except Exception as error:
+            print("OSS upload failed for %s: %s" % (object_key, error))
+            return {}
         return {
             "object_key": object_key,
             "oss_url": self.public_url(object_key),
@@ -306,24 +315,27 @@ def migrate_local_resources_to_oss(db):
                 changed = True
             stored_name = photo.get("storedName") or ""
             source = UPLOADS / album_id / stored_name
-            if source.exists() and not original_object_key(photo):
+            if source.is_file() and not original_object_key(photo):
                 key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=source.suffix)
                 metadata = OSS_SERVICE.uploadFile(source, key, mimetypes.guess_type(stored_name)[0], "original")
-                apply_resource_metadata(photo, metadata)
-                changed = True
+                if metadata:
+                    apply_resource_metadata(photo, metadata)
+                    changed = True
             video_name = photo.get("liveVideoStoredName") or ""
             video_source = UPLOADS / album_id / video_name
-            if video_source.exists() and not live_video_object_key(photo):
+            if video_name and video_source.is_file() and not live_video_object_key(photo):
                 key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=video_source.suffix)
                 metadata = OSS_SERVICE.uploadFile(video_source, key, mimetypes.guess_type(video_name)[0], "original")
-                apply_resource_metadata(photo, metadata, "liveVideo")
-                changed = True
+                if metadata:
+                    apply_resource_metadata(photo, metadata, "liveVideo")
+                    changed = True
             preview_source = PREVIEWS / album_id / ("%s.jpg" % stored_name)
             if preview_source.exists() and not preview_object_key(photo):
                 key = OSS_SERVICE.generateObjectKey("preview", album_id=album_id, photo_id=photo_id)
                 metadata = OSS_SERVICE.uploadFile(preview_source, key, "image/jpeg", "preview")
-                apply_resource_metadata(photo, metadata, "preview")
-                changed = True
+                if metadata:
+                    apply_resource_metadata(photo, metadata, "preview")
+                    changed = True
             thumb_source = THUMBS / album_id / "cover" / ("%s.jpg" % stored_name)
             if thumb_source.exists() and not thumb_object_key(photo):
                 tmp = tempfile.NamedTemporaryFile(prefix="picme-migrate-thumb-", suffix=".webp", delete=False)
@@ -337,8 +349,9 @@ def migrate_local_resources_to_oss(db):
                             target.write_bytes(encoded.tobytes())
                             key = OSS_SERVICE.generateObjectKey("thumb", album_id=album_id, photo_id=photo_id)
                             metadata = OSS_SERVICE.uploadFile(target, key, "image/webp", "thumb")
-                            apply_resource_metadata(photo, metadata, "thumb")
-                            changed = True
+                            if metadata:
+                                apply_resource_metadata(photo, metadata, "thumb")
+                                changed = True
                 finally:
                     target.unlink(missing_ok=True)
             face_source = THUMBS / album_id / "face" / ("%s.jpg" % stored_name)
@@ -346,8 +359,9 @@ def migrate_local_resources_to_oss(db):
                 user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
                 key = OSS_SERVICE.generateObjectKey("faces", album_id=album_id, photo_id=photo_id, user_id=user_id)
                 metadata = OSS_SERVICE.uploadFile(face_source, key, "image/jpeg", "faces")
-                apply_resource_metadata(photo, metadata, "face")
-                changed = True
+                if metadata:
+                    apply_resource_metadata(photo, metadata, "face")
+                    changed = True
     return changed
 
 
@@ -364,7 +378,7 @@ def load_db():
     ensure_store()
     with DB_FILE.open("r", encoding="utf-8") as fh:
         db = json.load(fh)
-    if migrate_local_resources_to_oss(db):
+    if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
         write_db(db)
     if sync_all_folder_covers(db):
         write_db(db)
@@ -1916,6 +1930,8 @@ class AppHandler(BaseHTTPRequestHandler):
                         image_metadata = OSS_SERVICE.uploadFile(target, object_key, mime_type, "original")
                     finally:
                         target.unlink(missing_ok=True)
+                    if not image_metadata:
+                        return self.send_error_json("OSS upload failed", 502)
                 else:
                     target = album_dir / stored_name
                     with target.open("wb") as out:
@@ -1955,6 +1971,8 @@ class AppHandler(BaseHTTPRequestHandler):
                             video_metadata = OSS_SERVICE.uploadFile(video_target, video_key, video_mime_type, "original")
                         finally:
                             video_target.unlink(missing_ok=True)
+                        if not video_metadata:
+                            return self.send_error_json("OSS live video upload failed", 502)
                     else:
                         video_target = album_dir / video_stored_name
                         with video_target.open("wb") as out:

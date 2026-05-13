@@ -72,6 +72,7 @@ docker compose up -d --build
 - `OSS_ACCESS_KEY_SECRET`：阿里云 AccessKey Secret
 - `OSS_PREFIX`（可选）：对象存储总前缀，默认空。一般不需要配置，系统会直接写入 `original/`、`preview/`、`thumb/` 等前缀
 - `OSS_SIGNED_URL_EXPIRES`（可选）：签名 URL 有效期，默认 `3600` 秒
+- `OSS_AUTO_MIGRATE`（可选）：是否在启动/读库时把历史本地文件迁移到 OSS，默认 `0`。确认 OSS 权限和网络正常后再设为 `1`
 
 OSS 不需要手动创建目录。对象上传时会按 object key 自动形成类似目录的前缀：
 
@@ -110,6 +111,7 @@ OSS_BUCKET=picme-photos
 OSS_ACCESS_KEY_ID=your-access-key-id
 OSS_ACCESS_KEY_SECRET=your-access-key-secret
 OSS_SIGNED_URL_EXPIRES=3600
+OSS_AUTO_MIGRATE=0
 ```
 
 然后重启：
@@ -191,6 +193,21 @@ REDIS_PORT=6379
 
 ```bash
 redis://:replace-with-a-strong-password@你的服务器IP:6379/0
+```
+
+例如你的主服务服务器 IP 是 `45.32.31.111`，另一台 Worker 机器上可以配置：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL="redis://:replace-with-a-strong-password@45.32.31.111:6379/0"
+python3 face_worker.py
+```
+
+`docker-compose.yml` 会通过下面这行把 Redis 暴露到宿主机，`REDIS_PORT` 不填时默认映射到宿主机 `6379`：
+
+```yaml
+ports:
+  - "${REDIS_PORT:-6379}:6379"
 ```
 
 远程开放 Redis 端口有安全风险，生产环境建议同时配置云安全组/防火墙，只允许你的固定 IP 访问。
