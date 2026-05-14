@@ -9,6 +9,12 @@ final class SharePhotosStore: ObservableObject {
     @Published var statusText = "准备好收朋友视角了"
     @Published var isBusy = false
     @Published var uploadProgressText = ""
+    @Published var uploadSelectedCount = 0
+    @Published var uploadPreparedCount = 0
+    @Published var uploadUploadedCount = 0
+    @Published var uploadIgnoredCount = 0
+    @Published var uploadLivePhotoCount = 0
+    @Published var uploadProgressFraction: Double?
     @Published var shareableFile: ShareableFile?
     @Published var operationTitle = ""
     @Published var operationMessage = ""
@@ -220,6 +226,12 @@ final class SharePhotosStore: ObservableObject {
         }
         guard !assets.isEmpty else {
             uploadProgressText = ""
+            uploadSelectedCount = 0
+            uploadPreparedCount = 0
+            uploadUploadedCount = 0
+            uploadIgnoredCount = 0
+            uploadLivePhotoCount = 0
+            uploadProgressFraction = nil
             statusText = "已取消选择，未上传照片"
             return
         }
@@ -229,38 +241,45 @@ final class SharePhotosStore: ObservableObject {
 
         do {
             statusText = "正在读取系统相册原始文件..."
-            uploadProgressText = "正在读取 \(assets.count) 张原始文件"
-            showOperation(title: "准备上传", message: "正在读取系统相册原始文件", progress: 0.05)
+            uploadSelectedCount = assets.count
+            uploadPreparedCount = 0
+            uploadUploadedCount = 0
+            uploadIgnoredCount = 0
+            uploadLivePhotoCount = 0
+            uploadProgressFraction = 0
+            uploadProgressText = "已选择 \(assets.count) 张，正在读取原始文件"
             var files: [UploadFile] = []
             var liveCount = 0
             for (index, asset) in assets.enumerated() {
-                uploadProgressText = "正在准备第 \(index + 1)/\(assets.count) 张"
-                showOperation(
-                    title: "准备上传",
-                    message: "正在准备第 \(index + 1)/\(assets.count) 张，Live Photo 会保留动态效果",
-                    progress: Double(index + 1) / Double(max(assets.count, 1)) * 0.45
-                )
+                uploadPreparedCount = index
+                uploadProgressFraction = Double(index) / Double(max(assets.count, 1)) * 0.45
+                uploadProgressText = "正在准备第 \(index + 1)/\(assets.count) 张，Live Photo 会保留动态效果"
                 let pair = try await exporter.export(asset: asset)
                 files.append(contentsOf: pair.files)
                 if pair.video != nil {
                     liveCount += 1
                 }
+                uploadPreparedCount = index + 1
+                uploadLivePhotoCount = liveCount
+                uploadProgressFraction = Double(index + 1) / Double(max(assets.count, 1)) * 0.45
             }
 
             statusText = "正在上传 \(assets.count) 张照片..."
-            uploadProgressText = "上传中，完成后可继续玩，后台会自动分人"
-            showOperation(title: "上传中", message: "正在上传 \(assets.count) 张朋友视角", progress: 0.55)
+            uploadProgressText = "正在上传 \(assets.count) 张朋友视角"
+            uploadProgressFraction = 0.65
             let response = try await api.upload(albumId: album.id, uploader: uploader, files: files)
             upsert(response.album)
             statusText = "上传完成：\(assets.count) 张，其中 \(liveCount) 张 Live Photo，后台开始整理"
+            uploadUploadedCount = response.queued
+            uploadIgnoredCount = response.ignored
             uploadProgressText = "已收到 \(response.queued) 张，忽略 \(response.ignored) 个非照片文件"
-            showOperation(title: "上传完成", message: "已收到 \(response.queued) 张，后台开始识别人脸", progress: 0.7)
+            uploadProgressFraction = 1
             await refreshAlbum(id: album.id)
             await pollRecognition(albumId: album.id)
         } catch {
             statusText = error.localizedDescription
             uploadProgressText = error.localizedDescription
-            showOperation(title: "上传失败", message: error.localizedDescription, progress: nil)
+            uploadProgressFraction = nil
         }
     }
 

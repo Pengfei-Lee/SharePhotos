@@ -686,10 +686,8 @@ private struct UploadSheet: View {
                 .disabled(store.isBusy)
                 .opacity(store.isBusy ? 0.55 : 1)
 
-                if !store.uploadProgressText.isEmpty {
-                    Text(store.uploadProgressText)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.secondary)
+                if store.uploadSelectedCount > 0 || !store.uploadProgressText.isEmpty {
+                    UploadProgressPanel()
                 }
                 Text("手机上可以一次多选；上传后先入库，再由后台生成预览和人物小相册。")
                     .font(.footnote)
@@ -713,6 +711,62 @@ private struct UploadSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct UploadProgressPanel: View {
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                UploadMetric(title: "已选择", value: "\(store.uploadSelectedCount)")
+                UploadMetric(title: "已准备", value: "\(store.uploadPreparedCount)")
+                UploadMetric(title: "已上传", value: "\(store.uploadUploadedCount)")
+            }
+
+            if let progress = store.uploadProgressFraction {
+                ProgressView(value: progress)
+                    .tint(.blue)
+            }
+
+            Text(store.uploadProgressText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.primary)
+
+            if store.uploadLivePhotoCount > 0 || store.uploadIgnoredCount > 0 {
+                HStack(spacing: 10) {
+                    if store.uploadLivePhotoCount > 0 {
+                        Label("\(store.uploadLivePhotoCount) 张 Live Photo", systemImage: "livephoto")
+                    }
+                    if store.uploadIgnoredCount > 0 {
+                        Label("忽略 \(store.uploadIgnoredCount) 个非照片文件", systemImage: "exclamationmark.circle")
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+            }
+        }
+        .padding(16)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.12)))
+    }
+}
+
+private struct UploadMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.title3.weight(.black))
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
