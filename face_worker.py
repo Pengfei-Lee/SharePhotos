@@ -16,6 +16,12 @@ from urllib.request import Request, urlopen
 
 import server
 
+LOGGER = server.LOGGER
+
+
+def safe_url_label(url):
+    return (url or "").split("?", 1)[0]
+
 
 def request_json(url, payload=None, method=None):
     headers = {"Accept": "application/json"}
@@ -26,6 +32,7 @@ def request_json(url, payload=None, method=None):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
     request = Request(url, data=data, headers=headers, method=method or ("POST" if payload is not None else "GET"))
+    LOGGER.info("method=%s url=%s", request.get_method(), safe_url_label(url), extra={"event": "worker.api_request"})
     with urlopen(request, timeout=60) as response:
         if response.status == 204:
             return {}
@@ -38,6 +45,7 @@ def download_job_image(source_url, target_dir):
     request = Request(source_url, headers={"User-Agent": "PicMeFaceWorker/1.0"})
     with urlopen(request, timeout=120) as response, target.open("wb") as out:
         out.write(response.read())
+    LOGGER.info("source=%s target=%s", safe_url_label(source_url), target.name, extra={"event": "worker.download"})
     return target
 
 
@@ -59,6 +67,7 @@ def collect_resource_metadata(photo, prefixes=("preview", "thumb", "face")):
 
 
 def analyze_and_upload_resources(album_id, photo_id, image_path):
+    LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.analysis_start"})
     photo = {"id": photo_id, "albumId": album_id}
     resources = {}
     if server.oss_enabled():
@@ -68,6 +77,7 @@ def analyze_and_upload_resources(album_id, photo_id, image_path):
     readable, cleanup = server.readable_source_for_path(image_path)
     try:
         if not readable:
+            LOGGER.warning("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.analysis_unreadable"})
             return {"status": "failed", "note": "图片无法读取"}, resources
         analysis = server.analyze_photo_faces(readable)
         if server.oss_enabled():
@@ -75,6 +85,17 @@ def analyze_and_upload_resources(album_id, photo_id, image_path):
             resources.update(collect_resource_metadata(photo, ("face",)))
     finally:
         cleanup()
+    LOGGER.info(
+        "album_id=%s photo_id=%s status=%s engine=%s face_count=%s raw_faces=%s filtered_faces=%s",
+        album_id,
+        photo_id,
+        analysis.get("status"),
+        analysis.get("engine", ""),
+        analysis.get("faceCount", ""),
+        analysis.get("rawFaceCount", ""),
+        analysis.get("filteredFaceCount", ""),
+        extra={"event": "worker.analysis_complete"},
+    )
     return analysis, resources
 
 
@@ -83,11 +104,19 @@ def complete_remote_job(base_url, album_id, photo_id, analysis, resources=None):
         "%s/api/worker/jobs/%s/%s/complete" % (base_url, album_id, photo_id),
         {"analysis": analysis, "resources": resources or {}},
     )
+    LOGGER.info(
+        "album_id=%s photo_id=%s status=%s",
+        album_id,
+        photo_id,
+        analysis.get("status"),
+        extra={"event": "worker.complete_posted"},
+    )
 
 
 def remote_worker():
     base_url = server.WORKER_API_URL
-    print("Remote face worker started, API:", base_url)
+    server.log_startup_config("face-worker-remote")
+    LOGGER.info("api=%s", base_url, extra={"event": "worker.start"})
     while True:
         try:
             payload = request_json("%s/api/worker/jobs/claim" % base_url, {})
@@ -97,27 +126,30 @@ def remote_worker():
                 continue
             album_id = job["albumId"]
             photo_id = job["photoId"]
+            LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_claimed"})
             with tempfile.TemporaryDirectory(prefix="picme-worker-") as tmp:
                 image_path = download_job_image(job["sourceUrl"], tmp)
                 analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
             complete_remote_job(base_url, album_id, photo_id, analysis, resources)
-            print(
-                "Processed remote photo:",
+            LOGGER.info(
+                "album_id=%s photo_id=%s status=%s engine=%s face_count=%s note=%s",
                 album_id,
                 photo_id,
                 analysis.get("status"),
                 analysis.get("engine", ""),
                 analysis.get("faceCount", ""),
                 analysis.get("note", ""),
+                extra={"event": "worker.job_complete"},
             )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-            print("Remote worker error:", error)
+            LOGGER.warning("error=%s", error, extra={"event": "worker.error"})
             time.sleep(5)
 
 
 def redis_remote_worker():
     base_url = server.WORKER_API_URL
-    print("Remote Redis face worker started, queue:", server.FACE_QUEUE_NAME, "API:", base_url)
+    server.log_startup_config("face-worker-redis-remote")
+    LOGGER.info("queue=%s api=%s", server.FACE_QUEUE_NAME, base_url, extra={"event": "worker.start"})
     while True:
         job = server.pop_face_job(timeout=3)
         if not job:
@@ -125,10 +157,12 @@ def redis_remote_worker():
         album_id, photo_id = job
         if not album_id or not photo_id:
             continue
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_pulled"})
         try:
             payload = request_json("%s/api/worker/jobs/%s/%s" % (base_url, album_id, photo_id))
             remote_job = payload.get("job") if payload else None
             if not remote_job:
+                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_missing"})
                 continue
             source_url = remote_job.get("sourceUrl") or (remote_job.get("photo") or {}).get("imageUrl")
             if not source_url:
@@ -137,25 +171,27 @@ def redis_remote_worker():
                 image_path = download_job_image(source_url, tmp)
                 analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
             complete_remote_job(base_url, album_id, photo_id, analysis, resources)
-            print(
-                "Processed remote Redis photo:",
+            LOGGER.info(
+                "album_id=%s photo_id=%s status=%s engine=%s face_count=%s note=%s",
                 album_id,
                 photo_id,
                 analysis.get("status"),
                 analysis.get("engine", ""),
                 analysis.get("faceCount", ""),
                 analysis.get("note", ""),
+                extra={"event": "worker.job_complete"},
             )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-            print("Remote Redis worker error:", album_id, photo_id, error)
+            LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "worker.error"})
             try:
                 complete_remote_job(base_url, album_id, photo_id, {"status": "failed", "note": str(error)}, {})
             except Exception as complete_error:
-                print("Remote Redis worker complete error:", complete_error)
+                LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, complete_error, extra={"event": "worker.complete_failed"})
                 time.sleep(5)
         finally:
             if server.REDIS_CLIENT is not None:
                 server.REDIS_CLIENT.srem(server.FACE_QUEUE_SET_NAME, "%s:%s" % (album_id, photo_id))
+                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "redis.complete"})
 
 
 def main():
@@ -171,7 +207,8 @@ def main():
         raise RuntimeError("Face worker 需要设置 REDIS_URL 且 FACE_WORKER_MODE=redis")
     server.ensure_store()
     server.enqueue_pending_jobs()
-    print("Face worker started, consuming queue:", server.FACE_QUEUE_NAME)
+    server.log_startup_config("face-worker")
+    LOGGER.info("queue=%s", server.FACE_QUEUE_NAME, extra={"event": "worker.start"})
     server.photo_worker()
 
 

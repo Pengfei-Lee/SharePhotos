@@ -2,6 +2,7 @@
 import cgi
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import queue
@@ -12,6 +13,7 @@ import threading
 import time
 import uuid
 import zipfile
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urljoin, urlparse
@@ -54,6 +56,82 @@ UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
 PREVIEWS = DATA / "previews"
 DB_FILE = DATA / "db.json"
+LOG_DIR = Path(os.environ.get("LOG_DIR", str(DATA / "logs")))
+
+
+class DailyLogFileHandler(logging.Handler):
+    def __init__(self, log_dir, prefix="sharephotos", backup_days=14):
+        super().__init__()
+        self.log_dir = Path(log_dir)
+        self.prefix = prefix
+        self.backup_days = int(backup_days)
+        self.current_date = None
+        self.stream = None
+
+    def _path_for_today(self):
+        today = datetime.now().strftime("%Y-%m-%d")
+        return today, self.log_dir / ("%s-%s.log" % (self.prefix, today))
+
+    def _open_current(self):
+        today, path = self._path_for_today()
+        if self.stream and self.current_date == today:
+            return
+        if self.stream:
+            self.stream.close()
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.current_date = today
+        self.stream = path.open("a", encoding="utf-8")
+
+    def emit(self, record):
+        try:
+            self._open_current()
+            self.stream.write(self.format(record) + "\n")
+            self.stream.flush()
+        except Exception:
+            self.handleError(record)
+
+    def close(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        super().close()
+
+
+class EventDefaultFilter(logging.Filter):
+    def filter(self, record):
+        if not hasattr(record, "event"):
+            record.event = "-"
+        return True
+
+
+def setup_logger(name="sharephotos"):
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(process)d:%(module)s] %(event)s %(message)s")
+    event_filter = EventDefaultFilter()
+    logger.addFilter(event_filter)
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    console.addFilter(event_filter)
+    logger.addHandler(console)
+    try:
+        file_handler = DailyLogFileHandler(
+            LOG_DIR,
+            "sharephotos",
+            int(os.environ.get("LOG_BACKUP_DAYS", "14") or "14"),
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(event_filter)
+        logger.addHandler(file_handler)
+    except Exception as error:
+        logger.warning("file logging unavailable: %s", error, extra={"event": "logging.file_unavailable"})
+    logger.propagate = False
+    return logger
+
+
+LOGGER = setup_logger()
 
 
 class StoreLock:
@@ -102,7 +180,8 @@ if REDIS_URL and redis is not None:
     try:
         REDIS_CLIENT = redis.Redis.from_url(REDIS_URL, decode_responses=True)
         REDIS_CLIENT.ping()
-    except Exception:
+    except Exception as error:
+        LOGGER.warning("error=%s", error, extra={"event": "redis.connect_failed"})
         REDIS_CLIENT = None
 THUMB_SPECS = {
     "tiny": (96, 72),
@@ -121,7 +200,7 @@ OSS_AUTO_MIGRATE = os.environ.get("OSS_AUTO_MIGRATE", "").strip().lower() in {"1
 try:
     OSS_SIGNED_URL_EXPIRES = int(os.environ.get("OSS_SIGNED_URL_EXPIRES", "3600") or "3600")
 except (TypeError, ValueError):
-    print("Invalid OSS_SIGNED_URL_EXPIRES, fallback to 3600")
+    LOGGER.warning("Invalid OSS_SIGNED_URL_EXPIRES, fallback to 3600", extra={"event": "config.invalid"})
     OSS_SIGNED_URL_EXPIRES = 3600
 
 mimetypes.add_type("image/heic", ".heic")
@@ -184,8 +263,21 @@ class OSSService:
             with path.open("rb") as fh:
                 self.bucket.put_object(object_key, fh, headers=headers)
         except Exception as error:
-            print("OSS upload failed for %s: %s" % (object_key, error))
+            LOGGER.warning(
+                "object_key=%s resource_type=%s error=%s",
+                object_key,
+                resource_type or "",
+                error,
+                extra={"event": "oss.upload_failed"},
+            )
             return {}
+        LOGGER.info(
+            "object_key=%s resource_type=%s bytes=%d",
+            object_key,
+            resource_type or "",
+            path.stat().st_size,
+            extra={"event": "oss.upload"},
+        )
         return {
             "object_key": object_key,
             "oss_url": self.public_url(object_key),
@@ -198,20 +290,32 @@ class OSSService:
         if self.enabled() and object_key:
             try:
                 self.bucket.delete_object(object_key)
-            except Exception:
-                pass
+                LOGGER.info("object_key=%s", object_key, extra={"event": "oss.delete"})
+            except Exception as error:
+                LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.delete_failed"})
 
     def generateSignedUrl(self, object_key, expires=None):
         if not self.enabled() or not object_key:
             return ""
-        return self.bucket.sign_url("GET", object_key, int(expires or self.expires), slash_safe=True)
+        try:
+            signed = self.bucket.sign_url("GET", object_key, int(expires or self.expires), slash_safe=True)
+            LOGGER.debug("object_key=%s expires=%s", object_key, int(expires or self.expires), extra={"event": "oss.sign"})
+            return signed
+        except Exception as error:
+            LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.sign_failed"})
+            return ""
 
     def downloadFile(self, object_key, target):
         if not self.enabled() or not object_key:
             return None
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        self.bucket.get_object_to_file(object_key, str(target))
+        try:
+            self.bucket.get_object_to_file(object_key, str(target))
+            LOGGER.info("object_key=%s target=%s", object_key, target.name, extra={"event": "oss.download"})
+        except Exception as error:
+            LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.download_failed"})
+            raise
         return target
 
 
@@ -413,6 +517,7 @@ def write_db(db):
 def save_db(db):
     sync_all_folder_covers(db)
     write_db(db)
+    LOGGER.info("albums=%d", len(db.get("albums", [])), extra={"event": "db.write"})
 
 
 def slugify(value):
@@ -438,8 +543,11 @@ def oss_read_bytes(object_key):
     if not oss_enabled() or not object_key:
         return None
     try:
-        return OSS_SERVICE.bucket.get_object(object_key).read()
-    except Exception:
+        body = OSS_SERVICE.bucket.get_object(object_key).read()
+        LOGGER.info("object_key=%s bytes=%d", object_key, len(body), extra={"event": "oss.read"})
+        return body
+    except Exception as error:
+        LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.download_failed"})
         return None
 
 
@@ -567,7 +675,7 @@ def generate_all_thumbnails(album_id, stored_name):
 def detect_primary_face_box(image):
     app = get_insightface_app()
     if app:
-        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        faces, _ = filter_subject_faces(app.get(image), image.shape)
         if faces:
             face = max(faces, key=lambda item: bbox_area(item.bbox))
             x1, y1, x2, y2 = [float(value) for value in face.bbox]
@@ -639,7 +747,15 @@ def materialize_photo_source(album_id, photo):
     target = Path(tmp.name)
     try:
         OSS_SERVICE.downloadFile(key, target)
-    except Exception:
+    except Exception as error:
+        LOGGER.warning(
+            "album_id=%s photo_id=%s object_key=%s error=%s",
+            album_id,
+            photo.get("id", ""),
+            key,
+            error,
+            extra={"event": "photo.source_download_failed"},
+        )
         target.unlink(missing_ok=True)
         return None, lambda: None
     return target, lambda: target.unlink(missing_ok=True)
@@ -957,8 +1073,38 @@ FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_fronta
 EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
 OPENCV_MATCH_THRESHOLD = 0.46
 INSIGHTFACE_MATCH_THRESHOLD = 0.55
+INSIGHTFACE_MIN_DET_SCORE = 0.42
+# Keep comparable faces for real group photos; remove only tiny, weak, off-edge background detections.
+FACE_FILTER_MIN_AREA_RATIO = 0.004
+FACE_FILTER_SMALL_AREA_RATIO = 0.008
+FACE_FILTER_GROUP_AREA_RATIO = 0.018
+FACE_FILTER_MIN_RELATIVE_AREA = 0.28
+FACE_FILTER_GROUP_RELATIVE_AREA = 0.45
+FACE_FILTER_EDGE_MARGIN = 0.10
+FACE_FILTER_OFFCENTER_DISTANCE = 0.35
+FACE_FILTER_LOW_SCORE = 0.55
+FACE_FILTER_OFFCENTER_SCORE = 0.72
 INSIGHTFACE_APP = None
 INSIGHTFACE_READY = False
+
+
+def log_startup_config(service="server"):
+    LOGGER.info(
+        (
+            "service=%s data_dir=%s log_dir=%s face_worker_mode=%s redis=%s "
+            "queue=%s oss=%s worker_api=%s worker_token=%s"
+        ),
+        service,
+        DATA,
+        LOG_DIR,
+        FACE_WORKER_MODE,
+        "enabled" if REDIS_CLIENT is not None else "disabled",
+        FACE_QUEUE_NAME,
+        "enabled" if oss_enabled() else "disabled",
+        "configured" if WORKER_API_URL else "disabled",
+        "configured" if WORKER_TOKEN else "disabled",
+        extra={"event": "startup.config"},
+    )
 
 
 def get_insightface_app():
@@ -973,7 +1119,7 @@ def get_insightface_app():
         app.prepare(ctx_id=-1, det_size=(960, 960))
         INSIGHTFACE_APP = app
     except Exception as error:
-        print("InsightFace unavailable, falling back to OpenCV: %s" % error)
+        LOGGER.warning("error=%s", error, extra={"event": "face.insightface_unavailable"})
         INSIGHTFACE_APP = None
     return INSIGHTFACE_APP
 
@@ -994,7 +1140,7 @@ def extract_insightface_embedding(image_path):
     image = cv2.imread(str(image_path))
     if image is None:
         return None, "图片无法读取", {}
-    faces = app.get(image)
+    faces, filter_stats = filter_subject_faces(app.get(image), image.shape)
     if not faces:
         return None, "未检测到人脸", {"engine": "insightface"}
 
@@ -1002,7 +1148,7 @@ def extract_insightface_embedding(image_path):
     # to one folder; production can duplicate group photos into multiple people.
     face = max(faces, key=lambda item: (float(getattr(item, "det_score", 0.0)), bbox_area(item.bbox)))
     score = float(getattr(face, "det_score", 0.0))
-    if score < 0.42:
+    if score < INSIGHTFACE_MIN_DET_SCORE:
         return None, "人脸置信度过低", {"engine": "insightface", "score": score}
     embedding = np.asarray(face.normed_embedding, dtype=np.float32)
     norm = float(np.linalg.norm(embedding)) + 1e-6
@@ -1010,11 +1156,81 @@ def extract_insightface_embedding(image_path):
         "engine": "insightface",
         "score": round(score, 4),
         "faces": len(faces),
+        "rawFaces": filter_stats.get("raw", len(faces)),
+        "filteredFaces": filter_stats.get("filtered", 0),
     }
 
 
 def bbox_area(bbox):
     return max(0.0, float(bbox[2] - bbox[0])) * max(0.0, float(bbox[3] - bbox[1]))
+
+
+def face_filter_metrics(face, image_shape, max_area):
+    height, width = image_shape[:2]
+    x1, y1, x2, y2 = [float(value) for value in face.bbox]
+    area = bbox_area(face.bbox)
+    image_area = max(float(width * height), 1.0)
+    cx = ((x1 + x2) / 2.0) / max(float(width), 1.0)
+    cy = ((y1 + y2) / 2.0) / max(float(height), 1.0)
+    edge_margin = min(cx, cy, 1.0 - cx, 1.0 - cy)
+    center_distance = ((cx - 0.5) ** 2 + (cy - 0.5) ** 2) ** 0.5
+    return {
+        "score": float(getattr(face, "det_score", 0.0)),
+        "area": area,
+        "area_ratio": area / image_area,
+        "relative_area": area / max(max_area, 1.0),
+        "edge_margin": edge_margin,
+        "center_distance": center_distance,
+    }
+
+
+def filter_subject_faces(faces, image_shape):
+    faces = [face for face in faces if float(getattr(face, "det_score", 0.0)) >= INSIGHTFACE_MIN_DET_SCORE]
+    if not faces:
+        return [], {"raw": 0, "kept": 0, "filtered": 0}
+    faces = sorted(faces, key=lambda face: bbox_area(face.bbox), reverse=True)
+    max_area = bbox_area(faces[0].bbox)
+    kept = []
+    filtered = []
+    for index, face in enumerate(faces):
+        metrics = face_filter_metrics(face, image_shape, max_area)
+        keep = index == 0
+        if not keep:
+            group_sized = (
+                metrics["area_ratio"] >= FACE_FILTER_GROUP_AREA_RATIO
+                or metrics["relative_area"] >= FACE_FILTER_GROUP_RELATIVE_AREA
+            )
+            tiny_background = (
+                metrics["area_ratio"] < FACE_FILTER_MIN_AREA_RATIO
+                and metrics["relative_area"] < FACE_FILTER_MIN_RELATIVE_AREA
+            )
+            small_edge = (
+                metrics["area_ratio"] < FACE_FILTER_SMALL_AREA_RATIO
+                and metrics["relative_area"] < FACE_FILTER_GROUP_RELATIVE_AREA
+                and metrics["edge_margin"] < FACE_FILTER_EDGE_MARGIN
+            )
+            small_offcenter_low = (
+                metrics["area_ratio"] < FACE_FILTER_SMALL_AREA_RATIO
+                and metrics["relative_area"] < FACE_FILTER_MIN_RELATIVE_AREA
+                and metrics["center_distance"] > FACE_FILTER_OFFCENTER_DISTANCE
+                and metrics["score"] < FACE_FILTER_OFFCENTER_SCORE
+            )
+            low_score_small = (
+                metrics["score"] < FACE_FILTER_LOW_SCORE
+                and metrics["area_ratio"] < FACE_FILTER_GROUP_AREA_RATIO
+                and metrics["relative_area"] < FACE_FILTER_GROUP_RELATIVE_AREA
+            )
+            keep = group_sized or not (tiny_background or small_edge or small_offcenter_low or low_score_small)
+        (kept if keep else filtered).append((face, metrics))
+    if filtered:
+        LOGGER.info(
+            "raw=%d kept=%d filtered=%d",
+            len(faces),
+            len(kept),
+            len(filtered),
+            extra={"event": "face.filter"},
+        )
+    return [item[0] for item in kept], {"raw": len(faces), "kept": len(kept), "filtered": len(filtered)}
 
 
 def extract_opencv_embedding(image_path):
@@ -1143,6 +1359,14 @@ def create_folder(album, name, embedding=None, folder_id=None, engine=None):
         folder["id"] = "%s-%d" % (base, index)
         index += 1
     folders.append(folder)
+    LOGGER.info(
+        "album_id=%s folder_id=%s name=%s engine=%s",
+        album.get("id", ""),
+        folder["id"],
+        folder["name"],
+        engine or "",
+        extra={"event": "folder.create"},
+    )
     return folder
 
 
@@ -1173,6 +1397,7 @@ def photo_folder_ids(photo):
 
 
 def apply_photo_folders(photo, folders, classification):
+    previous = ",".join(photo_folder_ids(photo))
     unique = []
     seen = set()
     for folder in folders:
@@ -1186,6 +1411,16 @@ def apply_photo_folders(photo, folders, classification):
     photo["folderId"] = primary["id"] if primary else ""
     photo["folderName"] = primary["name"] if primary else ""
     photo["classification"] = classification
+    current = ",".join(photo_folder_ids(photo))
+    if previous != current:
+        LOGGER.info(
+            "photo_id=%s from=%s to=%s classification=%s",
+            photo.get("id", ""),
+            previous,
+            current,
+            classification,
+            extra={"event": "photo.classification_change"},
+        )
 
 
 def sync_photo_folder_names(album):
@@ -1259,6 +1494,7 @@ def remove_photo(album, photo_id):
         if video_source.exists():
             video_source.unlink()
     prune_empty_folders(album)
+    LOGGER.info("album_id=%s photo_id=%s", album.get("id", ""), photo_id, extra={"event": "photo.delete"})
     return photo, ""
 
 
@@ -1311,6 +1547,14 @@ def remove_folder(album, folder_id):
 
     album["folders"] = [item for item in album.get("folders", []) if item["id"] != folder_id]
     prune_empty_folders(album)
+    LOGGER.info(
+        "album_id=%s folder_id=%s deleted_photos=%d logical_removed=%d",
+        album.get("id", ""),
+        folder_id,
+        deleted_count,
+        logical_removed_count,
+        extra={"event": "folder.delete"},
+    )
     return {
         "folder": folder,
         "deletedPhotos": deleted_count,
@@ -1460,8 +1704,10 @@ def push_face_job(album_id, photo_id):
     payload = json.dumps({"albumId": album_id, "photoId": photo_id}, ensure_ascii=False)
     if use_redis_queue():
         REDIS_CLIENT.lpush(FACE_QUEUE_NAME, payload)
+        LOGGER.info("album_id=%s photo_id=%s queue=%s", album_id, photo_id, FACE_QUEUE_NAME, extra={"event": "redis.enqueue"})
     else:
         JOB_QUEUE.put((album_id, photo_id))
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.enqueue"})
 
 
 def pop_face_job(timeout=3):
@@ -1471,11 +1717,21 @@ def pop_face_job(timeout=3):
             return None
         try:
             payload = json.loads(item[1])
+            LOGGER.info(
+                "album_id=%s photo_id=%s queue=%s",
+                payload.get("albumId"),
+                payload.get("photoId"),
+                FACE_QUEUE_NAME,
+                extra={"event": "redis.dequeue"},
+            )
             return payload.get("albumId"), payload.get("photoId")
-        except Exception:
+        except Exception as error:
+            LOGGER.warning("error=%s", error, extra={"event": "redis.dequeue_invalid"})
             return None
     try:
-        return JOB_QUEUE.get(timeout=max(float(timeout), 0.1))
+        job = JOB_QUEUE.get(timeout=max(float(timeout), 0.1))
+        LOGGER.info("album_id=%s photo_id=%s", job[0], job[1], extra={"event": "queue.dequeue"})
+        return job
     except queue.Empty:
         return None
 
@@ -1487,10 +1743,12 @@ def enqueue_photo_job(album_id, photo_id):
     if use_redis_queue():
         added = REDIS_CLIENT.sadd(FACE_QUEUE_SET_NAME, "%s:%s" % key)
         if not added:
+            LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.duplicate"})
             return
     else:
         with LOCK:
             if key in QUEUED_PHOTOS:
+                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.duplicate"})
                 return
             QUEUED_PHOTOS.add(key)
     push_face_job(album_id, photo_id)
@@ -1511,15 +1769,19 @@ def enqueue_pending_jobs():
 
 
 def process_photo_job(album_id, photo_id):
+    LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.process_start"})
+    cleanup_source = lambda: None
     with LOCK:
         db = load_db()
         album = find_album(db, album_id)
         if not album:
             cleanup_source()
+            LOGGER.warning("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.album_missing"})
             return
         photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
         if not photo:
             cleanup_source()
+            LOGGER.warning("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.photo_missing"})
             return
         photo["status"] = "preparing"
         photo["classification"] = "正在生成预览图"
@@ -1538,6 +1800,7 @@ def process_photo_job(album_id, photo_id):
             if key.startswith(("preview", "thumb")) or key.startswith(("preview_", "thumb_"))
         }
     except Exception as error:
+        LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "derivatives.failed"})
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -1573,6 +1836,7 @@ def process_photo_job(album_id, photo_id):
             cleanup_readable()
     except Exception as error:
         analysis = {"status": "failed", "note": str(error)}
+        LOGGER.exception("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "face.analysis_failed"})
 
     with LOCK:
         db = load_db()
@@ -1589,11 +1853,12 @@ def process_photo_job(album_id, photo_id):
         try:
             if source:
                 generate_face_thumbnail_for_photo(album_id, photo, source, face_user_id)
-        except Exception:
-            pass
+        except Exception as error:
+            LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "face.thumb_failed"})
         prune_empty_folders(album)
         save_db(db)
     cleanup_source()
+    LOGGER.info("album_id=%s photo_id=%s status=%s", album_id, photo_id, analysis.get("status"), extra={"event": "worker.process_complete"})
 
 
 def photo_worker():
@@ -1609,10 +1874,12 @@ def photo_worker():
         finally:
             if use_redis_queue():
                 REDIS_CLIENT.srem(FACE_QUEUE_SET_NAME, "%s:%s" % (album_id, photo_id))
+                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "redis.complete"})
             else:
                 with LOCK:
                     QUEUED_PHOTOS.discard((album_id, photo_id))
                 JOB_QUEUE.task_done()
+                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.complete"})
 
 
 def assign_face_folder(album, embedding, engine):
@@ -1632,7 +1899,7 @@ def classify_photo(album, image_path):
         image = cv2.imread(str(image_path))
         if image is None:
             return [get_no_face_folder(album)], "图片无法读取"
-        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        faces, filter_stats = filter_subject_faces(app.get(image), image.shape)
         if not faces:
             return [get_no_face_folder(album)], "未检测到人脸"
 
@@ -1648,6 +1915,8 @@ def classify_photo(album, image_path):
             notes.append(note)
         if len(faces) > 1:
             return [get_group_folder(album)] + person_folders, "合照：识别到 %d 张人脸，%d 个人物文件夹" % (len(faces), len(person_folders))
+        if filter_stats.get("filtered"):
+            return person_folders, "已过滤背景人脸，%s" % (notes[0] if notes else "匹配到已有人物（insightface）")
         return person_folders, notes[0] if notes else "匹配到已有人物（insightface）"
 
     embedding, note, meta = extract_opencv_embedding(image_path)
@@ -1663,8 +1932,15 @@ def analyze_photo_faces(image_path):
         image = cv2.imread(str(image_path))
         if image is None:
             return {"status": "failed", "note": "图片无法读取"}
-        faces = [face for face in app.get(image) if float(getattr(face, "det_score", 0.0)) >= 0.42]
+        faces, filter_stats = filter_subject_faces(app.get(image), image.shape)
         if not faces:
+            LOGGER.info(
+                "path=%s raw_faces=%s filtered_faces=%s",
+                Path(image_path).name,
+                filter_stats.get("raw", 0),
+                filter_stats.get("filtered", 0),
+                extra={"event": "face.analysis_result"},
+            )
             return {"status": "no_face", "note": "未检测到人脸", "engine": "insightface", "faces": []}
         faces = sorted(faces, key=lambda face: bbox_area(face.bbox), reverse=True)
         embeddings = []
@@ -1672,24 +1948,38 @@ def analyze_photo_faces(image_path):
             embedding = np.asarray(face.normed_embedding, dtype=np.float32)
             norm = float(np.linalg.norm(embedding)) + 1e-6
             embeddings.append((embedding / norm).round(6).tolist())
-        return {
+        result = {
             "status": "ready",
             "engine": "insightface",
             "faceCount": len(embeddings),
+            "rawFaceCount": filter_stats.get("raw", len(embeddings)),
+            "filteredFaceCount": filter_stats.get("filtered", 0),
             "embeddings": embeddings,
             "note": "",
         }
+        LOGGER.info(
+            "path=%s face_count=%d raw_faces=%s filtered_faces=%s",
+            Path(image_path).name,
+            result["faceCount"],
+            result["rawFaceCount"],
+            result["filteredFaceCount"],
+            extra={"event": "face.analysis_result"},
+        )
+        return result
 
     embedding, note, meta = extract_opencv_embedding(image_path)
     if not embedding:
+        LOGGER.info("path=%s note=%s", Path(image_path).name, note, extra={"event": "face.analysis_result"})
         return {"status": "no_face", "note": note, "engine": meta.get("engine") or "opencv", "faces": []}
-    return {
+    result = {
         "status": "ready",
         "engine": meta.get("engine") or "opencv",
         "faceCount": 1,
         "embeddings": [embedding],
         "note": "",
     }
+    LOGGER.info("path=%s engine=%s face_count=1", Path(image_path).name, result["engine"], extra={"event": "face.analysis_result"})
+    return result
 
 
 def apply_face_analysis(album, photo, analysis):
@@ -1722,14 +2012,34 @@ def apply_face_analysis(album, photo, analysis):
         folders = [get_group_folder(album)] + person_folders
         apply_photo_folders(photo, folders, "合照：识别到 %d 张人脸，%d 个人物文件夹" % (len(embeddings), len(person_folders)))
     else:
-        apply_photo_folders(photo, person_folders, notes[0] if notes else "匹配到已有人物（%s）" % engine)
+        note = notes[0] if notes else "匹配到已有人物（%s）" % engine
+        if int(analysis.get("filteredFaceCount") or 0) > 0:
+            note = "已过滤背景人脸，%s" % note
+        apply_photo_folders(photo, person_folders, note)
+    LOGGER.info(
+        "album_id=%s photo_id=%s status=%s engine=%s faces=%d raw_faces=%s filtered_faces=%s folders=%s",
+        album.get("id", ""),
+        photo.get("id", ""),
+        photo.get("status", ""),
+        engine,
+        len(embeddings),
+        analysis.get("rawFaceCount", len(embeddings)),
+        analysis.get("filteredFaceCount", 0),
+        ",".join(photo_folder_ids(photo)),
+        extra={"event": "face.apply_result"},
+    )
 
 
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "SharedAlbumDemo/0.1"
 
     def log_message(self, fmt, *args):
-        print("%s - %s" % (self.address_string(), fmt % args))
+        LOGGER.info(
+            "client=%s %s",
+            self.address_string(),
+            fmt % args,
+            extra={"event": "http.access"},
+        )
 
     def send_json(self, payload, status=200):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1763,6 +2073,8 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path.startswith("/api/"):
+            LOGGER.info("method=GET path=%s", path, extra={"event": "api.request"})
         if path == "/":
             return self.serve_file(PUBLIC / "index.html")
         if path.startswith("/assets/"):
@@ -1806,6 +2118,8 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path.startswith("/api/"):
+            LOGGER.info("method=POST path=%s", path, extra={"event": "api.request"})
         if path == "/api/worker/jobs/claim":
             return self.claim_worker_job()
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)/complete$", path)
@@ -1831,6 +2145,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 db = load_db()
                 db["albums"].insert(0, album)
                 save_db(db)
+            LOGGER.info("album_id=%s name=%s", album["id"], album["name"], extra={"event": "album.create"})
             (UPLOADS / album["id"]).mkdir(parents=True, exist_ok=True)
             return self.send_json({"album": public_album(album)}, 201)
 
@@ -1869,6 +2184,8 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path.startswith("/api/"):
+            LOGGER.info("method=DELETE path=%s", path, extra={"event": "api.request"})
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
             return self.delete_album_request(match.group(1))
@@ -1881,6 +2198,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return self.send_error_json("Not found", 404)
 
     def upload_photos(self, album_id):
+        LOGGER.info("album_id=%s", album_id, extra={"event": "upload.start"})
         form = cgi.FieldStorage(
             fp=self.rfile,
             headers=self.headers,
@@ -1895,6 +2213,7 @@ class AppHandler(BaseHTTPRequestHandler):
             files = [files]
         files = [item for item in files if getattr(item, "filename", None)]
         if not files:
+            LOGGER.info("album_id=%s", album_id, extra={"event": "upload.empty"})
             return self.send_error_json("No photos uploaded")
 
         created = []
@@ -1986,7 +2305,13 @@ class AppHandler(BaseHTTPRequestHandler):
                         generate_preview_for_photo(album_id, photo, image_source_for_derivatives)
                         generate_thumbnail_for_photo(album_id, photo, image_source_for_derivatives)
                     except Exception as error:
-                        print("OSS derivative generation failed for %s: %s" % (photo_id, error))
+                        LOGGER.warning(
+                            "album_id=%s photo_id=%s error=%s",
+                            album_id,
+                            photo_id,
+                            error,
+                            extra={"event": "oss.derivative_failed"},
+                        )
                     finally:
                         image_source_for_derivatives.unlink(missing_ok=True)
 
@@ -2026,6 +2351,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 album["photos"].append(photo)
                 created.append(photo)
                 queued.append(photo["id"])
+                LOGGER.info(
+                    "album_id=%s photo_id=%s original=%s mime=%s live=%s",
+                    album_id,
+                    photo_id,
+                    original,
+                    mime_type,
+                    bool(video_item),
+                    extra={"event": "upload.photo_created"},
+                )
             save_db(db)
             response_album = public_album(album)
             response_created = [
@@ -2034,6 +2368,13 @@ class AppHandler(BaseHTTPRequestHandler):
             ]
         for photo_id in queued:
             enqueue_photo_job(album_id, photo_id)
+        LOGGER.info(
+            "album_id=%s created=%d ignored=%d",
+            album_id,
+            len(created),
+            ignored,
+            extra={"event": "upload.complete"},
+        )
         return self.send_json({"photos": response_created, "album": response_album, "queued": len(created), "ignored": ignored}, 202)
 
     def read_json_body(self):
@@ -2047,6 +2388,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def claim_worker_job(self):
         if not self.worker_authorized():
             return
+        LOGGER.info("mode=remote", extra={"event": "worker.claim"})
         with LOCK:
             db = load_db()
             for album in db.get("albums", []):
@@ -2066,6 +2408,12 @@ class AppHandler(BaseHTTPRequestHandler):
                     save_db(db)
                     public_photo = photo_public_urls(album["id"], photo)
                     source_url = self.absolute_url(public_photo.get("previewUrl") or public_photo.get("imageUrl"))
+                    LOGGER.info(
+                        "album_id=%s photo_id=%s",
+                        album["id"],
+                        photo["id"],
+                        extra={"event": "worker.claimed"},
+                    )
                     return self.send_json({
                         "job": {
                             "albumId": album["id"],
@@ -2074,11 +2422,13 @@ class AppHandler(BaseHTTPRequestHandler):
                             "sourceUrl": source_url,
                         }
                     })
+        LOGGER.info("mode=remote", extra={"event": "worker.claim_empty"})
         return self.send_json({"job": None})
 
     def get_worker_job(self, album_id, photo_id):
         if not self.worker_authorized():
             return
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_get"})
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -2110,6 +2460,15 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json(error)
         analysis = payload.get("analysis") or payload
         resources = payload.get("resources") or payload.get("resourceMetadata") or {}
+        LOGGER.info(
+            "album_id=%s photo_id=%s status=%s engine=%s face_count=%s",
+            album_id,
+            photo_id,
+            analysis.get("status"),
+            analysis.get("engine", ""),
+            analysis.get("faceCount", ""),
+            extra={"event": "worker.complete_received"},
+        )
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -2130,6 +2489,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     cleanup_source()
             prune_empty_folders(album)
             save_db(db)
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.complete_saved"})
         return self.send_json({"album": public_album(album)})
 
     def reanalyze_album_request(self, album_id):
@@ -2140,6 +2500,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json("Album not found", 404)
             reanalyze_album(album)
             save_db(db)
+        LOGGER.info("album_id=%s", album_id, extra={"event": "album.reanalyze"})
         return self.send_json({"album": public_album(album)})
 
     def merge_folder_request(self, album_id, source_folder_id):
@@ -2159,6 +2520,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
+        LOGGER.info(
+            "album_id=%s source_folder_id=%s target_folder_id=%s",
+            album_id,
+            source_folder_id,
+            target_folder_id,
+            extra={"event": "folder.merge"},
+        )
         return self.send_json({"album": public_album(album)})
 
     def rename_folder_request(self, album_id, folder_id):
@@ -2174,6 +2542,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if rename_error:
                 return self.send_error_json(rename_error)
             save_db(db)
+        LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.rename"})
         return self.send_json({"album": public_album(album)})
 
     def rename_album_request(self, album_id):
@@ -2189,6 +2558,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if rename_error:
                 return self.send_error_json(rename_error)
             save_db(db)
+        LOGGER.info("album_id=%s", album_id, extra={"event": "album.rename"})
         return self.send_json({"album": public_album(album)})
 
     def mark_no_face_request(self, album_id, source_folder_id):
@@ -2204,6 +2574,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
+        LOGGER.info("album_id=%s source_folder_id=%s", album_id, source_folder_id, extra={"event": "folder.mark_no_face"})
         return self.send_json({"album": public_album(album)})
 
     def move_photo_request(self, album_id, photo_id):
@@ -2223,6 +2594,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if move_error:
                 return self.send_error_json(move_error)
             save_db(db)
+        LOGGER.info(
+            "album_id=%s photo_id=%s target_folder_id=%s",
+            album_id,
+            photo_id,
+            target_folder_id,
+            extra={"event": "photo.move"},
+        )
         return self.send_json({"album": public_album(album)})
 
     def reclassify_photo_request(self, album_id, photo_id):
@@ -2235,6 +2613,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if reclassify_error:
                 return self.send_error_json(reclassify_error)
             save_db(db)
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.reclassify"})
         return self.send_json({"album": public_album(album)})
 
     def delete_photo_request(self, album_id, photo_id):
@@ -2247,6 +2626,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if delete_error:
                 return self.send_error_json(delete_error, 404)
             save_db(db)
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.delete_request"})
         return self.send_json({"album": public_album(album)})
 
     def delete_selected_photos(self, album_id):
@@ -2272,6 +2652,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 else:
                     deleted += 1
             save_db(db)
+        LOGGER.info("album_id=%s deleted=%d missing=%d", album_id, deleted, len(missing), extra={"event": "photo.delete_selected"})
         return self.send_json({"album": public_album(album), "deleted": deleted, "missing": missing})
 
     def delete_folder_request(self, album_id, folder_id):
@@ -2284,6 +2665,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if delete_error:
                 return self.send_error_json(delete_error, 404)
             save_db(db)
+        LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.delete_request"})
         return self.send_json({"album": public_album(album), "deleted": result})
 
     def delete_album_request(self, album_id):
@@ -2295,6 +2677,7 @@ class AppHandler(BaseHTTPRequestHandler):
             db["albums"] = [item for item in db["albums"] if item["id"] != album_id]
             remove_album_files(album_id, album)
             save_db(db)
+        LOGGER.info("album_id=%s", album_id, extra={"event": "album.delete"})
         return self.send_json({"deletedAlbumId": album_id})
 
     def download_folder(self, album_id, folder_id):
@@ -2487,6 +2870,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
 def main():
     ensure_store()
+    log_startup_config("server")
     if FACE_WORKER_MODE == "redis" and not use_redis_queue():
         raise RuntimeError("FACE_WORKER_MODE=redis 但 Redis 不可用，请检查 REDIS_URL 或改用 inline 模式")
     if FACE_WORKER_MODE not in {"redis", "remote"}:
@@ -2494,7 +2878,7 @@ def main():
     enqueue_pending_jobs()
     port = int(os.environ.get("PORT", "8000"))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), AppHandler)
-    print("Shared Album Demo running at http://localhost:%d" % port)
+    LOGGER.info("url=http://localhost:%d", port, extra={"event": "server.start"})
     httpd.serve_forever()
 
 

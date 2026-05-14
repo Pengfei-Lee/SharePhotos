@@ -178,6 +178,8 @@ docker compose --profile server-worker up -d --build
 - `FACE_QUEUE_NAME`（可选）：队列名，默认 `sharephotos:face:jobs`
 - `WORKER_API_URL`：跨服务器 Worker 访问主服务的地址，例如 `https://photos.example.com`
 - `WORKER_TOKEN`：Worker 调用主服务接口的共享密钥，主服务和 Worker 必须一致
+- `LOG_DIR`（可选）：主服务和 `face-worker` 日志目录，默认 `DATA/logs`
+- `LOG_LEVEL`（可选）：日志级别，默认 `INFO`
 
 示例 `.env`：
 
@@ -267,6 +269,29 @@ python3 face_worker.py
 ```
 
 不设置 `FACE_WORKER_MODE=redis` 时，系统保持原本的进程内队列+线程消费模式，前后端接口保持不变。
+
+### 日志与排查
+
+主服务和 `face-worker` 使用同一个 `sharephotos` logger，同时输出到控制台和每日文件。默认日志目录是 `DATA/logs`，也可以通过 `LOG_DIR=/path/to/logs` 覆盖。文件名格式：
+
+```text
+sharephotos-YYYY-MM-DD.log
+```
+
+日志格式包含时间、级别、进程/模块、事件名和关键 ids，例如：
+
+```text
+2026-05-14 12:00:00,000 INFO [12345:server] face.apply_result album_id=... photo_id=... status=ready engine=insightface faces=1 raw_faces=2 filtered_faces=1 folders=...
+```
+
+排查建议：
+
+- 上传链路：搜索 `upload.start`、`upload.photo_created`、`queue.enqueue` / `redis.enqueue`
+- Worker 链路：搜索 `worker.job_pulled`、`worker.analysis_complete`、`worker.complete_saved`
+- 人脸过滤：搜索 `face.filter`、`face.analysis_result`、`face.apply_result`
+- OSS 问题：搜索 `oss.upload_failed`、`oss.download_failed`、`oss.sign_failed`
+
+日志会避免输出 `OSS_ACCESS_KEY_SECRET`、`WORKER_TOKEN`、Redis 密码和完整签名 URL。
 
 ### 本地机器远程做人脸识别
 
