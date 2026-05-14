@@ -65,10 +65,16 @@ def analyze_and_upload_resources(album_id, photo_id, image_path):
         server.generate_preview_for_photo(album_id, photo, image_path)
         server.generate_thumbnail_for_photo(album_id, photo, image_path)
         resources = collect_resource_metadata(photo, ("preview", "thumb"))
-    analysis = server.analyze_photo_faces(image_path)
-    if server.oss_enabled():
-        server.generate_face_thumbnail_for_photo(album_id, photo, image_path, album_id)
-        resources.update(collect_resource_metadata(photo, ("face",)))
+    readable, cleanup = server.readable_source_for_path(image_path)
+    try:
+        if not readable:
+            return {"status": "failed", "note": "图片无法读取"}, resources
+        analysis = server.analyze_photo_faces(readable)
+        if server.oss_enabled():
+            server.generate_face_thumbnail_for_photo(album_id, photo, readable, album_id)
+            resources.update(collect_resource_metadata(photo, ("face",)))
+    finally:
+        cleanup()
     return analysis, resources
 
 
@@ -95,7 +101,15 @@ def remote_worker():
                 image_path = download_job_image(job["sourceUrl"], tmp)
                 analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
             complete_remote_job(base_url, album_id, photo_id, analysis, resources)
-            print("Processed remote photo:", album_id, photo_id, analysis.get("status"))
+            print(
+                "Processed remote photo:",
+                album_id,
+                photo_id,
+                analysis.get("status"),
+                analysis.get("engine", ""),
+                analysis.get("faceCount", ""),
+                analysis.get("note", ""),
+            )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
             print("Remote worker error:", error)
             time.sleep(5)
@@ -123,7 +137,15 @@ def redis_remote_worker():
                 image_path = download_job_image(source_url, tmp)
                 analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
             complete_remote_job(base_url, album_id, photo_id, analysis, resources)
-            print("Processed remote Redis photo:", album_id, photo_id, analysis.get("status"))
+            print(
+                "Processed remote Redis photo:",
+                album_id,
+                photo_id,
+                analysis.get("status"),
+                analysis.get("engine", ""),
+                analysis.get("faceCount", ""),
+                analysis.get("note", ""),
+            )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
             print("Remote Redis worker error:", album_id, photo_id, error)
             try:
