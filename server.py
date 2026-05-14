@@ -2092,7 +2092,7 @@ class AppHandler(BaseHTTPRequestHandler):
             sync_photo_folder_names(album)
             save_db(db)
             public_photo = photo_public_urls(album_id, photo)
-            source_url = self.absolute_url(public_photo.get("imageUrl") or public_photo.get("previewUrl"))
+            source_url = self.absolute_url(public_photo.get("previewUrl") or public_photo.get("imageUrl"))
             return self.send_json({
                 "job": {
                     "albumId": album_id,
