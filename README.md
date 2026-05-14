@@ -176,6 +176,8 @@ docker compose --profile server-worker up -d --build
 - `REDIS_DB=0`（可选）：Redis DB 编号
 - `REDIS_URL=redis://:你的密码@redis:6379/0`：容器内 Redis 连接地址
 - `FACE_QUEUE_NAME`（可选）：队列名，默认 `sharephotos:face:jobs`
+- `WORKER_API_URL`：跨服务器 Worker 访问主服务的地址，例如 `https://photos.example.com`
+- `WORKER_TOKEN`：Worker 调用主服务接口的共享密钥，主服务和 Worker 必须一致
 
 示例 `.env`：
 
@@ -211,6 +213,40 @@ ports:
 ```
 
 远程开放 Redis 端口有安全风险，生产环境建议同时配置云安全组/防火墙，只允许你的固定 IP 访问。
+
+### 跨服务器 Redis Worker
+
+当主服务和 `face-worker` 不在同一台服务器时，Redis 只作为任务队列使用；Worker 不读取主服务的 `/app/data/db.json`，也不依赖共享 `data` 目录。配置 `WORKER_API_URL + FACE_WORKER_MODE=redis + REDIS_URL` 后，Worker 会：
+
+1. 从 Redis 队列弹出 `albumId/photoId`
+2. 调用主服务 `GET /api/worker/jobs/{albumId}/{photoId}` 获取签名后的原图地址
+3. 下载原图，在 Worker 机器做人脸识别，并把 preview/thumb/face crop 直接上传 OSS
+4. 调用主服务 `/api/worker/jobs/{albumId}/{photoId}/complete` 回写 analysis 和 OSS 资源 metadata，由主服务入库
+
+主服务：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL="redis://:replace-with-a-strong-password@127.0.0.1:6379/0"
+export WORKER_TOKEN="replace-with-a-random-token"
+python3 server.py
+```
+
+远程 Worker：
+
+```bash
+export FACE_WORKER_MODE=redis
+export REDIS_URL="redis://:replace-with-a-strong-password@主服务Redis地址:6379/0"
+export WORKER_API_URL="https://你的主服务域名或 http://服务器IP:8000"
+export WORKER_TOKEN="replace-with-a-random-token"
+export OSS_ENDPOINT="https://oss-cn-chengdu.aliyuncs.com"
+export OSS_BUCKET="your-bucket-name"
+export OSS_ACCESS_KEY_ID="your-access-key-id"
+export OSS_ACCESS_KEY_SECRET="your-access-key-secret"
+python3 face_worker.py
+```
+
+`WORKER_API_URL` 必须是 Worker 能访问到的主服务 HTTP(S) 地址，不是 Redis 地址。跨服务器模式要求 Worker 也配置 OSS 写入权限，因为预览图、缩略图和人脸裁剪图由 Worker 直接上传 OSS。
 
 ### 本地分离启动示例
 
@@ -253,3 +289,5 @@ python3 face_worker.py
 ```
 
 远程 Worker 会从生产后端领取 `queued/preparing/processing` 状态的照片，下载后在本机执行人脸识别，并把识别结果回写到生产后端。
+
+这条 `WORKER_API_URL` 单独存在的模式不依赖 Redis，由主服务的 claim 接口扫描待处理照片；跨服务器 Redis 队列模式请同时设置 `FACE_WORKER_MODE=redis` 和 `REDIS_URL`。

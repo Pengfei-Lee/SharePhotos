@@ -201,6 +201,16 @@ REDIS_URL=redis://:your-password@redis:6379/0
 REDIS_URL=redis://:your-password@服务器IP:6379/0
 ```
 
+跨服务器 Redis worker 还必须配置主服务地址：
+
+```env
+FACE_WORKER_MODE=redis
+WORKER_API_URL=https://你的主服务域名
+WORKER_TOKEN=和主服务一致的随机密钥
+```
+
+这种模式下 Redis 只保存队列任务。worker 从 Redis 弹出 `albumId/photoId` 后，通过主服务 `GET /api/worker/jobs/{albumId}/{photoId}` 获取签名原图地址；识别过程中生成的 preview、thumb、face crop 由 worker 直接上传 OSS，再通过 `/api/worker/jobs/{albumId}/{photoId}/complete` 回写 analysis 和 OSS metadata。worker 不读取生产服务器 `/app/data/db.json`，也不需要共享生产服务器 `data` 目录。
+
 安全注意：
 
 - Redis 需要密码。
@@ -212,7 +222,11 @@ REDIS_URL=redis://:your-password@服务器IP:6379/0
 worker 应在本地 Mac 或独立机器上运行，例如：
 
 ```bash
-FACE_WORKER_MODE=redis python3 face_worker.py
+FACE_WORKER_MODE=redis \
+REDIS_URL=redis://:your-password@服务器IP:6379/0 \
+WORKER_API_URL=https://你的主服务域名 \
+WORKER_TOKEN=和主服务一致的随机密钥 \
+python3 face_worker.py
 ```
 
 ## 6. GitHub 自动部署
