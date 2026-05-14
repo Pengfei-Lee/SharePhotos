@@ -469,8 +469,9 @@ final class SharePhotosStore: ObservableObject {
 
     func livePhotoResources(for photo: Photo) async throws -> (imageURL: URL, videoURL: URL) {
         let zipURL = try await api.downloadLivePackage(photo: photo)
-        let resources = try saver.extractLivePackage(zipURL: zipURL)
-        return resources
+        return try await Task.detached(priority: .userInitiated) {
+            try LivePhotoSaveService().extractLivePackage(zipURL: zipURL)
+        }.value
     }
 
     private func upsert(_ album: Album) {

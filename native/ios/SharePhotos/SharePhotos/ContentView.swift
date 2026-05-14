@@ -1347,6 +1347,7 @@ private struct PhotoMenu: View {
 private struct LivePhotoPlaybackView: View {
     @EnvironmentObject private var store: SharePhotosStore
     let photo: Photo
+    private let previewAspectRatio: CGFloat = 3.0 / 4.0
     @State private var livePhoto: PHLivePhoto?
     @State private var videoURL: URL?
     @State private var playbackToken = 0
@@ -1355,71 +1356,90 @@ private struct LivePhotoPlaybackView: View {
     @State private var errorText: String?
 
     var body: some View {
-        ZStack {
-            if let livePhoto {
-                SystemLivePhotoView(livePhoto: livePhoto, playbackToken: playbackToken)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(3 / 4, contentMode: .fit)
-            } else {
-                RemoteImage(url: store.imageURL(photo.previewUrl ?? photo.imageUrl), mode: .fit)
-                    .overlay(.black.opacity(0.18))
-                    .aspectRatio(3 / 4, contentMode: .fit)
-            }
+        GeometryReader { proxy in
+            let previewSize = fittedPreviewSize(in: proxy.size)
 
-            if let videoURL, isMotionPlaying {
-                LiveMotionVideoView(videoURL: videoURL, isPlaying: $isMotionPlaying)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(3 / 4, contentMode: .fit)
-                    .transition(.opacity)
-            }
-
-            VStack {
-                HStack {
-                    Button {
-                        playLiveMotion()
-                    } label: {
-                        Label("LIVE", systemImage: "livephoto")
-                            .font(.caption.weight(.black))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.black.opacity(0.5), in: Capsule())
-                            .foregroundColor(.white)
+            ZStack {
+                ZStack {
+                    if let livePhoto {
+                        SystemLivePhotoView(livePhoto: livePhoto, playbackToken: playbackToken)
+                    } else {
+                        RemoteImage(url: store.imageURL(photo.previewUrl ?? photo.imageUrl), mode: .fit)
+                            .overlay(.black.opacity(0.18))
                     }
-                    .disabled(videoURL == nil && livePhoto == nil)
+
+                    if let videoURL, isMotionPlaying {
+                        LiveMotionVideoView(videoURL: videoURL, isPlaying: $isMotionPlaying)
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: previewSize.width, height: previewSize.height)
+                .clipped()
+
+                VStack {
+                    HStack {
+                        Button {
+                            playLiveMotion()
+                        } label: {
+                            Label("LIVE", systemImage: "livephoto")
+                                .font(.caption.weight(.black))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.black.opacity(0.5), in: Capsule())
+                                .foregroundColor(.white)
+                        }
+                        .disabled(videoURL == nil && livePhoto == nil)
+                        Spacer()
+                    }
                     Spacer()
                 }
-                Spacer()
-            }
-            .padding(14)
+                .padding(14)
 
-            if isLoading {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .tint(.white)
-                    Text("正在加载 Live Photo")
-                        .font(.headline)
-                        .foregroundColor(.white)
+                if isLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .tint(.white)
+                        Text("正在加载 Live Photo")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    .padding(18)
+                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
                 }
-                .padding(18)
-                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
-            }
 
-            if let errorText {
-                VStack(spacing: 10) {
-                    Image(systemName: "livephoto.slash")
-                        .font(.largeTitle)
-                    Text(errorText)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
+                if let errorText {
+                    VStack(spacing: 10) {
+                        Image(systemName: "livephoto.slash")
+                            .font(.largeTitle)
+                        Text(errorText)
+                            .font(.headline)
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundColor(.white)
+                    .padding(18)
+                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
                 }
-                .foregroundColor(.white)
-                .padding(18)
-                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
             }
+            .frame(width: previewSize.width, height: previewSize.height)
+            .clipped()
+            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
         .task(id: photo.id) {
             await loadLivePhoto()
         }
+    }
+
+    private func fittedPreviewSize(in availableSize: CGSize) -> CGSize {
+        guard availableSize.width > 0, availableSize.height > 0 else {
+            return .zero
+        }
+
+        let widthFittingHeight = availableSize.height * previewAspectRatio
+        if widthFittingHeight <= availableSize.width {
+            return CGSize(width: widthFittingHeight, height: availableSize.height)
+        }
+
+        return CGSize(width: availableSize.width, height: availableSize.width / previewAspectRatio)
     }
 
     private func loadLivePhoto() async {
@@ -1427,9 +1447,8 @@ private struct LivePhotoPlaybackView: View {
         errorText = nil
         do {
             let resources = try await store.livePhotoResources(for: photo)
-            let live = try await requestLivePhoto(imageURL: resources.imageURL, videoURL: resources.videoURL)
             videoURL = resources.videoURL
-            livePhoto = live
+            livePhoto = nil
             playLiveMotion()
         } catch {
             errorText = "Live Photo 预览失败\n\(error.localizedDescription)"
@@ -1438,7 +1457,9 @@ private struct LivePhotoPlaybackView: View {
     }
 
     private func playLiveMotion() {
-        playbackToken += 1
+        if livePhoto != nil {
+            playbackToken += 1
+        }
         guard videoURL != nil else { return }
         isMotionPlaying = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -1490,22 +1511,21 @@ private struct SystemLivePhotoView: UIViewRepresentable {
     let livePhoto: PHLivePhoto
     let playbackToken: Int
 
-    func makeUIView(context: Context) -> PHLivePhotoView {
-        let view = PHLivePhotoView()
-        view.contentMode = .scaleAspectFit
-        view.livePhoto = livePhoto
+    func makeUIView(context: Context) -> LivePhotoContainerView {
+        let view = LivePhotoContainerView()
+        view.livePhotoView.livePhoto = livePhoto
         DispatchQueue.main.async {
-            view.startPlayback(with: .full)
+            view.livePhotoView.startPlayback(with: .full)
         }
         return view
     }
 
-    func updateUIView(_ uiView: PHLivePhotoView, context: Context) {
-        uiView.livePhoto = livePhoto
+    func updateUIView(_ uiView: LivePhotoContainerView, context: Context) {
+        uiView.livePhotoView.livePhoto = livePhoto
         guard context.coordinator.lastPlaybackToken != playbackToken else { return }
         context.coordinator.lastPlaybackToken = playbackToken
         DispatchQueue.main.async {
-            uiView.startPlayback(with: .full)
+            uiView.livePhotoView.startPlayback(with: .full)
         }
     }
 
@@ -1515,6 +1535,33 @@ private struct SystemLivePhotoView: UIViewRepresentable {
 
     final class Coordinator {
         var lastPlaybackToken = -1
+    }
+}
+
+private final class LivePhotoContainerView: UIView {
+    let livePhotoView = PHLivePhotoView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        livePhotoView.translatesAutoresizingMaskIntoConstraints = false
+        livePhotoView.contentMode = .scaleAspectFit
+        livePhotoView.clipsToBounds = true
+        addSubview(livePhotoView)
+        NSLayoutConstraint.activate([
+            livePhotoView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            livePhotoView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            livePhotoView.topAnchor.constraint(equalTo: topAnchor),
+            livePhotoView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        .zero
     }
 }
 
@@ -1583,6 +1630,12 @@ private final class PlayerLayerView: UIView {
 
     var playerLayer: AVPlayerLayer {
         layer as! AVPlayerLayer
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        playerLayer.frame = bounds
+        playerLayer.videoGravity = .resizeAspect
     }
 }
 
