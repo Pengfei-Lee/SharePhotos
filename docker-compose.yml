@@ -41,6 +41,8 @@ services:
     environment:
       - DATA_DIR=/app/data
       - FACE_WORKER_MODE=redis
+      - WORKER_API_URL=${WORKER_API_URL:-}
+      - WORKER_TOKEN=${WORKER_TOKEN:-}
       - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}

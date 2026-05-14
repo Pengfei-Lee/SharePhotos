@@ -274,6 +274,23 @@ def apply_resource_metadata(target, metadata, prefix=""):
         target["%s_file_size" % snake_prefix] = metadata.get("file_size", 0)
 
 
+def apply_worker_resource_metadata(photo, resources):
+    if not isinstance(resources, dict):
+        return
+    for prefix in ("preview", "thumb", "face"):
+        metadata = resources.get(prefix)
+        if not isinstance(metadata, dict):
+            continue
+        normalized = {
+            "object_key": metadata.get("object_key") or metadata.get("objectKey") or "",
+            "oss_url": metadata.get("oss_url") or metadata.get("ossUrl") or "",
+            "resource_type": metadata.get("resource_type") or metadata.get("resourceType") or prefix,
+            "mime_type": metadata.get("mime_type") or metadata.get("mimeType") or "",
+            "file_size": metadata.get("file_size") or metadata.get("fileSize") or 0,
+        }
+        apply_resource_metadata(photo, normalized, prefix)
+
+
 def photo_object_key(photo, *names):
     for name in names:
         value = photo.get(name)
@@ -664,7 +681,8 @@ def generate_preview_for_photo(album_id, photo, source):
         target.write_bytes(encoded.tobytes())
         key = OSS_SERVICE.generateObjectKey("preview", album_id=album_id, photo_id=photo["id"])
         metadata = OSS_SERVICE.uploadFile(target, key, "image/jpeg", "preview")
-        apply_resource_metadata(photo, metadata, "preview")
+        if metadata:
+            apply_resource_metadata(photo, metadata, "preview")
         return target
     finally:
         cleanup()
@@ -696,7 +714,8 @@ def generate_thumbnail_for_photo(album_id, photo, source):
         target.write_bytes(encoded.tobytes())
         key = OSS_SERVICE.generateObjectKey("thumb", album_id=album_id, photo_id=photo["id"])
         metadata = OSS_SERVICE.uploadFile(target, key, "image/webp", "thumb")
-        apply_resource_metadata(photo, metadata, "thumb")
+        if metadata:
+            apply_resource_metadata(photo, metadata, "thumb")
         return target
     finally:
         cleanup()
@@ -1763,6 +1782,9 @@ class AppHandler(BaseHTTPRequestHandler):
             with LOCK:
                 db = load_db()
             return self.send_json({"albums": [public_album(album) for album in db["albums"]]})
+        match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)$", path)
+        if match:
+            return self.get_worker_job(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
             with LOCK:
@@ -1919,6 +1941,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 photo_id = str(uuid.uuid4())
                 stored_name = "%s%s" % (photo_id, suffix)
                 mime_type = mimetypes.guess_type(stored_name)[0] or "application/octet-stream"
+                image_source_for_derivatives = None
                 if oss_enabled():
                     tmp = tempfile.NamedTemporaryFile(prefix="picme-upload-", suffix=suffix, delete=False)
                     tmp.close()
@@ -1928,9 +1951,12 @@ class AppHandler(BaseHTTPRequestHandler):
                             shutil.copyfileobj(image_file.file, out)
                         object_key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=suffix)
                         image_metadata = OSS_SERVICE.uploadFile(target, object_key, mime_type, "original")
-                    finally:
+                        image_source_for_derivatives = target
+                    except Exception:
                         target.unlink(missing_ok=True)
+                        raise
                     if not image_metadata:
+                        target.unlink(missing_ok=True)
                         return self.send_error_json("OSS upload failed", 502)
                 else:
                     target = album_dir / stored_name
@@ -1955,6 +1981,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     "status": "queued",
                 }
                 apply_resource_metadata(photo, image_metadata)
+                if oss_enabled() and image_source_for_derivatives:
+                    try:
+                        generate_preview_for_photo(album_id, photo, image_source_for_derivatives)
+                        generate_thumbnail_for_photo(album_id, photo, image_source_for_derivatives)
+                    except Exception as error:
+                        print("OSS derivative generation failed for %s: %s" % (photo_id, error))
+                    finally:
+                        image_source_for_derivatives.unlink(missing_ok=True)
 
                 if video_item:
                     video_file, video_original, video_suffix = video_item
@@ -2042,13 +2076,9 @@ class AppHandler(BaseHTTPRequestHandler):
                     })
         return self.send_json({"job": None})
 
-    def complete_worker_job(self, album_id, photo_id):
+    def get_worker_job(self, album_id, photo_id):
         if not self.worker_authorized():
             return
-        payload, error = self.read_json_body()
-        if error:
-            return self.send_error_json(error)
-        analysis = payload.get("analysis") or payload
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -2057,12 +2087,45 @@ class AppHandler(BaseHTTPRequestHandler):
             photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
             if not photo:
                 return self.send_error_json("Photo not found", 404)
+            photo["status"] = "processing"
+            photo["classification"] = "正在识别人脸"
+            sync_photo_folder_names(album)
+            save_db(db)
+            public_photo = photo_public_urls(album_id, photo)
+            source_url = self.absolute_url(public_photo.get("imageUrl") or public_photo.get("previewUrl"))
+            return self.send_json({
+                "job": {
+                    "albumId": album_id,
+                    "photoId": photo_id,
+                    "photo": public_photo,
+                    "sourceUrl": source_url,
+                }
+            })
+
+    def complete_worker_job(self, album_id, photo_id):
+        if not self.worker_authorized():
+            return
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        analysis = payload.get("analysis") or payload
+        resources = payload.get("resources") or payload.get("resourceMetadata") or {}
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+            if not photo:
+                return self.send_error_json("Photo not found", 404)
+            apply_worker_resource_metadata(photo, resources)
             apply_face_analysis(album, photo, analysis)
-            source, cleanup_source = materialize_photo_source(album_id, photo)
-            if source:
+            if not face_object_key(photo):
+                source, cleanup_source = materialize_photo_source(album_id, photo)
                 try:
-                    face_user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
-                    generate_face_thumbnail_for_photo(album_id, photo, source, face_user_id)
+                    if source:
+                        face_user_id = next((item for item in photo_folder_ids(photo) if item not in {"group-photo", "no-face", "pending"}), album_id)
+                        generate_face_thumbnail_for_photo(album_id, photo, source, face_user_id)
                 finally:
                     cleanup_source()
             prune_empty_folders(album)
