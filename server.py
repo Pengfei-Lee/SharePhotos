@@ -198,6 +198,11 @@ OSS_ACCESS_KEY_SECRET = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
 OSS_PREFIX = os.environ.get("OSS_PREFIX", "").strip().strip("/")
 OSS_AUTO_MIGRATE = os.environ.get("OSS_AUTO_MIGRATE", "").strip().lower() in {"1", "true", "yes", "on"}
 try:
+    OSS_UPLOAD_URL_EXPIRES = int(os.environ.get("OSS_UPLOAD_URL_EXPIRES", "900") or "900")
+except (TypeError, ValueError):
+    LOGGER.warning("Invalid OSS_UPLOAD_URL_EXPIRES, fallback to 900", extra={"event": "config.invalid"})
+    OSS_UPLOAD_URL_EXPIRES = 900
+try:
     OSS_SIGNED_URL_EXPIRES = int(os.environ.get("OSS_SIGNED_URL_EXPIRES", "3600") or "3600")
 except (TypeError, ValueError):
     LOGGER.warning("Invalid OSS_SIGNED_URL_EXPIRES, fallback to 3600", extra={"event": "config.invalid"})
@@ -305,6 +310,52 @@ class OSSService:
             LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.sign_failed"})
             return ""
 
+    def generateUploadUrl(self, object_key, content_type=None, expires=None):
+        if not self.enabled() or not object_key:
+            return "", {}
+        headers = {}
+        if content_type:
+            headers["Content-Type"] = content_type
+        try:
+            signed = self.bucket.sign_url(
+                "PUT",
+                object_key,
+                int(expires or OSS_UPLOAD_URL_EXPIRES),
+                headers=headers or None,
+                slash_safe=True,
+            )
+            LOGGER.info(
+                "object_key=%s expires=%s",
+                object_key,
+                int(expires or OSS_UPLOAD_URL_EXPIRES),
+                extra={"event": "oss.sign_upload"},
+            )
+            return signed, headers
+        except Exception as error:
+            LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.sign_upload_failed"})
+            return "", {}
+
+    def headObject(self, object_key):
+        if not self.enabled() or not object_key:
+            return {}
+        try:
+            result = self.bucket.head_object(object_key)
+        except Exception as error:
+            LOGGER.warning("object_key=%s error=%s", object_key, error, extra={"event": "oss.head_failed"})
+            return {}
+        headers = getattr(result, "headers", {}) or {}
+        size = int(headers.get("Content-Length") or headers.get("content-length") or 0)
+        content_type = headers.get("Content-Type") or headers.get("content-type") or ""
+        etag = (headers.get("ETag") or headers.get("etag") or "").strip('"')
+        return {
+            "object_key": object_key,
+            "oss_url": self.public_url(object_key),
+            "resource_type": "",
+            "mime_type": content_type,
+            "file_size": size,
+            "etag": etag,
+        }
+
     def downloadFile(self, object_key, target):
         if not self.enabled() or not object_key:
             return None
@@ -349,6 +400,10 @@ def oss_signed_or_empty(key):
     return oss_signed_url(key) if oss_enabled() and key else ""
 
 
+def safe_mime_type(filename, fallback="application/octet-stream"):
+    return mimetypes.guess_type(filename or "")[0] or fallback
+
+
 def resource_field(prefix, name):
     if not prefix:
         return name
@@ -363,12 +418,14 @@ def apply_resource_metadata(target, metadata, prefix=""):
     target[resource_field(prefix, "resourceType")] = metadata.get("resource_type", "")
     target[resource_field(prefix, "mimeType")] = metadata.get("mime_type", "")
     target[resource_field(prefix, "fileSize")] = metadata.get("file_size", 0)
+    target[resource_field(prefix, "etag")] = metadata.get("etag", "")
     if not prefix:
         target["object_key"] = metadata.get("object_key", "")
         target["oss_url"] = metadata.get("oss_url", "")
         target["resource_type"] = metadata.get("resource_type", "")
         target["mime_type"] = metadata.get("mime_type", "")
         target["file_size"] = metadata.get("file_size", 0)
+        target["etag"] = metadata.get("etag", "")
     else:
         snake_prefix = re.sub(r"(?<!^)(?=[A-Z])", "_", prefix).lower()
         target["%s_object_key" % snake_prefix] = metadata.get("object_key", "")
@@ -376,6 +433,7 @@ def apply_resource_metadata(target, metadata, prefix=""):
         target["%s_resource_type" % snake_prefix] = metadata.get("resource_type", "")
         target["%s_mime_type" % snake_prefix] = metadata.get("mime_type", "")
         target["%s_file_size" % snake_prefix] = metadata.get("file_size", 0)
+        target["%s_etag" % snake_prefix] = metadata.get("etag", "")
 
 
 def apply_worker_resource_metadata(photo, resources):
@@ -2152,6 +2210,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
             return self.upload_photos(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/uploads/init$", path)
+        if match:
+            return self.init_direct_uploads(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/uploads/complete$", path)
+        if match:
+            return self.complete_direct_uploads(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/rename$", path)
         if match:
             return self.rename_album_request(match.group(1))
@@ -2196,6 +2260,180 @@ class AppHandler(BaseHTTPRequestHandler):
         if match:
             return self.delete_photo_request(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
+
+    def init_direct_uploads(self, album_id):
+        if not oss_enabled():
+            return self.send_error_json("OSS direct upload is not configured", 409)
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        files = payload.get("files") or []
+        if not isinstance(files, list) or not files:
+            return self.send_error_json("Missing files")
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+
+        grouped = {}
+        ignored = 0
+        for index, item in enumerate(files):
+            if not isinstance(item, dict):
+                ignored += 1
+                continue
+            original = Path(str(item.get("name") or item.get("filename") or "")).name
+            suffix = Path(original).suffix.lower()
+            if suffix not in IMAGE_EXTS | LIVE_VIDEO_EXTS:
+                ignored += 1
+                continue
+            key = (item.get("clientAssetId") or Path(original).stem or str(index)).lower()
+            grouped.setdefault(key, {"images": [], "videos": []})
+            normalized = {
+                "clientFileId": str(item.get("clientFileId") or "%s-%s" % (key, index)),
+                "originalName": original,
+                "suffix": suffix,
+                "mimeType": item.get("mimeType") or item.get("type") or safe_mime_type(original),
+                "fileSize": int(item.get("fileSize") or item.get("size") or 0),
+            }
+            if suffix in LIVE_VIDEO_EXTS:
+                grouped[key]["videos"].append(normalized)
+            else:
+                grouped[key]["images"].append(normalized)
+
+        uploads = []
+        for group in grouped.values():
+            image_items = group["images"]
+            video_items = group["videos"]
+            heic_item = next((item for item in image_items if item["suffix"] in LIVE_IMAGE_EXTS), None)
+            image_item = heic_item or (image_items[0] if image_items else None)
+            if not image_item:
+                ignored += len(video_items)
+                continue
+            video_item = video_items[0] if heic_item and video_items else None
+            photo_id = str(uuid.uuid4())
+
+            def signed_resource(file_item, ext):
+                object_key = OSS_SERVICE.generateObjectKey("original", album_id=album_id, photo_id=photo_id, ext=ext)
+                upload_url, headers = OSS_SERVICE.generateUploadUrl(object_key, file_item["mimeType"])
+                if not upload_url:
+                    return None
+                stored_name = "%s%s" % (photo_id, ext)
+                return {
+                    "clientFileId": file_item["clientFileId"],
+                    "objectKey": object_key,
+                    "uploadUrl": upload_url,
+                    "headers": headers,
+                    "originalName": file_item["originalName"],
+                    "storedName": stored_name,
+                    "mimeType": file_item["mimeType"],
+                    "fileSize": file_item["fileSize"],
+                }
+
+            image_resource = signed_resource(image_item, image_item["suffix"])
+            if not image_resource:
+                return self.send_error_json("Failed to sign upload URL", 502)
+            video_resource = signed_resource(video_item, video_item["suffix"]) if video_item else None
+            if video_item and not video_resource:
+                return self.send_error_json("Failed to sign live video upload URL", 502)
+            uploads.append({
+                "photoId": photo_id,
+                "type": "live_photo" if video_resource else "photo",
+                "image": image_resource,
+                "video": video_resource,
+            })
+
+        LOGGER.info("album_id=%s uploads=%d ignored=%d", album_id, len(uploads), ignored, extra={"event": "direct_upload.init"})
+        return self.send_json({"uploads": uploads, "ignored": ignored, "expiresIn": OSS_UPLOAD_URL_EXPIRES})
+
+    def complete_direct_uploads(self, album_id):
+        if not oss_enabled():
+            return self.send_error_json("OSS direct upload is not configured", 409)
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        uploader = (payload.get("uploader") or "访客").strip()[:40]
+        uploads = payload.get("uploads") or []
+        if not isinstance(uploads, list) or not uploads:
+            return self.send_error_json("Missing uploads")
+
+        created = []
+        queued = []
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            if uploader not in album["contributors"]:
+                album["contributors"].append(uploader)
+            pending_folder = get_pending_folder(album)
+            existing_ids = {photo.get("id") for photo in album.get("photos", [])}
+
+            for upload in uploads:
+                if not isinstance(upload, dict):
+                    continue
+                photo_id = str(upload.get("photoId") or "")
+                image = upload.get("image") or {}
+                if not photo_id or not isinstance(image, dict) or not image.get("objectKey"):
+                    continue
+                image_head = OSS_SERVICE.headObject(image["objectKey"])
+                if not image_head:
+                    return self.send_error_json("Uploaded image object not found", 400)
+                expected_size = int(image.get("fileSize") or 0)
+                if expected_size and image_head.get("file_size") and expected_size != image_head["file_size"]:
+                    return self.send_error_json("Uploaded image size mismatch", 400)
+                image_head["resource_type"] = "original"
+                image_head["mime_type"] = image_head.get("mime_type") or image.get("mimeType") or safe_mime_type(image.get("originalName"))
+
+                photo = next((item for item in album.get("photos", []) if item.get("id") == photo_id), None)
+                if not photo:
+                    photo = {
+                        "id": photo_id,
+                        "type": upload.get("type") or "photo",
+                        "originalName": image.get("originalName") or image.get("storedName") or ("%s%s" % (photo_id, Path(image["objectKey"]).suffix)),
+                        "storedName": image.get("storedName") or ("%s%s" % (photo_id, Path(image["objectKey"]).suffix)),
+                        "url": "/uploads/%s/%s" % (album_id, image.get("storedName") or photo_id),
+                        "uploader": uploader,
+                        "createdAt": int(time.time()),
+                        "status": "queued",
+                    }
+                    apply_photo_folders(photo, [pending_folder], "已上传，等待后台识别")
+                    album["photos"].append(photo)
+                apply_resource_metadata(photo, image_head)
+
+                video = upload.get("video") or None
+                if isinstance(video, dict) and video.get("objectKey"):
+                    video_head = OSS_SERVICE.headObject(video["objectKey"])
+                    if not video_head:
+                        return self.send_error_json("Uploaded live video object not found", 400)
+                    expected_video_size = int(video.get("fileSize") or 0)
+                    if expected_video_size and video_head.get("file_size") and expected_video_size != video_head["file_size"]:
+                        return self.send_error_json("Uploaded live video size mismatch", 400)
+                    video_head["resource_type"] = "original"
+                    video_head["mime_type"] = video_head.get("mime_type") or video.get("mimeType") or safe_mime_type(video.get("originalName"))
+                    photo["type"] = "live_photo"
+                    photo["liveVideoOriginalName"] = video.get("originalName") or video.get("storedName") or ("%s.mov" % photo_id)
+                    photo["liveVideoStoredName"] = video.get("storedName") or ("%s%s" % (photo_id, Path(video["objectKey"]).suffix))
+                    apply_resource_metadata(photo, video_head, "liveVideo")
+
+                if photo_id not in existing_ids:
+                    created.append(photo)
+                    queued.append(photo_id)
+                    existing_ids.add(photo_id)
+                else:
+                    created.append(photo)
+                    if photo.get("status") in {"queued", "preparing", "processing"}:
+                        queued.append(photo_id)
+
+            save_db(db)
+            response_album = public_album(album)
+            response_created = [
+                item for item in response_album.get("photos", [])
+                if item.get("id") in {photo.get("id") for photo in created}
+            ]
+        for photo_id in queued:
+            enqueue_photo_job(album_id, photo_id)
+        LOGGER.info("album_id=%s created=%d queued=%d", album_id, len(created), len(queued), extra={"event": "direct_upload.complete"})
+        return self.send_json({"photos": response_created, "album": response_album, "queued": len(queued), "ignored": 0}, 202)
 
     def upload_photos(self, album_id):
         LOGGER.info("album_id=%s", album_id, extra={"event": "upload.start"})

@@ -24,6 +24,7 @@ services:
       - OSS_ENDPOINT=${OSS_ENDPOINT:-}
       - OSS_PREFIX=${OSS_PREFIX:-}
       - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
+      - OSS_UPLOAD_URL_EXPIRES=${OSS_UPLOAD_URL_EXPIRES:-900}
       - OSS_AUTO_MIGRATE=${OSS_AUTO_MIGRATE:-0}
     volumes:
       - ./data:/app/data
@@ -54,6 +55,7 @@ services:
       - OSS_ENDPOINT=${OSS_ENDPOINT:-}
       - OSS_PREFIX=${OSS_PREFIX:-}
       - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
+      - OSS_UPLOAD_URL_EXPIRES=${OSS_UPLOAD_URL_EXPIRES:-900}
       - OSS_AUTO_MIGRATE=${OSS_AUTO_MIGRATE:-0}
     volumes:
       - ./data:/app/data
