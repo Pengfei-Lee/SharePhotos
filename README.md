@@ -72,6 +72,7 @@ docker compose up -d --build
 - `OSS_ACCESS_KEY_SECRET`：阿里云 AccessKey Secret
 - `OSS_PREFIX`（可选）：对象存储总前缀，默认空。一般不需要配置，系统会直接写入 `original/`、`preview/`、`thumb/` 等前缀
 - `OSS_SIGNED_URL_EXPIRES`（可选）：签名 URL 有效期，默认 `3600` 秒
+- `OSS_UPLOAD_URL_EXPIRES`（可选）：H5 直传 OSS 的 PUT 签名 URL 有效期，默认 `900` 秒
 - `OSS_AUTO_MIGRATE`（可选）：是否在启动/读库时把历史本地文件迁移到 OSS，默认 `0`。确认 OSS 权限和网络正常后再设为 `1`
 
 OSS 不需要手动创建目录。对象上传时会按 object key 自动形成类似目录的前缀：
@@ -111,6 +112,7 @@ OSS_BUCKET=picme-photos
 OSS_ACCESS_KEY_ID=your-access-key-id
 OSS_ACCESS_KEY_SECRET=your-access-key-secret
 OSS_SIGNED_URL_EXPIRES=3600
+OSS_UPLOAD_URL_EXPIRES=900
 OSS_AUTO_MIGRATE=0
 ```
 
@@ -119,6 +121,25 @@ OSS_AUTO_MIGRATE=0
 ```bash
 docker compose up -d --build
 ```
+
+### H5 直传 OSS
+
+H5 会优先使用两步直传：
+
+1. `POST /api/albums/{albumId}/uploads/init` 获取每个资源的 OSS `PUT` 签名 URL。
+2. 浏览器直接 `PUT` 文件到 OSS。
+3. `POST /api/albums/{albumId}/uploads/complete` 通知后端校验 OSS 对象并写入相册记录。
+
+如果 OSS 未配置或直传在首个文件上传前不可用，前端会回退到旧的 `/api/albums/{albumId}/upload` 服务器中转上传。Bucket 需要配置 CORS，至少允许站点域名执行：
+
+```text
+AllowedOrigin: https://picme.me, http://localhost:8000
+AllowedMethod: PUT, GET, HEAD
+AllowedHeader: content-type, x-oss-*
+ExposeHeader: ETag
+```
+
+第一阶段直传使用单对象签名 PUT，适合普通照片和小批量验证。超大视频、断点续传和 Multipart Upload 会在同一套 `uploads/init` / `uploads/complete` 协议上继续扩展。
 
 ## 验证路径
 

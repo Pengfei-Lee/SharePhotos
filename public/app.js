@@ -1326,6 +1326,82 @@ async function createAlbum(event) {
   render();
 }
 
+function uploadClientFileId(index) {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`;
+}
+
+function uploadClientAssetId(file) {
+  const stem = file.name.replace(/\.[^.]+$/, "").toLowerCase();
+  return stem || uploadClientFileId(0);
+}
+
+async function legacyUploadPhotos(album, files, uploader) {
+  const form = new FormData();
+  form.append("uploader", uploader);
+  for (const file of files) {
+    form.append("photos", file);
+  }
+  return api(`/api/albums/${pathPart(album.id)}/upload`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+async function directUploadPhotos(album, files, uploader) {
+  const uploadFiles = files.map((file, index) => ({
+    clientFileId: uploadClientFileId(index),
+    clientAssetId: uploadClientAssetId(file),
+    name: file.name,
+    mimeType: file.type || "application/octet-stream",
+    fileSize: file.size,
+    lastModified: file.lastModified || 0,
+  }));
+  let init;
+  try {
+    init = await api(`/api/albums/${pathPart(album.id)}/uploads/init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploader, files: uploadFiles }),
+    });
+  } catch (error) {
+    error.allowLegacyFallback = true;
+    throw error;
+  }
+  const filesById = new Map(uploadFiles.map((item, index) => [item.clientFileId, files[index]]));
+  const resources = init.uploads.flatMap((upload) => [upload.image, upload.video].filter(Boolean));
+  let completed = 0;
+  for (const resource of resources) {
+    const file = filesById.get(resource.clientFileId);
+    if (!file) continue;
+    uploadStatus.textContent = `正在直传 OSS：${completed + 1}/${resources.length}`;
+    let response;
+    try {
+      response = await fetch(resource.uploadUrl, {
+        method: "PUT",
+        headers: resource.headers || {},
+        body: file,
+      });
+    } catch (error) {
+      error.allowLegacyFallback = completed === 0;
+      throw error;
+    }
+    if (!response.ok) {
+      const error = new Error(`OSS 上传失败：${response.status}`);
+      error.allowLegacyFallback = completed === 0;
+      throw error;
+    }
+    completed += 1;
+  }
+  return api(`/api/albums/${pathPart(album.id)}/uploads/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uploader, uploads: init.uploads }),
+  });
+}
+
 async function uploadPhotos(event) {
   event.preventDefault();
   const album = getCurrentAlbum();
@@ -1333,19 +1409,22 @@ async function uploadPhotos(event) {
   if (!album || !files.length) return;
 
   state.uploading = true;
-  uploadStatus.textContent = `正在接收 ${files.length} 张朋友视角，先入库，后分组`;
+  uploadStatus.textContent = `正在准备 ${files.length} 张朋友视角`;
   uploadForm.querySelector("button[type='submit']").disabled = true;
-  const form = new FormData();
-  form.append("uploader", $("#uploader").value.trim() || "访客");
-  for (const file of files) {
-    form.append("photos", file);
-  }
+  const uploader = $("#uploader").value.trim() || "访客";
 
   try {
-    const payload = await api(`/api/albums/${pathPart(album.id)}/upload`, {
-      method: "POST",
-      body: form,
-    });
+    let payload;
+    try {
+      payload = await directUploadPhotos(album, files, uploader);
+    } catch (error) {
+      if (!error.allowLegacyFallback) {
+        throw error;
+      }
+      console.warn("Direct OSS upload unavailable, fallback to server upload", error);
+      uploadStatus.textContent = `直传不可用，切换服务器上传`;
+      payload = await legacyUploadPhotos(album, files, uploader);
+    }
     state.albums = state.albums.map((item) => (item.id === payload.album.id ? payload.album : item));
     state.lastUpload = {
       albumId: payload.album.id,
