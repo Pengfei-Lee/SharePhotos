@@ -60,7 +60,38 @@ git pull
 docker compose up -d --build
 ```
 
-不要删除 `data/`，里面有照片、缩略图和 `db.json`；不要删除 `models/`，否则下次启动会重新下载人脸识别模型。
+不要删除 `data/`，里面有照片、缩略图、SQLite 数据库 `sharephotos.db`，以及历史版本可能留下的 `db.json`；不要删除 `models/`，否则下次启动会重新下载人脸识别模型。
+
+## 数据库（SQLite）
+
+系统默认使用 SQLite 替代历史的 `db.json` 文件存储，适合低配 VPS 和当前单主服务部署方式。数据库文件默认保存在：
+
+```text
+data/sharephotos.db
+```
+
+Docker 部署时对应容器内路径：
+
+```text
+/app/data/sharephotos.db
+```
+
+首次启动时，如果 `data/sharephotos.db` 还没有业务数据，且存在历史 `data/db.json`，服务会自动把 `db.json` 中的相册、照片、人物文件夹、贡献者等数据迁移到 SQLite。迁移不会删除 `db.json`，它会作为历史备份保留，确认生产稳定后再手动归档即可。
+
+可配置项：
+
+```bash
+DB_BACKEND=sqlite
+SQLITE_DB_FILE=/app/data/sharephotos.db
+```
+
+如果需要临时回退到历史 JSON 文件方式，可以设置：
+
+```bash
+DB_BACKEND=json
+```
+
+生产环境建议继续挂载整个 `data/` 目录，并把 `sharephotos.db`、`sharephotos.db-wal`、`sharephotos.db-shm` 一起纳入备份。SQLite 已开启 WAL、外键、低内存缓存和 5 秒 busy timeout，适合 `1C1G` VPS 的轻量部署。
 
 ## OSS 环境变量配置（阿里云）
 

@@ -8,6 +8,7 @@ import os
 import queue
 import re
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -55,7 +56,9 @@ DATA = Path(os.environ.get("DATA_DIR", str(ROOT / "data")))
 UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
 PREVIEWS = DATA / "previews"
+DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite").strip().lower() or "sqlite"
 DB_FILE = DATA / "db.json"
+SQLITE_DB_FILE = Path(os.environ.get("SQLITE_DB_FILE", str(DATA / "sharephotos.db")))
 LOG_DIR = Path(os.environ.get("LOG_DIR", str(DATA / "logs")))
 
 
@@ -544,19 +547,224 @@ def migrate_local_resources_to_oss(db):
     return changed
 
 
+def sqlite_enabled():
+    return DB_BACKEND in {"sqlite", "sqlite3"}
+
+
+def sqlite_connect():
+    SQLITE_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(SQLITE_DB_FILE), timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA cache_size = -4096")
+    return conn
+
+
+def sqlite_init_store():
+    with sqlite_connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS store_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS albums (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                name TEXT,
+                created_at INTEGER,
+                data_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS photos (
+                album_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER,
+                status TEXT,
+                data_json TEXT NOT NULL,
+                PRIMARY KEY (album_id, id),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_photos_album_created
+                ON photos(album_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS folders (
+                album_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                name TEXT,
+                data_json TEXT NOT NULL,
+                PRIMARY KEY (album_id, id),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS contributors (
+                album_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (album_id, name),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+            """
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO store_meta(key, value) VALUES(?, ?)",
+            ("schema_version", "1"),
+        )
+
+
+def sqlite_album_count():
+    with sqlite_connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM albums").fetchone()
+        return int(row["count"] if row else 0)
+
+
+def sqlite_dump_db():
+    with sqlite_connect() as conn:
+        albums = []
+        album_rows = conn.execute(
+            "SELECT data_json FROM albums ORDER BY sort_order ASC, created_at DESC, id ASC"
+        ).fetchall()
+        for album_row in album_rows:
+            album = json.loads(album_row["data_json"])
+            album_id = album.get("id")
+            folder_rows = conn.execute(
+                "SELECT data_json FROM folders WHERE album_id = ? ORDER BY sort_order ASC, id ASC",
+                (album_id,),
+            ).fetchall()
+            photo_rows = conn.execute(
+                "SELECT data_json FROM photos WHERE album_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC",
+                (album_id,),
+            ).fetchall()
+            contributor_rows = conn.execute(
+                "SELECT name FROM contributors WHERE album_id = ? ORDER BY sort_order ASC, name ASC",
+                (album_id,),
+            ).fetchall()
+            album["folders"] = [json.loads(row["data_json"]) for row in folder_rows]
+            album["photos"] = [json.loads(row["data_json"]) for row in photo_rows]
+            album["contributors"] = [row["name"] for row in contributor_rows]
+            albums.append(album)
+    return {"albums": albums}
+
+
+def sqlite_write_db(db):
+    sqlite_init_store()
+    albums = db.get("albums", [])
+    with sqlite_connect() as conn:
+        with conn:
+            conn.execute("DELETE FROM contributors")
+            conn.execute("DELETE FROM folders")
+            conn.execute("DELETE FROM photos")
+            conn.execute("DELETE FROM albums")
+            for album_index, album in enumerate(albums):
+                album_id = album.get("id") or uuid.uuid4().hex[:10]
+                album["id"] = album_id
+                conn.execute(
+                    """
+                    INSERT INTO albums(id, sort_order, name, created_at, data_json)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (
+                        album_id,
+                        album_index,
+                        album.get("name"),
+                        int(album.get("createdAt") or 0),
+                        json.dumps(album, ensure_ascii=False, separators=(",", ":")),
+                    ),
+                )
+                for folder_index, folder in enumerate(album.get("folders", [])):
+                    folder_id = str(folder.get("id") or uuid.uuid4())
+                    folder["id"] = folder_id
+                    conn.execute(
+                        """
+                        INSERT INTO folders(album_id, id, sort_order, name, data_json)
+                        VALUES(?, ?, ?, ?, ?)
+                        """,
+                        (
+                            album_id,
+                            folder_id,
+                            folder_index,
+                            folder.get("name"),
+                            json.dumps(folder, ensure_ascii=False, separators=(",", ":")),
+                        ),
+                    )
+                for photo_index, photo in enumerate(album.get("photos", [])):
+                    photo_id = str(photo.get("id") or uuid.uuid4())
+                    photo["id"] = photo_id
+                    conn.execute(
+                        """
+                        INSERT INTO photos(album_id, id, sort_order, created_at, status, data_json)
+                        VALUES(?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            album_id,
+                            photo_id,
+                            photo_index,
+                            int(photo.get("createdAt") or 0),
+                            photo.get("status"),
+                            json.dumps(photo, ensure_ascii=False, separators=(",", ":")),
+                        ),
+                    )
+                for contributor_index, contributor in enumerate(album.get("contributors", [])):
+                    name = str(contributor).strip()
+                    if not name:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO contributors(album_id, name, sort_order)
+                        VALUES(?, ?, ?)
+                        """,
+                        (album_id, name, contributor_index),
+                    )
+
+
+def json_write_db(db):
+    DATA.mkdir(parents=True, exist_ok=True)
+    tmp = DB_FILE.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(db, fh, ensure_ascii=False, indent=2)
+    tmp.replace(DB_FILE)
+
+
+def migrate_json_to_sqlite_if_needed():
+    sqlite_init_store()
+    if sqlite_album_count() > 0:
+        return
+    if DB_FILE.exists():
+        with DB_FILE.open("r", encoding="utf-8") as fh:
+            db = json.load(fh)
+        sqlite_write_db(db)
+        LOGGER.info(
+            "source=%s target=%s albums=%d",
+            DB_FILE,
+            SQLITE_DB_FILE,
+            len(db.get("albums", [])),
+            extra={"event": "db.sqlite_migrate"},
+        )
+        return
+    sqlite_write_db({"albums": []})
+
+
 def ensure_store():
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     UPLOADS.mkdir(exist_ok=True)
     THUMBS.mkdir(exist_ok=True)
     PREVIEWS.mkdir(exist_ok=True)
-    if not DB_FILE.exists():
-        save_db({"albums": []})
+    if sqlite_enabled():
+        migrate_json_to_sqlite_if_needed()
+    elif not DB_FILE.exists():
+        json_write_db({"albums": []})
 
 
 def load_db():
     ensure_store()
-    with DB_FILE.open("r", encoding="utf-8") as fh:
-        db = json.load(fh)
+    db = sqlite_dump_db() if sqlite_enabled() else json_load_db()
     if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
         write_db(db)
     if sync_all_folder_covers(db):
@@ -564,12 +772,16 @@ def load_db():
     return db
 
 
+def json_load_db():
+    with DB_FILE.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def write_db(db):
-    DATA.mkdir(exist_ok=True)
-    tmp = DB_FILE.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(db, fh, ensure_ascii=False, indent=2)
-    tmp.replace(DB_FILE)
+    if sqlite_enabled():
+        sqlite_write_db(db)
+    else:
+        json_write_db(db)
 
 
 def save_db(db):
