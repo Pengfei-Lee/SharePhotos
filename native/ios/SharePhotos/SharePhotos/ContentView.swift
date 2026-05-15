@@ -46,6 +46,7 @@ private struct HomeView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Binding var createAlbumPresented: Bool
     @State private var deletingAlbum: Album?
+    @State private var renamingAlbum: Album?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -74,6 +75,11 @@ private struct HomeView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .contextMenu {
+                                    Button {
+                                        renamingAlbum = album
+                                    } label: {
+                                        Label("重命名相册", systemImage: "pencil")
+                                    }
                                     Button(role: .destructive) {
                                         deletingAlbum = album
                                     } label: {
@@ -122,6 +128,9 @@ private struct HomeView: View {
             }
         } message: {
             Text("会删除这个一级相册里的所有照片和分类。")
+        }
+        .sheet(item: $renamingAlbum) { album in
+            RenameAlbumSheet(album: album)
         }
     }
 }
@@ -247,6 +256,7 @@ private struct AlbumDetailView: View {
     let albumId: String
     @State private var uploadPresented = false
     @State private var deletingFolder: PhotoFolder?
+    @State private var renamingFolder: PhotoFolder?
 
     var album: Album? { store.album(id: albumId) }
 
@@ -274,8 +284,30 @@ private struct AlbumDetailView: View {
                                 FolderCard(album: album, folder: folder, compact: true)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    renamingFolder = folder
+                                } label: {
+                                    Label("重命名小相册", systemImage: "pencil")
+                                }
+                                Button {
+                                    Task { await store.downloadFolder(album: album, folder: folder) }
+                                } label: {
+                                    Label("下载照片包", systemImage: "square.and.arrow.down")
+                                }
+                                Button(role: .destructive) {
+                                    deletingFolder = folder
+                                } label: {
+                                    Label("删除小相册", systemImage: "trash")
+                                }
+                            }
                             .overlay(alignment: .topTrailing) {
-                                FolderMenu(album: album, folder: folder, onDelete: { deletingFolder = folder })
+                                FolderMenu(
+                                    album: album,
+                                    folder: folder,
+                                    onRename: { renamingFolder = folder },
+                                    onDelete: { deletingFolder = folder }
+                                )
                                     .padding(10)
                             }
                         }
@@ -335,6 +367,11 @@ private struct AlbumDetailView: View {
         }
         .sheet(isPresented: $uploadPresented) {
             UploadSheet(albumId: albumId)
+        }
+        .sheet(item: $renamingFolder) { folder in
+            if let album {
+                RenameFolderSheet(album: album, folder: folder)
+            }
         }
         .alert("删除这个小相册？", isPresented: Binding(
             get: { deletingFolder != nil },
@@ -645,6 +682,108 @@ private struct CreateAlbumSheet: View {
                 }
                 .disabled(trimmedName.isEmpty || store.isBusy)
                 .opacity(trimmedName.isEmpty || store.isBusy ? 0.55 : 1)
+                Spacer()
+            }
+            .padding(22)
+            .background(AppBackground())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct RenameAlbumSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album
+    @State private var name: String
+
+    init(album: Album) {
+        self.album = album
+        _name = State(initialValue: album.name)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        RenameNameSheet(
+            title: "重命名相册",
+            placeholder: "相册名称",
+            name: $name,
+            isSavingDisabled: trimmedName.isEmpty || store.isBusy
+        ) {
+            Task {
+                await store.renameAlbum(album, name: name)
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct RenameFolderSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album
+    let folder: PhotoFolder
+    @State private var name: String
+
+    init(album: Album, folder: PhotoFolder) {
+        self.album = album
+        self.folder = folder
+        _name = State(initialValue: folder.name)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        RenameNameSheet(
+            title: "重命名小相册",
+            placeholder: "小相册名称",
+            name: $name,
+            isSavingDisabled: trimmedName.isEmpty || store.isBusy
+        ) {
+            Task {
+                await store.renameFolder(album: album, folder: folder, name: name)
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct RenameNameSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let placeholder: String
+    @Binding var name: String
+    let isSavingDisabled: Bool
+    let onSave: () -> Void
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(title)
+                    .font(.title.weight(.black))
+                TextField(placeholder, text: $name)
+                    .font(.title3.weight(.semibold))
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                Button(action: onSave) {
+                    Text("保存")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(primaryGradient, in: RoundedRectangle(cornerRadius: 16))
+                        .foregroundColor(.white)
+                }
+                .disabled(isSavingDisabled)
+                .opacity(isSavingDisabled ? 0.55 : 1)
                 Spacer()
             }
             .padding(22)
@@ -1705,10 +1844,16 @@ private struct FolderMenu: View {
     @EnvironmentObject private var store: SharePhotosStore
     let album: Album
     let folder: PhotoFolder
+    let onRename: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         Menu {
+            Button {
+                onRename()
+            } label: {
+                Label("重命名小相册", systemImage: "pencil")
+            }
             Button {
                 Task { await store.downloadFolder(album: album, folder: folder) }
             } label: {

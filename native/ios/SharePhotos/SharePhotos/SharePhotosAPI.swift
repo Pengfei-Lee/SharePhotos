@@ -30,6 +30,11 @@ final class SharePhotosAPI {
         _ = try await request(path: "/api/albums/\(id)", method: "DELETE")
     }
 
+    func renameAlbum(id: String, name: String) async throws -> Album {
+        let data = try await jsonRequest(path: "/api/albums/\(id)/rename", method: "POST", body: ["name": name])
+        return try JSONDecoder().decode(AlbumResponse.self, from: data).album
+    }
+
     func upload(albumId: String, uploader: String, files: [UploadFile]) async throws -> UploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: absoluteURL(path: "/api/albums/\(albumId)/upload"))

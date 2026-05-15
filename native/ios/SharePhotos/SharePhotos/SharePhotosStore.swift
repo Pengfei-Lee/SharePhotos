@@ -219,6 +219,26 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    func renameAlbum(_ album: Album, name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            statusText = "相册名字不能为空"
+            return
+        }
+        isBusy = true
+        showOperation(title: "保存相册名", message: "正在更新 \(album.name)", progress: nil)
+        defer { isBusy = false }
+        do {
+            let updated = try await api.renameAlbum(id: album.id, name: trimmed)
+            upsert(updated)
+            statusText = "相册名已保存"
+            hideOperation(after: 0.6)
+        } catch {
+            statusText = error.localizedDescription
+            showOperation(title: "保存失败", message: error.localizedDescription, progress: nil)
+        }
+    }
+
     func uploadAssets(_ assets: [PHAsset]) async {
         guard let album = selectedAlbum else {
             statusText = "请先选择一个相册"
