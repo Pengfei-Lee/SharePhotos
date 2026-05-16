@@ -3,3 +3,7 @@ __pycache__/
 data/
 .vscode/
 .env
+
+# Xcode user-local state
+*.xcuserstate
+**/xcuserdata/
