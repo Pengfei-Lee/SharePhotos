@@ -49,6 +49,8 @@ const registerNickname = $("#registerNickname");
 const registerUsername = $("#registerUsername");
 const registerPassword = $("#registerPassword");
 const registerPasswordConfirm = $("#registerPasswordConfirm");
+const registerPasswordHint = $("#registerPasswordHint");
+const registerPasswordConfirmHint = $("#registerPasswordConfirmHint");
 const registerButton = $("#registerButton");
 const registerStatus = $("#registerStatus");
 const albumForm = $("#albumForm");
@@ -190,15 +192,37 @@ async function downloadWithAuth(url, fallbackName) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `下载失败：${response.status}`);
   }
+  const contentType = response.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
+    const payload = await response.json();
+    return downloadFromManifest(payload, fallbackName);
+  }
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);
+  triggerBrowserDownload(objectUrl, fallbackName || "");
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
+}
+
+function triggerBrowserDownload(url, filename = "") {
   const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = fallbackName || "";
+  link.href = url;
+  link.download = filename || "";
+  link.rel = "noopener";
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
+}
+
+async function downloadFromManifest(payload, fallbackName = "") {
+  const files = Array.isArray(payload.files) ? payload.files : payload.url ? [payload] : [];
+  if (!files.length) {
+    throw new Error("没有可下载的文件");
+  }
+  files.forEach((file, index) => {
+    window.setTimeout(() => {
+      triggerBrowserDownload(file.url, file.name || payload.filename || fallbackName || "");
+    }, index * 250);
+  });
 }
 
 function formatDate(seconds) {
@@ -236,10 +260,53 @@ function validateRegisterForm() {
   const password = registerPassword.value;
   const passwordConfirm = registerPasswordConfirm.value;
   if (!nickname) return "请填写昵称";
-  if (!/^[A-Za-z0-9_]{5,20}$/.test(username)) return "登录账号需要 5-20 位字母、数字或下划线";
-  if (password.length < 6 || password.length > 20) return "密码需要 6-20 位";
+  if (!/^[A-Za-z0-9_]{1,20}$/.test(username)) return "登录账号需要 1-20 位字母、数字或下划线";
+  if (!isValidPasswordFormat(password)) return "密码需为 6-20 位，只能使用数字、字母和英文符号";
   if (password !== passwordConfirm) return "两次输入的密码不一致";
   return "";
+}
+
+function isValidPasswordFormat(value) {
+  return /^[\x21-\x7E]{6,20}$/.test(value);
+}
+
+function setHintState(element, message, stateName = "") {
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle("is-valid", stateName === "valid");
+  element.classList.toggle("is-invalid", stateName === "invalid");
+}
+
+function updatePasswordHints() {
+  const password = registerPassword.value;
+  const confirm = registerPasswordConfirm.value;
+  if (!password) {
+    setHintState(registerPasswordHint, "6-20位，可使用数字、字母和英文符号");
+  } else if (isValidPasswordFormat(password)) {
+    setHintState(registerPasswordHint, "密码格式可用", "valid");
+  } else {
+    setHintState(registerPasswordHint, "密码需为 6-20 位，且不能包含中文、空格或中文符号", "invalid");
+  }
+
+  if (!confirm) {
+    setHintState(registerPasswordConfirmHint, "请再次输入密码");
+  } else if (!isValidPasswordFormat(confirm)) {
+    setHintState(registerPasswordConfirmHint, "确认密码格式不正确", "invalid");
+  } else if (password === confirm) {
+    setHintState(registerPasswordConfirmHint, "两次密码一致", "valid");
+  } else {
+    setHintState(registerPasswordConfirmHint, "两次输入的密码不一致", "invalid");
+  }
+}
+
+function togglePasswordVisibility(button) {
+  const field = button.closest(".auth-field");
+  const input = field ? field.querySelector("input") : null;
+  if (!input) return;
+  const shouldShow = input.type === "password";
+  input.type = shouldShow ? "text" : "password";
+  button.setAttribute("aria-label", shouldShow ? "隐藏密码" : "显示密码");
+  button.classList.toggle("is-visible", shouldShow);
 }
 
 async function login(event) {
@@ -268,6 +335,7 @@ async function login(event) {
 async function register(event) {
   event.preventDefault();
   registerStatus.textContent = "";
+  updatePasswordHints();
   const validationError = validateRegisterForm();
   if (validationError) {
     registerStatus.textContent = validationError;
@@ -458,14 +526,14 @@ function photoViewerSrc(photo) {
 }
 
 function renderPhotoMedia(photo, imageClass = "") {
-  const isLive = photo.type === "live_photo" && photo.videoUrl;
+  const isLive = photo.type === "live_photo" && (photo.downloadLiveUrl || photo.videoUrl);
   return `
     <span class="photo-media ${isLive ? "live-photo-media" : ""}">
       <img class="${imageClass}" src="${photoPreviewSrc(photo)}" alt="${escapeHtml(photo.originalName)}" loading="eager" decoding="async" />
       ${
         isLive
           ? `
-            <video class="live-photo-video" src="${escapeHtml(photo.videoUrl)}" muted playsinline preload="metadata"></video>
+            <video class="live-photo-video" data-live-url="${escapeHtml(photo.downloadLiveUrl || "")}" data-video-src="${photo.downloadLiveUrl ? "" : escapeHtml(photo.videoUrl || "")}" muted playsinline preload="none"></video>
             <button class="live-photo-badge" type="button" aria-label="播放 Live Photo">Live</button>
           `
           : ""
@@ -484,6 +552,12 @@ function renderDownloadActions(photo) {
 
 function photoDownloadUrl(photo) {
   return photo.type === "live_photo" && photo.downloadLiveUrl ? photo.downloadLiveUrl : photo.downloadImageUrl || photo.url;
+}
+
+async function liveVideoUrlFromManifest(liveUrl) {
+  if (!liveUrl) return "";
+  const payload = await api(liveUrl);
+  return payload.video?.url || payload.videoUrl || "";
 }
 
 function clamp(value, min, max) {
@@ -1418,6 +1492,12 @@ async function downloadSelectedPhotos(albumId, photos) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `下载失败：${response.status}`);
   }
+  const contentType = response.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
+    const payload = await response.json();
+    await downloadFromManifest(payload, `PicMe-${photos.length}项`);
+    return;
+  }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1524,8 +1604,9 @@ function showViewerPhoto(photo) {
   viewerDownload.setAttribute("download", "");
   viewerDelete.dataset.photoId = photo.id;
   renderViewerFilmstrip();
-  if (photo.type === "live_photo" && photo.downloadLiveUrl) {
-    viewerVideo.src = photo.videoUrl;
+  if (photo.type === "live_photo" && (photo.downloadLiveUrl || photo.videoUrl)) {
+    viewerVideo.dataset.liveUrl = photo.downloadLiveUrl || "";
+    viewerVideo.dataset.videoSrc = photo.downloadLiveUrl ? "" : photo.videoUrl || "";
     viewerVideo.classList.remove("hidden");
     viewerLivePlay.classList.remove("hidden");
   } else {
@@ -1545,9 +1626,6 @@ function showViewerPhoto(photo) {
     viewerMeta.textContent = "";
     renderViewerFilmstrip();
     photoViewer.classList.remove("loading");
-    if (photo.type === "live_photo" && photo.videoUrl) {
-      playViewerLive();
-    }
   };
   nextImage.onerror = () => {
     if (state.viewerToken !== token) return;
@@ -1596,7 +1674,25 @@ function bindLivePhotoPlayback(root) {
       card.classList.remove("live-playing");
     };
 
-    const play = () => {
+    const ensureVideoSource = async () => {
+      if (video.getAttribute("src")) return true;
+      let videoSrc = video.dataset.videoSrc || "";
+      if (!videoSrc && video.dataset.liveUrl) {
+        videoSrc = await liveVideoUrlFromManifest(video.dataset.liveUrl);
+        video.dataset.videoSrc = videoSrc;
+      }
+      if (!videoSrc) return false;
+      video.src = videoSrc;
+      video.load();
+      return true;
+    };
+
+    const play = async () => {
+      const hasSource = await ensureVideoSource().catch(() => false);
+      if (!hasSource) {
+        alert("Live Photo 视频加载失败，请稍后再试");
+        return;
+      }
       card.classList.add("live-playing");
       video.currentTime = 0;
       video.play().catch(() => {
@@ -1624,8 +1720,26 @@ function stopViewerLive() {
   photoViewer.classList.remove("live-playing");
 }
 
-function playViewerLive() {
+async function ensureViewerLiveVideoSource() {
+  if (viewerVideo.getAttribute("src")) return true;
+  let videoSrc = viewerVideo.dataset.videoSrc || "";
+  if (!videoSrc && viewerVideo.dataset.liveUrl) {
+    videoSrc = await liveVideoUrlFromManifest(viewerVideo.dataset.liveUrl);
+    viewerVideo.dataset.videoSrc = videoSrc;
+  }
+  if (!videoSrc) return false;
+  viewerVideo.src = videoSrc;
+  viewerVideo.load();
+  return true;
+}
+
+async function playViewerLive() {
   if (viewerVideo.classList.contains("hidden")) return;
+  const hasSource = await ensureViewerLiveVideoSource().catch(() => false);
+  if (!hasSource) {
+    alert("Live Photo 视频加载失败，请稍后再试");
+    return;
+  }
   photoViewer.classList.add("live-playing");
   viewerVideo.currentTime = 0;
   viewerVideo.play().catch(() => {
@@ -1633,11 +1747,11 @@ function playViewerLive() {
   });
 }
 
-function toggleViewerLivePlayback() {
+async function toggleViewerLivePlayback() {
   if (photoViewer.classList.contains("live-playing")) {
     stopViewerLive();
   } else {
-    playViewerLive();
+    await playViewerLive();
   }
 }
 
@@ -1809,6 +1923,13 @@ registerForm.addEventListener("submit", (event) => {
     registerStatus.textContent = error.message;
   });
 });
+
+document.querySelectorAll(".auth-eye-button").forEach((button) => {
+  button.addEventListener("click", () => togglePasswordVisibility(button));
+});
+
+registerPassword.addEventListener("input", updatePasswordHints);
+registerPasswordConfirm.addEventListener("input", updatePasswordHints);
 
 showRegister.addEventListener("click", () => {
   state.authMode = "register";

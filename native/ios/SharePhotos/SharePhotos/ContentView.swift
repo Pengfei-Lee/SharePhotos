@@ -179,7 +179,7 @@ private struct RegisterView: View {
     private var canSubmit: Bool {
         !nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && isValidUsername(username)
-            && (6...20).contains(password.count)
+            && isValidPasswordFormat(password)
             && password == confirmPassword
             && !store.isBusy
     }
@@ -251,7 +251,7 @@ private struct RegisterView: View {
                 VStack(spacing: 14) {
                     AuthInputField(icon: "person", placeholder: "昵称（将显示在相册中）", text: $nickname, keyboardType: .default, isSecure: false)
                     AuthInputField(icon: "person", placeholder: "登录账号", text: $username, keyboardType: .asciiCapable, isSecure: false)
-                    Text("5-20位，支持字母、数字、下划线")
+                    Text("1-20位，支持字母、数字、下划线")
                         .authHelpStyle()
                     AuthInputField(
                         icon: "lock",
@@ -263,8 +263,8 @@ private struct RegisterView: View {
                     ) {
                         isPasswordVisible.toggle()
                     }
-                    Text("6-20位，建议包含字母和数字")
-                        .authHelpStyle()
+                    Text(passwordHelpText)
+                        .authHelpStyle(isWarning: !password.isEmpty && !isValidPasswordFormat(password))
                     AuthInputField(
                         icon: "lock",
                         placeholder: "确认密码",
@@ -275,6 +275,8 @@ private struct RegisterView: View {
                     ) {
                         isConfirmPasswordVisible.toggle()
                     }
+                    Text(confirmPasswordHelpText)
+                        .authHelpStyle(isWarning: !confirmPassword.isEmpty && password != confirmPassword)
                 }
 
                 Button {
@@ -330,8 +332,24 @@ private struct RegisterView: View {
 
     private func isValidUsername(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (5...20).contains(trimmed.count) else { return false }
+        guard (1...20).contains(trimmed.count) else { return false }
         return trimmed.range(of: #"^[A-Za-z0-9_]+$"#, options: .regularExpression) != nil
+    }
+
+    private var passwordHelpText: String {
+        guard !password.isEmpty else { return "6-20位，可使用数字、字母和英文符号" }
+        return isValidPasswordFormat(password) ? "密码格式可用" : "密码需为 6-20 位，且不能包含中文、空格或中文符号"
+    }
+
+    private var confirmPasswordHelpText: String {
+        guard !confirmPassword.isEmpty else { return "请再次输入密码" }
+        guard isValidPasswordFormat(confirmPassword) else { return "确认密码格式不正确" }
+        return password == confirmPassword ? "两次密码一致" : "两次输入的密码不一致"
+    }
+
+    private func isValidPasswordFormat(_ value: String) -> Bool {
+        guard (6...20).contains(value.count) else { return false }
+        return value.unicodeScalars.allSatisfy { (0x21...0x7E).contains($0.value) }
     }
 }
 
@@ -2792,10 +2810,10 @@ private extension View {
         modifier(PhotoGridZoomModifier(columnCount: columnCount, zoomScale: zoomScale))
     }
 
-    func authHelpStyle() -> some View {
+    func authHelpStyle(isWarning: Bool = false) -> some View {
         self
             .font(.footnote.weight(.semibold))
-            .foregroundColor(.secondaryText)
+            .foregroundColor(isWarning ? .red : .secondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.top, -8)

@@ -847,7 +847,8 @@ def save_db(db):
     LOGGER.info("albums=%d", len(db.get("albums", [])), extra={"event": "db.write"})
 
 
-USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,20}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,20}$")
+PASSWORD_RE = re.compile(r"^[\x21-\x7E]{6,20}$")
 PASSWORD_MIN_LENGTH = 6
 PASSWORD_MAX_LENGTH = 20
 AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 30)))
@@ -859,6 +860,10 @@ def normalize_username(value):
 
 def validate_username(username):
     return bool(USERNAME_RE.match(username or ""))
+
+
+def validate_password_format(password):
+    return bool(PASSWORD_RE.match(password or ""))
 
 
 def hash_password(password, salt=None):
@@ -1038,6 +1043,40 @@ def write_resource_to_archive(archive, album_id, photo, used_names, video=False,
         archive.writestr(arcname, body)
         return True
     return False
+
+
+def resource_download_item(album_id, photo, used_names=None, video=False, folder_name=None):
+    if video:
+        stored_name = photo.get("liveVideoStoredName")
+        original_name = photo.get("liveVideoOriginalName") or stored_name
+        object_key = live_video_object_key(photo)
+        mime_type = photo.get("liveVideoMimeType") or safe_mime_type(original_name)
+    else:
+        stored_name = photo.get("storedName")
+        original_name = photo.get("originalName") or stored_name
+        object_key = original_object_key(photo)
+        mime_type = photo.get("mime_type") or photo.get("mimeType") or safe_mime_type(original_name)
+    if not stored_name:
+        return None
+    filename = original_name or stored_name
+    if used_names is not None:
+        filename = unique_archive_name(filename, used_names)
+    if folder_name:
+        filename = "%s/%s" % (folder_name, filename)
+    url = oss_signed_or_empty(object_key)
+    if not url:
+        local_source = UPLOADS / album_id / stored_name
+        if local_source.exists():
+            url = "/uploads/%s/%s" % (album_id, quote(stored_name))
+    if not url:
+        return None
+    return {
+        "name": filename,
+        "url": url,
+        "mimeType": mime_type,
+        "objectKey": object_key or "",
+        "size": int(photo.get("liveVideoFileSize" if video else "file_size") or 0),
+    }
 
 
 def remove_thumbnails(album_id, stored_name=None):
@@ -2818,11 +2857,11 @@ class AppHandler(BaseHTTPRequestHandler):
         nickname = (form.getfirst("nickname") or "").strip()[:40]
         password = form.getfirst("password") or ""
         if not validate_username(username):
-            return self.send_error_json("登录账号需为 5-20 位字母、数字或下划线")
+            return self.send_error_json("登录账号需为 1-20 位字母、数字或下划线")
         if not nickname:
             return self.send_error_json("昵称不能为空")
-        if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
-            return self.send_error_json("密码需为 6-20 位")
+        if not validate_password_format(password):
+            return self.send_error_json("密码需为 6-20 位，只能使用数字、字母和英文符号")
 
         with LOCK:
             db = load_db()
@@ -3549,27 +3588,19 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("Folder not found", 404)
 
         photos = [photo for photo in album["photos"] if folder_id in photo_folder_ids(photo)]
-        zip_path = DATA / ("%s-%s.zip" % (album_id, folder_id))
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            used_names = set()
-            for photo in photos:
-                write_resource_to_archive(archive, album_id, photo, used_names, folder_name=folder["name"])
-                if photo.get("liveVideoStoredName"):
-                    write_resource_to_archive(archive, album_id, photo, used_names, video=True, folder_name=folder["name"])
-
-        body = zip_path.read_bytes()
         filename = "%s-%s.zip" % (slugify(album["name"]), slugify(folder["name"]))
-        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or "photos.zip"
-        encoded_filename = quote(filename.encode("utf-8"))
-        self.send_response(200)
-        self.send_header("Content-Type", "application/zip")
-        self.send_header(
-            "Content-Disposition",
-            'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (ascii_filename, encoded_filename),
-        )
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        used_names = set()
+        files = []
+        for photo in photos:
+            image_item = resource_download_item(album_id, photo, used_names, folder_name=folder["name"])
+            if image_item:
+                files.append(image_item)
+            if photo.get("liveVideoStoredName"):
+                video_item = resource_download_item(album_id, photo, used_names, video=True, folder_name=folder["name"])
+                if video_item:
+                    files.append(video_item)
+        LOGGER.info("album_id=%s folder_id=%s files=%d", album_id, folder_id, len(files), extra={"event": "download.manifest"})
+        return self.send_json({"type": "folder", "filename": filename, "files": files})
 
     def download_selected_photos(self, album_id):
         payload, error = self.read_json_body()
@@ -3590,16 +3621,19 @@ class AppHandler(BaseHTTPRequestHandler):
         if not photos:
             return self.send_error_json("No selected photos found", 404)
 
-        zip_path = DATA / ("%s-selected-%s.zip" % (album_id, uuid.uuid4().hex[:8]))
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            used_names = set()
-            for photo in photos:
-                write_resource_to_archive(archive, album_id, photo, used_names)
-                if photo.get("liveVideoStoredName"):
-                    write_resource_to_archive(archive, album_id, photo, used_names, video=True)
-
         filename = "%s-selected-%d.zip" % (slugify(album.get("name") or "photos"), len(photos))
-        return self.send_download(zip_path, filename, "application/zip")
+        used_names = set()
+        files = []
+        for photo in photos:
+            image_item = resource_download_item(album_id, photo, used_names)
+            if image_item:
+                files.append(image_item)
+            if photo.get("liveVideoStoredName"):
+                video_item = resource_download_item(album_id, photo, used_names, video=True)
+                if video_item:
+                    files.append(video_item)
+        LOGGER.info("album_id=%s selected=%d files=%d", album_id, len(photos), len(files), extra={"event": "download.manifest"})
+        return self.send_json({"type": "selection", "filename": filename, "files": files})
 
     def send_download(self, path, filename, content_type=None):
         if not path.exists() or path.is_dir():
@@ -3633,16 +3667,11 @@ class AppHandler(BaseHTTPRequestHandler):
         _, photo = self.find_photo_for_download(album_id, photo_id)
         if not photo:
             return self.send_error_json("Photo not found", 404)
-        source = UPLOADS / album_id / photo["storedName"]
-        if not source.exists() and oss_enabled():
-            body = oss_read_bytes(original_object_key(photo))
-            if body is not None:
-                return self.send_bytes_download(
-                    body,
-                    photo.get("originalName") or photo["storedName"],
-                    photo.get("mime_type") or photo.get("mimeType"),
-                )
-        return self.send_download(source, photo.get("originalName") or photo["storedName"])
+        item = resource_download_item(album_id, photo)
+        if not item:
+            return self.send_error_json("File not found", 404)
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "download.manifest"})
+        return self.send_json({"type": "photo", **item})
 
     def download_live_photo(self, album_id, photo_id):
         album, photo = self.find_photo_for_download(album_id, photo_id)
@@ -3651,24 +3680,19 @@ class AppHandler(BaseHTTPRequestHandler):
         video_name = photo.get("liveVideoStoredName")
         if photo.get("type") != "live_photo" or not video_name:
             return self.send_error_json("不是 Live Photo")
-        image_source = UPLOADS / album_id / photo["storedName"]
-        video_source = UPLOADS / album_id / video_name
-        image_body = None if image_source.exists() else oss_read_bytes(original_object_key(photo))
-        video_body = None if video_source.exists() else oss_read_bytes(live_video_object_key(photo))
-        if (not image_source.exists() and image_body is None) or (not video_source.exists() and video_body is None):
+        image_item = resource_download_item(album_id, photo)
+        video_item = resource_download_item(album_id, photo, video=True)
+        if not image_item or not video_item:
             return self.send_error_json("Live Photo 文件不完整", 404)
-        zip_path = DATA / ("%s-%s-live.zip" % (album_id, photo_id))
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            if image_source.exists():
-                archive.write(image_source, arcname=photo.get("originalName") or photo["storedName"])
-            else:
-                archive.writestr(photo.get("originalName") or photo["storedName"], image_body)
-            if video_source.exists():
-                archive.write(video_source, arcname=photo.get("liveVideoOriginalName") or video_name)
-            else:
-                archive.writestr(photo.get("liveVideoOriginalName") or video_name, video_body)
         filename = "%s-live.zip" % slugify(Path(photo.get("originalName") or "live-photo").stem)
-        return self.send_download(zip_path, filename, "application/zip")
+        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "download.manifest"})
+        return self.send_json({
+            "type": "live_photo",
+            "filename": filename,
+            "image": image_item,
+            "video": video_item,
+            "files": [image_item, video_item],
+        })
 
     def serve_file(self, path):
         path = path.resolve()
