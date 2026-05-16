@@ -236,7 +236,7 @@ label {
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
-  background: #fff url("/assets/logo.png") center / cover no-repeat;
+  background: transparent url("/assets/logo.png?v=transparent-1") center / cover no-repeat;
   border: 1px solid rgba(255, 255, 255, 0.8);
   color: #24465a;
   box-shadow:
@@ -520,15 +520,20 @@ label {
 .auth-brand {
   display: grid;
   justify-items: center;
-  gap: 18px;
-  margin: 20px 0 58px;
+  gap: 24px;
+  margin: 0 0 58px;
   text-align: center;
 }
 
 .auth-brand-mark {
-  width: 70px;
-  height: 70px;
-  border-radius: 22px;
+  width: 160px;
+  height: 160px;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  background-size: cover;
+  background-position: center;
+  box-shadow: none;
 }
 
 .auth-brand h1 {
@@ -2443,7 +2448,17 @@ label {
   }
 
   .auth-brand {
-    margin: 70px 0 70px;
+    margin: 0 0 54px;
+  }
+
+  .brand-mark.auth-brand-mark {
+    width: 160px;
+    height: 160px;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+    box-shadow: none;
+    font-size: inherit;
   }
 
   .auth-switch {
