@@ -7,3 +7,5 @@ data/
 # Xcode user-local state
 *.xcuserstate
 **/xcuserdata/
+**/*.xcodeproj/project.pbxproj
+project.pbxproj
