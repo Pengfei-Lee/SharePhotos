@@ -4,11 +4,130 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>识我 PicMe</title>
-    <link rel="icon" href="/assets/picme-icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/assets/logo.png" type="image/png" />
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <section id="authView" class="auth-view" aria-live="polite">
+      <div class="auth-card auth-login-card" data-auth-panel="login">
+        <div class="auth-brand">
+          <span class="brand-mark auth-brand-mark" aria-hidden="true">
+            <span class="brand-person"></span>
+            <span class="brand-spark brand-spark-one"></span>
+            <span class="brand-spark brand-spark-two"></span>
+          </span>
+          <div>
+            <h1>识我 <span>PicMe</span></h1>
+            <p>自动找到属于你的旅行照片</p>
+          </div>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <h2>登录</h2>
+          <label class="auth-field auth-field-user">
+            <span>登录账号</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4.5 20c1.6-4.2 13.4-4.2 15 0"></path>
+            </svg>
+            <input id="loginUsername" name="username" autocomplete="username" required />
+          </label>
+          <label class="auth-field auth-field-password">
+            <span>密码</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="10" width="14" height="10" rx="3"></rect>
+              <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+            </svg>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+              <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+          </label>
+          <button class="auth-forgot" type="button">忘记密码?</button>
+          <button id="loginButton" class="auth-primary" type="submit">登录</button>
+          <div id="loginStatus" class="auth-status" role="status"></div>
+        </form>
+
+        <div class="auth-switch">
+          <span></span>
+          <p>还没有账号?</p>
+          <span></span>
+        </div>
+        <button id="showRegister" class="auth-secondary" type="button">创建新账号</button>
+        <p class="auth-agreement">登录即代表同意 <a href="#" aria-label="用户协议">《用户协议》</a> 和 <a href="#" aria-label="隐私政策">《隐私政策》</a></p>
+      </div>
+
+      <div class="auth-card auth-register-card hidden" data-auth-panel="register">
+        <button id="showLogin" class="auth-back" type="button" aria-label="返回登录">‹</button>
+        <h2>创建新账号</h2>
+        <form id="registerForm" class="auth-form">
+          <div class="avatar-upload-copy">
+            <h3>推荐上传头像</h3>
+            <p>上传清晰的头像，有助于我们更准确地识别你，更好地为你匹配专属相册</p>
+          </div>
+          <label class="avatar-picker" for="registerAvatar">
+            <input id="registerAvatar" name="avatar" type="file" accept="image/*" />
+            <span id="avatarPreview" class="avatar-preview" aria-hidden="true">
+              <span class="avatar-person"></span>
+            </span>
+            <strong>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8.5 7.5 10 5.5h4l1.5 2H18a3 3 0 0 1 3 3V17a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-6.5a3 3 0 0 1 3-3h2.5Z"></path>
+                <circle cx="12" cy="14" r="3.2"></circle>
+              </svg>
+            </strong>
+          </label>
+          <label class="auth-field auth-field-user">
+            <span>昵称（将显示在相册中）</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4.5 20c1.6-4.2 13.4-4.2 15 0"></path>
+            </svg>
+            <input id="registerNickname" name="nickname" autocomplete="nickname" required />
+          </label>
+          <label class="auth-field auth-field-user">
+            <span>登录账号</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4.5 20c1.6-4.2 13.4-4.2 15 0"></path>
+            </svg>
+            <input id="registerUsername" name="username" autocomplete="username" required />
+            <small>5-20位，支持字母、数字、下划线</small>
+          </label>
+          <label class="auth-field auth-field-password">
+            <span>密码</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="10" width="14" height="10" rx="3"></rect>
+              <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+            </svg>
+            <input id="registerPassword" name="password" type="password" autocomplete="new-password" required />
+            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+              <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+            <small>6-20位，建议包含字母和数字</small>
+          </label>
+          <label class="auth-field auth-field-password">
+            <span>确认密码</span>
+            <svg class="auth-field-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="10" width="14" height="10" rx="3"></rect>
+              <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+            </svg>
+            <input id="registerPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" required />
+            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+              <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+          </label>
+          <button id="registerButton" class="auth-primary" type="submit">注册</button>
+          <div id="registerStatus" class="auth-status" role="status"></div>
+        </form>
+        <p class="auth-login-link">已有账号? <button id="registerToLogin" type="button">立即登录</button></p>
+      </div>
+    </section>
+
+    <main id="appShell" class="shell hidden">
       <aside class="sidebar">
         <div class="album-context" aria-live="polite">
           <button id="backToHome" class="secondary" type="button">返回</button>
@@ -58,6 +177,7 @@
         <section id="homeAlbums" class="home-albums hidden"></section>
 
         <section id="albumPanel" class="album-panel hidden">
+          <section id="myPhotosPanel" class="my-photos-panel"></section>
           <div id="folders" class="folders"></div>
 
           <button id="toggleUploadForm" class="upload-toggle" type="button">上传照片</button>

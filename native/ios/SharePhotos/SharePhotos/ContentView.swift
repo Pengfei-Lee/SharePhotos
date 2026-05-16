@@ -4,6 +4,447 @@ import SwiftUI
 import UIKit
 import AVFoundation
 
+struct AuthGateView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @State private var mode: AuthMode = .login
+
+    var body: some View {
+        ZStack {
+            if store.isAuthenticated {
+                ContentView()
+            } else if store.isCheckingAuth {
+                AppBackground()
+                VStack(spacing: 16) {
+                    PicMeLogo(size: 76)
+                    ProgressView("正在确认登录状态")
+                        .font(.headline.weight(.semibold))
+                        .tint(.teal)
+                }
+            } else {
+                switch mode {
+                case .login:
+                    LoginView {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                            mode = .register
+                        }
+                    }
+                case .register:
+                    RegisterView {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                            mode = .login
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            await store.loadMe()
+            if store.isAuthenticated {
+                await store.loadAlbums()
+            }
+        }
+        .preferredColorScheme(.light)
+        .tint(.teal)
+    }
+}
+
+private enum AuthMode {
+    case login
+    case register
+}
+
+private struct LoginView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let onCreateAccount: () -> Void
+    @State private var username = ""
+    @State private var password = ""
+    @State private var isPasswordVisible = false
+
+    private var canSubmit: Bool {
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty && !store.isBusy
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 28) {
+                Spacer(minLength: 32)
+
+                VStack(spacing: 14) {
+                    PicMeLogo(size: 88)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("识我")
+                            .font(.system(size: 34, weight: .black))
+                            .foregroundColor(.primaryText)
+                        Text("PicMe")
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(LinearGradient(colors: [.picmeAqua, .picmeViolet], startPoint: .leading, endPoint: .trailing))
+                    }
+                    Text("自动找到属于你的旅行照片")
+                        .font(.headline)
+                        .foregroundColor(.secondaryText)
+                }
+                .padding(.top, 22)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("登录")
+                        .font(.system(size: 32, weight: .black))
+                        .foregroundColor(.primaryText)
+
+                    AuthInputField(
+                        icon: "person",
+                        placeholder: "登录账号",
+                        text: $username,
+                        keyboardType: .asciiCapable,
+                        isSecure: false
+                    )
+
+                    AuthInputField(
+                        icon: "lock",
+                        placeholder: "密码",
+                        text: $password,
+                        keyboardType: .default,
+                        isSecure: !isPasswordVisible,
+                        trailingIcon: isPasswordVisible ? "eye.slash" : "eye"
+                    ) {
+                        isPasswordVisible.toggle()
+                    }
+
+                    Button("忘记密码？") {}
+                        .font(.subheadline.weight(.bold))
+                        .foregroundColor(.teal)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    Button {
+                        Task { await store.login(username: username, password: password) }
+                    } label: {
+                        Text(store.isBusy ? "登录中..." : "登录")
+                            .font(.title3.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(primaryGradient, in: Capsule())
+                            .foregroundColor(.white)
+                            .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
+                    }
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.55)
+                    .padding(.top, 18)
+                }
+
+                HStack(spacing: 16) {
+                    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
+                    Text("还没有账号？")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.secondaryText)
+                    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
+                }
+                .padding(.top, 26)
+
+                Button(action: onCreateAccount) {
+                    Text("创建新账号")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 17)
+                        .background(.white.opacity(0.72), in: Capsule())
+                        .overlay(Capsule().stroke(Color.teal, lineWidth: 1.4))
+                        .foregroundColor(.teal)
+                }
+
+                Text("登录即代表同意《用户协议》和《隐私政策》")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondaryText)
+                    .padding(.top, 12)
+
+                AuthStatusText()
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 32)
+        }
+        .background(AppBackground())
+    }
+}
+
+private struct RegisterView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let onLogin: () -> Void
+    @State private var nickname = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var confirmPassword = ""
+    @State private var isPasswordVisible = false
+    @State private var isConfirmPasswordVisible = false
+    @State private var avatarPickerPresented = false
+    @State private var avatarData: Data?
+    @State private var avatarImage: UIImage?
+
+    private var canSubmit: Bool {
+        !nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && isValidUsername(username)
+            && (6...20).contains(password.count)
+            && password == confirmPassword
+            && !store.isBusy
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    Button(action: onLogin) {
+                        Image(systemName: "chevron.left")
+                            .font(.title2.weight(.semibold))
+                            .foregroundColor(.primaryText)
+                            .frame(width: 44, height: 44)
+                    }
+                    Spacer()
+                    Text("创建新账号")
+                        .font(.title3.weight(.black))
+                        .foregroundColor(.primaryText)
+                    Spacer()
+                    Color.clear.frame(width: 44, height: 44)
+                }
+                .padding(.top, 16)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("推荐上传头像")
+                        .font(.title2.weight(.black))
+                    Text("上传清晰的头像，有助于我们更准确地识别你，更好地为你匹配专属相册")
+                        .font(.subheadline)
+                        .foregroundColor(.secondaryText)
+                        .lineSpacing(4)
+                }
+
+                Button {
+                    avatarPickerPresented = true
+                } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        Group {
+                            if let avatarImage {
+                                Image(uiImage: avatarImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } else {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.teal.opacity(0.12))
+                                    Image(systemName: "person.fill")
+                                        .font(.system(size: 54, weight: .medium))
+                                        .foregroundColor(.teal.opacity(0.45))
+                                }
+                            }
+                        }
+                        .frame(width: 140, height: 140)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(.white, lineWidth: 4))
+                        .shadow(color: .teal.opacity(0.12), radius: 18, y: 8)
+
+                        Image(systemName: "camera.fill")
+                            .font(.title3.weight(.bold))
+                            .foregroundColor(.white)
+                            .frame(width: 48, height: 48)
+                            .background(Color.teal, in: Circle())
+                            .overlay(Circle().stroke(.white, lineWidth: 4))
+                            .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+
+                VStack(spacing: 14) {
+                    AuthInputField(icon: "person", placeholder: "昵称（将显示在相册中）", text: $nickname, keyboardType: .default, isSecure: false)
+                    AuthInputField(icon: "person", placeholder: "登录账号", text: $username, keyboardType: .asciiCapable, isSecure: false)
+                    Text("5-20位，支持字母、数字、下划线")
+                        .authHelpStyle()
+                    AuthInputField(
+                        icon: "lock",
+                        placeholder: "密码",
+                        text: $password,
+                        keyboardType: .default,
+                        isSecure: !isPasswordVisible,
+                        trailingIcon: isPasswordVisible ? "eye.slash" : "eye"
+                    ) {
+                        isPasswordVisible.toggle()
+                    }
+                    Text("6-20位，建议包含字母和数字")
+                        .authHelpStyle()
+                    AuthInputField(
+                        icon: "lock",
+                        placeholder: "确认密码",
+                        text: $confirmPassword,
+                        keyboardType: .default,
+                        isSecure: !isConfirmPasswordVisible,
+                        trailingIcon: isConfirmPasswordVisible ? "eye.slash" : "eye"
+                    ) {
+                        isConfirmPasswordVisible.toggle()
+                    }
+                }
+
+                Button {
+                    Task {
+                        let didRegister = await store.register(
+                            username: username,
+                            nickname: nickname,
+                            password: password,
+                            confirmPassword: confirmPassword,
+                            avatarData: avatarData
+                        )
+                        if didRegister {
+                            avatarPickerPresented = false
+                        }
+                    }
+                } label: {
+                    Text(store.isBusy ? "注册中..." : "注册")
+                        .font(.title3.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .background(primaryGradient, in: Capsule())
+                        .foregroundColor(.white)
+                        .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
+                }
+                .disabled(!canSubmit)
+                .opacity(canSubmit ? 1 : 0.55)
+                .padding(.top, 8)
+
+                Button(action: onLogin) {
+                    HStack(spacing: 5) {
+                        Text("已有账号？")
+                            .foregroundColor(.secondaryText)
+                        Text("立即登录")
+                            .foregroundColor(.blue)
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                }
+
+                AuthStatusText()
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 34)
+        }
+        .background(AppBackground())
+        .sheet(isPresented: $avatarPickerPresented) {
+            AvatarImagePicker { image, data in
+                avatarImage = image
+                avatarData = data
+            }
+        }
+    }
+
+    private func isValidUsername(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (5...20).contains(trimmed.count) else { return false }
+        return trimmed.range(of: #"^[A-Za-z0-9_]+$"#, options: .regularExpression) != nil
+    }
+}
+
+private struct AvatarImagePicker: UIViewControllerRepresentable {
+    let onPicked: (UIImage, Data) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPicked: onPicked, dismiss: dismiss)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let onPicked: (UIImage, Data) -> Void
+        let dismiss: DismissAction
+
+        init(onPicked: @escaping (UIImage, Data) -> Void, dismiss: DismissAction) {
+            self.onPicked = onPicked
+            self.dismiss = dismiss
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            guard let provider = results.first?.itemProvider else {
+                dismiss()
+                return
+            }
+
+            if provider.canLoadObject(ofClass: UIImage.self) {
+                provider.loadObject(ofClass: UIImage.self) { [onPicked, dismiss] object, _ in
+                    guard let image = object as? UIImage else {
+                        DispatchQueue.main.async { dismiss() }
+                        return
+                    }
+                    let data = image.jpegData(compressionQuality: 0.88) ?? Data()
+                    DispatchQueue.main.async {
+                        onPicked(image, data)
+                        dismiss()
+                    }
+                }
+            } else {
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct AuthInputField: View {
+    let icon: String
+    let placeholder: String
+    @Binding var text: String
+    let keyboardType: UIKeyboardType
+    let isSecure: Bool
+    var trailingIcon: String?
+    var trailingAction: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.headline.weight(.semibold))
+                .foregroundColor(.secondaryText)
+                .frame(width: 22)
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                }
+            }
+            .keyboardType(keyboardType)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(.headline.weight(.semibold))
+            .foregroundColor(.primaryText)
+
+            if let trailingIcon, let trailingAction {
+                Button(action: trailingAction) {
+                    Image(systemName: trailingIcon)
+                        .font(.headline.weight(.semibold))
+                        .foregroundColor(.secondaryText)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 60)
+        .background(.white.opacity(0.74), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+    }
+}
+
+private struct AuthStatusText: View {
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        if !store.statusText.isEmpty {
+            Text(store.statusText)
+                .font(.footnote.weight(.semibold))
+                .foregroundColor(.secondaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @State private var createAlbumPresented = false
@@ -52,8 +493,12 @@ private struct HomeView: View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    BrandHeader()
-                        .padding(.top, 24)
+                    HStack(alignment: .top) {
+                        BrandHeader()
+                        Spacer()
+                        AccountMenu()
+                    }
+                    .padding(.top, 24)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("相册")
@@ -267,6 +712,8 @@ private struct AlbumDetailView: View {
                     BackButton { dismiss() }
 
                     AlbumHero(album: album)
+
+                    MyPhotosRecommendationCard(album: album)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("按人打包带走")
@@ -648,6 +1095,128 @@ private struct AllPhotosView: View {
     }
 }
 
+private struct MyPhotosView: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let albumId: String
+    @State private var selectedPhoto: Photo?
+    @State private var gridColumnCount = 3
+    @State private var gridZoomScale: CGFloat = 1
+    @State private var isSelecting = false
+    @State private var selectedPhotoIds = Set<String>()
+    @State private var selectionActionsPresented = false
+
+    var album: Album? { store.album(id: albumId) }
+    var photos: [Photo] {
+        guard let album else { return [] }
+        return store.myPhotos(in: album)
+    }
+    var selectedPhotos: [Photo] {
+        photos.filter { selectedPhotoIds.contains($0.id) }
+    }
+
+    var body: some View {
+        ZStack {
+            ScrollView {
+                if let album {
+                    VStack(alignment: .leading, spacing: 18) {
+                        BackButton { dismiss() }
+                            .padding(.horizontal, 18)
+                        SelectionTopBar(
+                            isSelecting: $isSelecting,
+                            selectedPhotoIds: $selectedPhotoIds,
+                            photos: photos
+                        )
+                        .padding(.horizontal, 18)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("我的照片")
+                                .font(.system(size: 42, weight: .black))
+                                .foregroundColor(.primaryText)
+                            Text("\(photos.count) 张由头像匹配到的照片")
+                                .font(.headline)
+                                .foregroundColor(.secondaryText)
+                        }
+                        .padding(.horizontal, 18)
+
+                        if photos.isEmpty {
+                            EmptyContentState(
+                                systemImage: "person.crop.circle.badge.questionmark",
+                                title: "暂时没有匹配到你的照片",
+                                message: currentUserHasFaceProfile ? "可以稍后刷新，或换一张更清晰的正脸头像重新注册。" : "你还没有可用于识别的人脸头像，所以暂时不能推荐我的照片。"
+                            )
+                            .padding(.horizontal, 18)
+                        } else {
+                            PhotoLibraryGrid(
+                                album: album,
+                                photos: photos,
+                                columnCount: $gridColumnCount,
+                                zoomScale: gridZoomScale,
+                                selectedPhoto: $selectedPhoto,
+                                isSelecting: isSelecting,
+                                selectedPhotoIds: $selectedPhotoIds
+                            )
+                        }
+                    }
+                    .padding(.vertical, 18)
+                }
+            }
+
+            if let photo = selectedPhoto {
+                PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = nil
+                    }
+                }
+                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
+                .zIndex(10)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                SelectionBottomBar(
+                    count: selectedPhotoIds.count,
+                    onDelete: {
+                        guard let album else { return }
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
+                    },
+                    onMore: { selectionActionsPresented = true }
+                )
+            }
+        }
+        .background(AppBackground())
+        .navigationBarHidden(true)
+        .edgeSwipeBack { dismiss() }
+        .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .task { await store.refreshAlbum(id: albumId) }
+        .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
+            if let album {
+                Button("保存到系统相册") {
+                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                }
+                Button("下载照片包") {
+                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                }
+                Button("删除所选", role: .destructive) {
+                    Task {
+                        await store.deletePhotos(album: album, photos: selectedPhotos)
+                        selectedPhotoIds.removeAll()
+                        isSelecting = false
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    private var currentUserHasFaceProfile: Bool {
+        store.currentUser?.hasFaceProfile == true
+    }
+}
+
 private struct CreateAlbumSheet: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Environment(\.dismiss) private var dismiss
@@ -967,6 +1536,69 @@ private struct AlbumHero: View {
             }
         }
         .padding(.vertical, 14)
+    }
+}
+
+private struct MyPhotosRecommendationCard: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+
+    private var count: Int {
+        album.myPhotoCount ?? album.myPhotoIds?.count ?? 0
+    }
+
+    var body: some View {
+        NavigationLink {
+            MyPhotosView(albumId: album.id)
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    if let cover = album.myCoverUrl, let url = store.imageURL(cover) {
+                        RemoteImage(url: url, mode: .fill)
+                    } else if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
+                        RemoteImage(url: url, mode: .fill)
+                    } else {
+                        Circle()
+                            .fill(Color.teal.opacity(0.12))
+                            .overlay(Image(systemName: "person.crop.circle").font(.title).foregroundColor(.teal))
+                    }
+                }
+                .frame(width: 64, height: 64)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(.white, lineWidth: 3))
+                .shadow(color: .teal.opacity(0.14), radius: 12, y: 6)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("我的照片")
+                        .font(.title3.weight(.black))
+                        .foregroundColor(.primaryText)
+                    Text(cardMessage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.secondaryText)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.headline.weight(.bold))
+                    .foregroundColor(.teal)
+            }
+            .padding(16)
+            .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var cardMessage: String {
+        if count > 0 {
+            return "已为你匹配到 \(count) 张照片"
+        }
+        if store.currentUser?.hasFaceProfile == true {
+            return "暂时没有匹配结果，点开查看空态"
+        }
+        return "上传带人脸头像后，会自动推荐你的照片"
     }
 }
 
@@ -1915,38 +2547,47 @@ private struct BrandHeader: View {
     }
 }
 
+private struct AccountMenu: View {
+    @EnvironmentObject private var store: SharePhotosStore
+
+    var body: some View {
+        Menu {
+            if let user = store.currentUser {
+                Text(user.nickname)
+                Text("@\(user.username)")
+            }
+            Button(role: .destructive) {
+                Task { await store.logout() }
+            } label: {
+                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        } label: {
+            ZStack {
+                if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
+                    RemoteImage(url: url, mode: .fill)
+                } else {
+                    Circle()
+                        .fill(Color.teal.opacity(0.12))
+                        .overlay(Image(systemName: "person.fill").foregroundColor(.teal))
+                }
+            }
+            .frame(width: 46, height: 46)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .shadow(color: .black.opacity(0.10), radius: 10, y: 5)
+        }
+    }
+}
+
 private struct PicMeLogo: View {
     let size: CGFloat
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                .fill(LinearGradient(colors: [.picmeMist, .picmeGlassBlue, .picmeLavender], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay {
-                    RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                        .stroke(.white.opacity(0.74), lineWidth: 1)
-                }
-            Circle()
-                .stroke(Color.picmeAqua.opacity(0.18), lineWidth: max(1.5, size * 0.026))
-                .frame(width: size * 0.62, height: size * 0.62)
-                .rotationEffect(.degrees(-18))
-            Circle()
-                .trim(from: 0.04, to: 0.26)
-                .stroke(Color.picmeViolet.opacity(0.32), style: StrokeStyle(lineWidth: max(1.5, size * 0.032), lineCap: .round))
-                .frame(width: size * 0.72, height: size * 0.72)
-                .rotationEffect(.degrees(18))
-            SelfPointerSymbol()
-                .stroke(Color.picmeInk, style: StrokeStyle(lineWidth: max(2.5, size * 0.06), lineCap: .round, lineJoin: .round))
-                .frame(width: size * 0.55, height: size * 0.58)
-            Circle()
-                .fill(Color.picmeAqua)
-                .frame(width: size * 0.1, height: size * 0.1)
-                .overlay {
-                    Circle().stroke(Color.picmeAqua.opacity(0.18), lineWidth: size * 0.12)
-                }
-                .offset(x: size * 0.08, y: size * 0.2)
-        }
+        Image("PicMeLogo")
+            .resizable()
+            .scaledToFit()
         .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         .shadow(color: .picmeInk.opacity(0.12), radius: 16, x: 0, y: 10)
     }
 }
@@ -2149,6 +2790,15 @@ private extension View {
 
     func photoGridZoom(columnCount: Binding<Int>, zoomScale: Binding<CGFloat>) -> some View {
         modifier(PhotoGridZoomModifier(columnCount: columnCount, zoomScale: zoomScale))
+    }
+
+    func authHelpStyle() -> some View {
+        self
+            .font(.footnote.weight(.semibold))
+            .foregroundColor(.secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.top, -8)
     }
 }
 

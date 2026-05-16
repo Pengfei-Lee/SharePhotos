@@ -1,5 +1,8 @@
 const state = {
   albums: [],
+  token: localStorage.getItem("picmeToken") || "",
+  currentUser: null,
+  authMode: "login",
   currentAlbumId: "",
   currentFolderId: "",
   uploading: false,
@@ -8,6 +11,7 @@ const state = {
   touchStart: null,
   uploadExpanded: false,
   allPhotosOpen: false,
+  myPhotosOpen: false,
   allPhotosLimit: 12,
   photoGridColumns: 3,
   photoGridZoomScale: 1,
@@ -23,7 +27,30 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const AUTH_TOKEN_KEY = "picmeToken";
+let avatarPreviewUrl = "";
 
+const authView = $("#authView");
+const appShell = $("#appShell");
+const loginPanel = $('[data-auth-panel="login"]');
+const registerPanel = $('[data-auth-panel="register"]');
+const loginForm = $("#loginForm");
+const loginUsername = $("#loginUsername");
+const loginPassword = $("#loginPassword");
+const loginButton = $("#loginButton");
+const loginStatus = $("#loginStatus");
+const showRegister = $("#showRegister");
+const showLogin = $("#showLogin");
+const registerToLogin = $("#registerToLogin");
+const registerForm = $("#registerForm");
+const registerAvatar = $("#registerAvatar");
+const avatarPreview = $("#avatarPreview");
+const registerNickname = $("#registerNickname");
+const registerUsername = $("#registerUsername");
+const registerPassword = $("#registerPassword");
+const registerPasswordConfirm = $("#registerPasswordConfirm");
+const registerButton = $("#registerButton");
+const registerStatus = $("#registerStatus");
 const albumForm = $("#albumForm");
 const albumName = $("#albumName");
 const openCreateAlbum = $("#openCreateAlbum");
@@ -41,6 +68,7 @@ const stats = $("#stats");
 const emptyState = $("#emptyState");
 const homeAlbums = $("#homeAlbums");
 const albumPanel = $("#albumPanel");
+const myPhotosPanel = $("#myPhotosPanel");
 const uploadForm = $("#uploadForm");
 const toggleUploadForm = $("#toggleUploadForm");
 const photosInput = $("#photos");
@@ -63,13 +91,114 @@ function pathPart(value) {
   return encodeURIComponent(value);
 }
 
+function authHeaders(extra = {}) {
+  return state.token ? { ...extra, Authorization: `Bearer ${state.token}` } : extra;
+}
+
+function setAuthSession(payload) {
+  state.token = payload.token || "";
+  state.currentUser = payload.user || null;
+  if (state.token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, state.token);
+  }
+  applyCurrentUserDefaults();
+}
+
+function clearAuthSession() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  state.token = "";
+  state.currentUser = null;
+  state.albums = [];
+  state.currentAlbumId = "";
+  state.currentFolderId = "";
+  state.allPhotosOpen = false;
+  state.myPhotosOpen = false;
+  state.uploadExpanded = false;
+  state.authMode = "login";
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = 0;
+  }
+  renderAuth();
+}
+
+function applyCurrentUserDefaults() {
+  if (!state.currentUser || !$("#uploader")) return;
+  const nickname = state.currentUser.nickname || state.currentUser.username || "";
+  if (nickname && !$("#uploader").value.trim()) {
+    $("#uploader").value = nickname;
+  }
+}
+
+function renderAuth() {
+  const loggedIn = Boolean(state.token && state.currentUser);
+  authView.classList.toggle("hidden", loggedIn);
+  appShell.classList.toggle("hidden", !loggedIn);
+  openCreateAlbum.classList.toggle("hidden", !loggedIn || Boolean(state.currentAlbumId));
+  loginPanel.classList.toggle("hidden", state.authMode !== "login");
+  registerPanel.classList.toggle("hidden", state.authMode !== "register");
+  if (!loggedIn) {
+    emptyState.classList.add("hidden");
+    homeAlbums.classList.add("hidden");
+    albumPanel.classList.add("hidden");
+  }
+}
+
 async function api(path, options = {}) {
+  const headers = authHeaders(options.headers || {});
+  const requestOptions = { ...options, headers };
+  if (requestOptions.body instanceof FormData && requestOptions.headers["Content-Type"]) {
+    delete requestOptions.headers["Content-Type"];
+  }
+  const response = await fetch(path, requestOptions);
+  if (response.status === 401) {
+    clearAuthSession();
+    throw new Error("登录已过期，请重新登录");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `请求失败：${response.status}`);
+  }
+  return response.json();
+}
+
+async function authApi(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `请求失败：${response.status}`);
   }
   return response.json();
+}
+
+function requiresAlbumAuth(url) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.origin === window.location.origin && parsed.pathname.startsWith("/api/albums");
+  } catch {
+    return false;
+  }
+}
+
+async function downloadWithAuth(url, fallbackName) {
+  const response = await fetch(url, { headers: authHeaders() });
+  if (response.status === 401) {
+    clearAuthSession();
+    throw new Error("登录已过期，请重新登录");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `下载失败：${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fallbackName || "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
 }
 
 function formatDate(seconds) {
@@ -84,7 +213,92 @@ function formatDate(seconds) {
 async function loadAlbums() {
   const payload = await api("/api/albums");
   state.albums = payload.albums;
+  applyCurrentUserDefaults();
   render();
+}
+
+async function loadCurrentUser() {
+  if (!state.token) return false;
+  try {
+    const payload = await api("/api/me");
+    state.currentUser = payload.user;
+    applyCurrentUserDefaults();
+    renderAuth();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function validateRegisterForm() {
+  const username = registerUsername.value.trim();
+  const nickname = registerNickname.value.trim();
+  const password = registerPassword.value;
+  const passwordConfirm = registerPasswordConfirm.value;
+  if (!nickname) return "请填写昵称";
+  if (!/^[A-Za-z0-9_]{5,20}$/.test(username)) return "登录账号需要 5-20 位字母、数字或下划线";
+  if (password.length < 6 || password.length > 20) return "密码需要 6-20 位";
+  if (password !== passwordConfirm) return "两次输入的密码不一致";
+  return "";
+}
+
+async function login(event) {
+  event.preventDefault();
+  loginStatus.textContent = "";
+  loginButton.disabled = true;
+  try {
+    const payload = await authApi("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: loginUsername.value.trim(),
+        password: loginPassword.value,
+      }),
+    });
+    setAuthSession(payload);
+    renderAuth();
+    await loadAlbums();
+  } catch (error) {
+    loginStatus.textContent = error.message;
+  } finally {
+    loginButton.disabled = false;
+  }
+}
+
+async function register(event) {
+  event.preventDefault();
+  registerStatus.textContent = "";
+  const validationError = validateRegisterForm();
+  if (validationError) {
+    registerStatus.textContent = validationError;
+    return;
+  }
+
+  const form = new FormData();
+  form.append("username", registerUsername.value.trim());
+  form.append("nickname", registerNickname.value.trim());
+  form.append("password", registerPassword.value);
+  if (registerAvatar.files && registerAvatar.files[0]) {
+    form.append("avatar", registerAvatar.files[0]);
+  }
+
+  registerButton.disabled = true;
+  try {
+    const payload = await authApi("/api/auth/register", {
+      method: "POST",
+      body: form,
+    });
+    setAuthSession(payload);
+    if (payload.warning) {
+      uploadStatus.textContent = payload.warning;
+    }
+    renderAuth();
+    await loadAlbums();
+  } catch (error) {
+    registerStatus.textContent = error.message;
+  } finally {
+    registerButton.disabled = false;
+  }
 }
 
 async function refreshCurrentAlbum() {
@@ -571,6 +785,7 @@ function backToFolderList() {
   resetPhotoSelection();
   state.currentFolderId = "";
   state.allPhotosOpen = false;
+  state.myPhotosOpen = false;
   render();
 }
 
@@ -579,6 +794,7 @@ function returnToHome() {
   state.currentAlbumId = "";
   state.currentFolderId = "";
   state.allPhotosOpen = false;
+  state.myPhotosOpen = false;
   state.uploadExpanded = false;
   render();
 }
@@ -644,6 +860,7 @@ function renderHomeAlbums() {
       state.currentAlbumId = album.id;
       state.currentFolderId = "";
       state.allPhotosOpen = false;
+      state.myPhotosOpen = false;
       state.uploadExpanded = false;
       render();
     });
@@ -691,6 +908,8 @@ function renderFolderNav(album, selectedFolder) {
 }
 
 function render() {
+  renderAuth();
+  if (!state.token || !state.currentUser) return;
   renderPrimaryAlbumNav();
 
   const album = getCurrentAlbum();
@@ -737,10 +956,22 @@ function render() {
 }
 
 function renderFolders(album) {
+  if (state.myPhotosOpen) {
+    uploadForm.classList.add("hidden");
+    toggleUploadForm.classList.add("hidden");
+    folders.classList.add("hidden");
+    allPhotos.classList.add("hidden");
+    myPhotosPanel.classList.remove("hidden");
+    folderDetail.classList.remove("hidden");
+    renderMyPhotosDetail(album);
+    return;
+  }
+
   if (state.allPhotosOpen) {
     uploadForm.classList.add("hidden");
     toggleUploadForm.classList.add("hidden");
     folders.classList.add("hidden");
+    myPhotosPanel.classList.add("hidden");
     folderDetail.classList.add("hidden");
     allPhotos.classList.remove("hidden");
     renderAllPhotos(album);
@@ -752,7 +983,9 @@ function renderFolders(album) {
   toggleUploadForm.textContent = state.uploadExpanded ? "收起上传" : "上传照片";
   allPhotos.classList.remove("hidden");
   folders.classList.remove("hidden");
+  myPhotosPanel.classList.remove("hidden");
   folderDetail.classList.add("hidden");
+  renderMyPhotosCard(album);
   renderAllPhotos(album);
 
   if (!album.folders.length) {
@@ -795,9 +1028,7 @@ function renderFolders(album) {
         </div>
         <div class="folder-actions">
           <button class="secondary rename-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" data-folder-name="${escapeHtml(folderName)}" aria-label="重命名 ${escapeHtml(folderName)}">名</button>
-          <a href="/api/albums/${pathPart(album.id)}/folders/${pathPart(folder.id)}/download" aria-label="下载 ${escapeHtml(folderName)}">
-            <button class="secondary icon-button" type="button" aria-label="下载 ${escapeHtml(folderName)}">↓</button>
-          </a>
+          <button class="secondary download-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" data-folder-name="${escapeHtml(folderName)}" aria-label="下载 ${escapeHtml(folderName)}">↓</button>
           <button class="secondary danger delete-folder icon-button" type="button" data-folder-id="${escapeHtml(folder.id)}" aria-label="删除 ${escapeHtml(folderName)}">删</button>
         </div>
       </div>
@@ -839,6 +1070,16 @@ function renderFolders(album) {
       deleteFolder(album.id, button.dataset.folderId).catch((error) => alert(error.message));
     });
   });
+
+  folders.querySelectorAll(".download-folder").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const folderName = button.dataset.folderName || "小相册";
+      downloadWithAuth(`/api/albums/${pathPart(album.id)}/folders/${pathPart(button.dataset.folderId)}/download`, `PicMe-${folderName}.zip`).catch((error) =>
+        alert(error.message),
+      );
+    });
+  });
 }
 
 function renderFolderDetail(album, folder) {
@@ -846,6 +1087,7 @@ function renderFolderDetail(album, folder) {
   toggleUploadForm.classList.add("hidden");
   allPhotos.classList.add("hidden");
   folders.classList.add("hidden");
+  myPhotosPanel.classList.add("hidden");
   folderDetail.classList.remove("hidden");
 
   const photos = album.photos.filter((photo) => photoInFolder(photo, folder.id));
@@ -854,6 +1096,100 @@ function renderFolderDetail(album, folder) {
     album,
     photoMoveTargets,
     mode: "detail",
+    allPhotos: photos,
+  });
+}
+
+function myPhotoIds(album) {
+  return new Set(Array.isArray(album.myPhotoIds) ? album.myPhotoIds : []);
+}
+
+function myPhotos(album) {
+  const ids = myPhotoIds(album);
+  if (!ids.size) return [];
+  return album.photos.filter((photo) => ids.has(photo.id)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function renderMyPhotosCard(album) {
+  const photos = myPhotos(album);
+  const count = typeof album.myPhotoCount === "number" ? album.myPhotoCount : photos.length;
+  const cover = album.myCoverUrl || (photos[0] ? photoPreviewSrc(photos[0]) : "");
+  const user = state.currentUser || {};
+  const avatar = user.avatarUrl || "";
+  myPhotosPanel.innerHTML = `
+    <button id="openMyPhotos" class="my-photos-card" type="button">
+      <span class="my-photos-avatar">
+        ${
+          avatar
+            ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(user.nickname || user.username || "我")}" loading="lazy" decoding="async" />`
+            : `<span class="avatar-person"></span>`
+        }
+      </span>
+      <span class="my-photos-copy">
+        <strong>我的照片</strong>
+        <small>${count ? `已为你匹配 ${count} 张照片` : user.hasFaceProfile ? "暂时还没匹配到你的照片" : "上传带人脸头像后，会优先推荐你的照片"}</small>
+      </span>
+      <span class="my-photos-cover ${cover ? "" : "empty"}">
+        ${cover ? `<img src="${escapeHtml(cover)}" alt="我的照片封面" loading="lazy" decoding="async" />` : "PicMe"}
+      </span>
+    </button>
+  `;
+  $("#openMyPhotos").addEventListener("click", () => {
+    resetPhotoSelection();
+    state.myPhotosOpen = true;
+    state.allPhotosOpen = false;
+    state.uploadExpanded = false;
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
+
+function renderMyPhotosDetail(album) {
+  const photos = myPhotos(album);
+  const expectedCount = typeof album.myPhotoCount === "number" ? album.myPhotoCount : photos.length;
+  myPhotosPanel.classList.add("hidden");
+  if (!photos.length) {
+    folderDetail.innerHTML = `
+      <div class="detail-toolbar all-photos-toolbar">
+        <button id="backFromMyPhotos" class="secondary" type="button">返回相册</button>
+        <div class="detail-title">
+          <h3>我的照片</h3>
+          <p>${expectedCount ? "匹配结果还在同步中" : "当前相册暂时没有匹配到你的照片"}</p>
+        </div>
+      </div>
+      <section class="empty my-photos-empty">
+        <div>
+          <h3>还没有专属照片</h3>
+          <p>${state.currentUser && state.currentUser.hasFaceProfile ? "等朋友继续上传，系统识别后会自动把你放到这里。" : "注册时上传一张带人脸的头像，系统会用它帮你推荐关联照片。"}</p>
+        </div>
+      </section>
+    `;
+    $("#backFromMyPhotos").addEventListener("click", () => {
+      resetPhotoSelection();
+      state.myPhotosOpen = false;
+      render();
+    });
+    return;
+  }
+
+  folderDetail.innerHTML = `
+    <div class="detail-toolbar all-photos-toolbar">
+      <button id="backFromMyPhotos" class="secondary" type="button">返回相册</button>
+      <div class="detail-title">
+        <h3>我的照片</h3>
+        <p>已为你匹配 ${photos.length} 张照片</p>
+      </div>
+    </div>
+    <div id="myPhotosGridMount"></div>
+  `;
+  $("#backFromMyPhotos").addEventListener("click", () => {
+    resetPhotoSelection();
+    state.myPhotosOpen = false;
+    render();
+  });
+  renderPhotoGrid($("#myPhotosGridMount"), photos, {
+    album,
+    mode: "all",
     allPhotos: photos,
   });
 }
@@ -880,6 +1216,7 @@ function renderAllPhotos(album) {
     $("#openAllPhotos").addEventListener("click", () => {
       resetPhotoSelection();
       state.allPhotosOpen = true;
+      state.myPhotosOpen = false;
       state.allPhotosLimit = 12;
       state.uploadExpanded = false;
       render();
@@ -1070,9 +1407,13 @@ async function downloadSelectedPhotos(albumId, photos) {
   if (!photos.length) return;
   const response = await fetch(`/api/albums/${pathPart(albumId)}/photos/download-selected`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ photoIds: photos.map((photo) => photo.id) }),
   });
+  if (response.status === 401) {
+    clearAuthSession();
+    throw new Error("登录已过期，请重新登录");
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `下载失败：${response.status}`);
@@ -1319,6 +1660,7 @@ async function createAlbum(event) {
   state.albums.unshift(payload.album);
   state.currentAlbumId = payload.album.id;
   state.currentFolderId = "";
+  state.myPhotosOpen = false;
   albumName.value = "";
   if (createAlbumDialog.open) {
     createAlbumDialog.close();
@@ -1411,7 +1753,7 @@ async function uploadPhotos(event) {
   state.uploading = true;
   uploadStatus.textContent = `正在准备 ${files.length} 张朋友视角`;
   uploadForm.querySelector("button[type='submit']").disabled = true;
-  const uploader = $("#uploader").value.trim() || "访客";
+  const uploader = $("#uploader").value.trim() || (state.currentUser && (state.currentUser.nickname || state.currentUser.username)) || "访客";
 
   try {
     let payload;
@@ -1454,6 +1796,54 @@ function escapeHtml(value) {
 photosInput.addEventListener("change", () => {
   const count = photosInput.files.length;
   selectedFiles.textContent = count ? `已选好 ${count} 张，准备加入这次出游照片池` : defaultSelectedFilesText();
+});
+
+loginForm.addEventListener("submit", (event) => {
+  login(event).catch((error) => {
+    loginStatus.textContent = error.message;
+  });
+});
+
+registerForm.addEventListener("submit", (event) => {
+  register(event).catch((error) => {
+    registerStatus.textContent = error.message;
+  });
+});
+
+showRegister.addEventListener("click", () => {
+  state.authMode = "register";
+  loginStatus.textContent = "";
+  registerStatus.textContent = "";
+  renderAuth();
+  registerNickname.focus();
+});
+
+showLogin.addEventListener("click", () => {
+  state.authMode = "login";
+  renderAuth();
+  loginUsername.focus();
+});
+
+registerToLogin.addEventListener("click", () => {
+  state.authMode = "login";
+  renderAuth();
+  loginUsername.focus();
+});
+
+registerAvatar.addEventListener("change", () => {
+  const file = registerAvatar.files && registerAvatar.files[0];
+  if (avatarPreviewUrl) {
+    URL.revokeObjectURL(avatarPreviewUrl);
+    avatarPreviewUrl = "";
+  }
+  if (!file) {
+    avatarPreview.style.backgroundImage = "";
+    avatarPreview.classList.remove("has-image");
+    return;
+  }
+  avatarPreviewUrl = URL.createObjectURL(file);
+  avatarPreview.style.backgroundImage = `url("${avatarPreviewUrl}")`;
+  avatarPreview.classList.add("has-image");
 });
 
 folders.addEventListener("click", (event) => {
@@ -1501,6 +1891,11 @@ albumPanel.addEventListener("touchend", (event) => {
   const startedNearLeftEdge = state.touchStart.x < 45;
   state.touchStart = null;
   if (Math.abs(dy) > 70) return;
+  if (state.myPhotosOpen && (dx <= -80 || (startedNearLeftEdge && dx >= 80))) {
+    state.myPhotosOpen = false;
+    render();
+    return;
+  }
   if (state.allPhotosOpen && (dx <= -80 || (startedNearLeftEdge && dx >= 80))) {
     state.allPhotosOpen = false;
     render();
@@ -1543,6 +1938,14 @@ viewerDelete.addEventListener("click", () => {
   const photoId = viewerDelete.dataset.photoId || state.viewerPhotoId;
   if (!album || !photoId) return;
   deletePhoto(album.id, photoId).catch((error) => alert(error.message));
+});
+
+viewerDownload.addEventListener("click", (event) => {
+  const url = viewerDownload.getAttribute("href") || "";
+  if (!requiresAlbumAuth(url)) return;
+  event.preventDefault();
+  const photo = state.viewerPhotos.find((item) => item.id === state.viewerPhotoId);
+  downloadWithAuth(url, photo ? photo.originalName : "PicMe-photo").catch((error) => alert(error.message));
 });
 
 viewerVideo.addEventListener("ended", () => {
@@ -1637,6 +2040,14 @@ window.addEventListener("resize", () => {
   layoutPhotoGrids();
 });
 
-loadAlbums().catch((error) => {
+async function boot() {
+  renderAuth();
+  if (!state.token) return;
+  const loadedUser = await loadCurrentUser();
+  if (!loadedUser) return;
+  await loadAlbums();
+}
+
+boot().catch((error) => {
   stats.innerHTML = `<span class="stat">${escapeHtml(error.message)}</span>`;
 });

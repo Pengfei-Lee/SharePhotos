@@ -1,5 +1,6 @@
 import Foundation
 import Photos
+import Security
 
 @MainActor
 final class SharePhotosStore: ObservableObject {
@@ -22,10 +23,15 @@ final class SharePhotosStore: ObservableObject {
     @Published var showsOperation = false
     @Published var serverAddress: String
     @Published var isServerSettingsPresented = false
+    @Published var currentUser: User?
+    @Published var authToken: String?
+    @Published var authWarning: String?
+    @Published var isCheckingAuth = false
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
     private let saver = LivePhotoSaveService()
+    private let tokenStore = KeychainTokenStore()
     private let serverAddressKey = "SharePhotosServerAddress"
     private let fallbackServerAddresses = [
         "http://192.168.3.25:8000",
@@ -44,6 +50,12 @@ final class SharePhotosStore: ObservableObject {
         #endif
         self.serverAddress = initialAddress
         self.api = api.withBaseURL(URL(string: initialAddress) ?? api.baseURL)
+        self.authToken = tokenStore.readToken()
+        self.api.authToken = authToken
+    }
+
+    var isAuthenticated: Bool {
+        authToken != nil && currentUser != nil
     }
 
     var selectedAlbum: Album? {
@@ -66,6 +78,13 @@ final class SharePhotosStore: ObservableObject {
             .sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
     }
 
+    func myPhotos(in album: Album) -> [Photo] {
+        let ids = Set(album.myPhotoIds ?? [])
+        return album.photos
+            .filter { ids.contains($0.id) }
+            .sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
+    }
+
     func previewPhotos(in album: Album, folder: PhotoFolder, limit: Int = 4) -> [Photo] {
         Array(photos(in: album, folder: folder).prefix(limit))
     }
@@ -83,6 +102,94 @@ final class SharePhotosStore: ObservableObject {
         return URL(string: value)
     }
 
+    func login(username: String, password: String) async -> Bool {
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedUsername.isEmpty, !password.isEmpty else {
+            statusText = "请输入登录账号和密码"
+            return false
+        }
+        isBusy = true
+        showOperation(title: "正在登录", message: "正在确认你的 PicMe 账号", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.login(username: normalizedUsername, password: password)
+            setAuthenticated(user: response.user, token: response.token, warning: nil)
+            statusText = "欢迎回来，\(response.user.nickname)"
+            await loadAlbums()
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "登录失败", message: message, progress: nil)
+            return false
+        }
+    }
+
+    func register(username: String, nickname: String, password: String, confirmPassword: String, avatarData: Data?) async -> Bool {
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedNickname = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isValidUsername(normalizedUsername) else {
+            statusText = "登录账号需为 5-20 位字母、数字或下划线"
+            return false
+        }
+        guard !normalizedNickname.isEmpty else {
+            statusText = "请输入昵称"
+            return false
+        }
+        guard (6...20).contains(password.count) else {
+            statusText = "密码需为 6-20 位"
+            return false
+        }
+        guard password == confirmPassword else {
+            statusText = "两次输入的密码不一致"
+            return false
+        }
+
+        isBusy = true
+        showOperation(title: "创建账号", message: "正在准备你的 PicMe 身份", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.register(
+                username: normalizedUsername,
+                nickname: normalizedNickname,
+                password: password,
+                avatarData: avatarData
+            )
+            setAuthenticated(user: response.user, token: response.token, warning: response.warning)
+            statusText = response.warning ?? "账号已创建，欢迎 \(response.user.nickname)"
+            await loadAlbums()
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "注册失败", message: message, progress: nil)
+            return false
+        }
+    }
+
+    func loadMe() async {
+        guard authToken != nil else { return }
+        isCheckingAuth = true
+        defer { isCheckingAuth = false }
+        do {
+            currentUser = try await api.me()
+        } catch {
+            _ = handleError(error)
+        }
+    }
+
+    func logout() async {
+        do {
+            try await api.logout()
+        } catch {
+            // 本地退出优先，服务端 token 失效不影响返回登录页。
+        }
+        clearAuth()
+        albums = []
+        selectedAlbumId = nil
+        statusText = "已退出登录"
+    }
+
     func loadAlbums() async {
         showOperation(title: "连接服务中", message: "正在读取 \(serverAddress)", progress: nil)
         do {
@@ -90,7 +197,7 @@ final class SharePhotosStore: ObservableObject {
             reconcileSelectedAlbum()
             hideOperation(after: 0.6)
         } catch {
-            let message = error.sharePhotosNetworkMessage
+            let message = handleError(error)
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)
         }
@@ -108,6 +215,7 @@ final class SharePhotosStore: ObservableObject {
         showOperation(title: "连接服务中", message: "正在读取 \(normalized)", progress: nil)
         do {
             let candidateAPI = api.withBaseURL(url)
+            candidateAPI.authToken = authToken
             albums = try await candidateAPI.fetchAlbums()
             api = candidateAPI
             serverAddress = normalized
@@ -117,7 +225,7 @@ final class SharePhotosStore: ObservableObject {
             hideOperation(after: 0.6)
             return true
         } catch {
-            let message = error.sharePhotosNetworkMessage
+            let message = handleError(error)
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)
             return false
@@ -139,12 +247,16 @@ final class SharePhotosStore: ObservableObject {
             guard let url = URL(string: address) else { continue }
             do {
                 let candidateAPI = api.withBaseURL(url)
+                candidateAPI.authToken = authToken
                 let albums = try await candidateAPI.fetchAlbums()
                 api = candidateAPI
                 serverAddress = address
                 UserDefaults.standard.set(address, forKey: serverAddressKey)
                 return albums
             } catch {
+                if case APIError.unauthorized = error {
+                    throw error
+                }
                 lastError = error
             }
         }
@@ -174,7 +286,7 @@ final class SharePhotosStore: ObservableObject {
             let album = try await api.fetchAlbum(id: id)
             upsert(album)
         } catch {
-            statusText = error.sharePhotosNetworkMessage
+            statusText = handleError(error)
         }
     }
 
@@ -195,8 +307,9 @@ final class SharePhotosStore: ObservableObject {
             hideOperation(after: 0.8)
             return album
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "创建失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "创建失败", message: message, progress: nil)
             return nil
         }
     }
@@ -214,8 +327,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "已删除 \(album.name)"
             hideOperation(after: 0.8)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "删除失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "删除失败", message: message, progress: nil)
         }
     }
 
@@ -234,8 +348,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "相册名已保存"
             hideOperation(after: 0.6)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "保存失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "保存失败", message: message, progress: nil)
         }
     }
 
@@ -297,8 +412,9 @@ final class SharePhotosStore: ObservableObject {
             await refreshAlbum(id: album.id)
             await pollRecognition(albumId: album.id)
         } catch {
-            statusText = error.localizedDescription
-            uploadProgressText = error.localizedDescription
+            let message = handleError(error)
+            statusText = message
+            uploadProgressText = message
             uploadProgressFraction = nil
         }
     }
@@ -314,8 +430,9 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "下载完成", message: "照片包已准备好，选择保存或分享", progress: 1)
             hideOperation(after: 1.2)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "下载失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "下载失败", message: message, progress: nil)
         }
     }
 
@@ -329,8 +446,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "已删除 \(folder.name)"
             hideOperation(after: 0.8)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "删除失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "删除失败", message: message, progress: nil)
         }
     }
 
@@ -344,8 +462,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "昵称已保存"
             hideOperation(after: 0.6)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "保存失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "保存失败", message: message, progress: nil)
         }
     }
 
@@ -359,8 +478,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "已移动到 \(targetFolder.name)"
             hideOperation(after: 0.7)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "移动失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "移动失败", message: message, progress: nil)
         }
     }
 
@@ -384,8 +504,9 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "移动完成", message: "已移动 \(photos.count) 张照片", progress: 1)
             hideOperation(after: 1.0)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "移动失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "移动失败", message: message, progress: nil)
         }
     }
 
@@ -399,8 +520,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "已删除照片"
             hideOperation(after: 0.7)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "删除失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "删除失败", message: message, progress: nil)
         }
     }
 
@@ -416,8 +538,9 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "删除完成", message: "照片池已更新", progress: 1)
             hideOperation(after: 0.9)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "删除失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "删除失败", message: message, progress: nil)
         }
     }
 
@@ -451,8 +574,9 @@ final class SharePhotosStore: ObservableObject {
             }
             hideOperation(after: 1.0)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "保存失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "保存失败", message: message, progress: nil)
         }
     }
 
@@ -484,8 +608,9 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "保存完成", message: "已保存 \(photos.count) 张，Live Photo 仍可长按播放", progress: 1)
             hideOperation(after: 1.2)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "保存失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "保存失败", message: message, progress: nil)
         }
     }
 
@@ -501,8 +626,9 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "打包完成", message: "可以保存或分享这个照片包", progress: 1)
             hideOperation(after: 1.2)
         } catch {
-            statusText = error.localizedDescription
-            showOperation(title: "打包失败", message: error.localizedDescription, progress: nil)
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "打包失败", message: message, progress: nil)
         }
     }
 
@@ -530,6 +656,37 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    private func setAuthenticated(user: User, token: String, warning: String?) {
+        currentUser = user
+        authToken = token
+        authWarning = warning
+        tokenStore.saveToken(token)
+        api.authToken = token
+        uploader = user.nickname
+    }
+
+    private func clearAuth() {
+        currentUser = nil
+        authToken = nil
+        authWarning = nil
+        tokenStore.deleteToken()
+        api.authToken = nil
+        showsOperation = false
+    }
+
+    private func isValidUsername(_ username: String) -> Bool {
+        guard (5...20).contains(username.count) else { return false }
+        return username.range(of: #"^[A-Za-z0-9_]+$"#, options: .regularExpression) != nil
+    }
+
+    private func handleError(_ error: Error) -> String {
+        if case APIError.unauthorized = error {
+            clearAuth()
+            return APIError.unauthorized.localizedDescription
+        }
+        return error.sharePhotosNetworkMessage
+    }
+
     private func pollRecognition(albumId: String) async {
         for attempt in 0..<30 {
             do {
@@ -555,8 +712,9 @@ final class SharePhotosStore: ObservableObject {
                 )
                 try await Task.sleep(nanoseconds: 1_500_000_000)
             } catch {
-                statusText = error.localizedDescription
-                showOperation(title: "识别进度刷新失败", message: error.localizedDescription, progress: nil)
+                let message = handleError(error)
+                statusText = message
+                showOperation(title: "识别进度刷新失败", message: message, progress: nil)
                 return
             }
         }
@@ -583,5 +741,41 @@ final class SharePhotosStore: ObservableObject {
                 continuation.resume(returning: status)
             }
         }
+    }
+}
+
+final class KeychainTokenStore {
+    private let service = "me.picme.SharePhotos"
+    private let account = "authToken"
+
+    func readToken() -> String? {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func saveToken(_ token: String) {
+        deleteToken()
+        var query = baseQuery
+        query[kSecValueData as String] = Data(token.utf8)
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    func deleteToken() {
+        SecItemDelete(baseQuery as CFDictionary)
+    }
+
+    private var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
     }
 }
