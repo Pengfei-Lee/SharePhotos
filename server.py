@@ -673,9 +673,27 @@ def sqlite_dump_db():
             album["contributors"] = [row["name"] for row in contributor_rows]
             albums.append(album)
         user_rows = conn.execute(
-            "SELECT data_json FROM users ORDER BY created_at ASC, username ASC"
+            """
+            SELECT id, username, nickname, password_hash, avatar_url,
+                   avatar_object_key, has_face_profile, created_at, data_json
+            FROM users
+            ORDER BY created_at ASC, username ASC
+            """
         ).fetchall()
-        users = [json.loads(row["data_json"]) for row in user_rows]
+        users = []
+        for row in user_rows:
+            user = json.loads(row["data_json"])
+            user.update({
+                "id": row["id"],
+                "username": row["username"],
+                "nickname": row["nickname"],
+                "passwordHash": row["password_hash"],
+                "avatarUrl": row["avatar_url"] or "",
+                "avatarObjectKey": row["avatar_object_key"] or "",
+                "hasFaceProfile": bool(row["has_face_profile"]),
+                "createdAt": row["created_at"] or user.get("createdAt") or 0,
+            })
+            users.append(user)
     return {"albums": albums, "users": users}
 
 
@@ -2764,6 +2782,8 @@ class AppHandler(BaseHTTPRequestHandler):
         current_user = self.require_user()
         if not current_user:
             return
+        if path == "/api/me/avatar":
+            return self.update_avatar_request(current_user)
         if path == "/api/albums":
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
@@ -2920,6 +2940,44 @@ class AppHandler(BaseHTTPRequestHandler):
         if token:
             delete_auth_token(token)
         return self.send_json({"ok": True})
+
+    def update_avatar_request(self, current_user):
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type"),
+            },
+        )
+        avatar_item = form["avatar"] if "avatar" in form else None
+        if avatar_item is None or not getattr(avatar_item, "filename", None):
+            return self.send_error_json("请选择头像")
+
+        suffix = Path(avatar_item.filename).suffix.lower() or ".jpg"
+        tmp = tempfile.NamedTemporaryFile(prefix="picme-update-avatar-", suffix=suffix, delete=False)
+        tmp.close()
+        avatar_source = Path(tmp.name)
+        warning = ""
+        try:
+            with avatar_source.open("wb") as out:
+                shutil.copyfileobj(avatar_item.file, out)
+            with LOCK:
+                db = load_db()
+                user = find_user_by_id(db, current_user.get("id"))
+                if not user:
+                    return self.send_error_json("请先登录", 401)
+                warning = save_avatar_profile(user, avatar_source)
+                upsert_user(db, user)
+                save_db(db)
+            self._current_user = user
+        finally:
+            avatar_source.unlink(missing_ok=True)
+
+        payload = {"user": public_user(user, self.request_origin())}
+        if warning:
+            payload["warning"] = warning
+        return self.send_json(payload)
 
     def init_direct_uploads(self, album_id):
         if not oss_enabled():

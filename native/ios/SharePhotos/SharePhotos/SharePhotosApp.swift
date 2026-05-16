@@ -11,7 +11,7 @@ struct SharePhotosApp: App {
         URL(string: "http://localhost:8000")!
         #else
         // 真机测试时这里要填 Mac 的局域网 IP，不能用 localhost。
-        URL(string: "http://192.168.3.25:8000")!
+        URL(string: "https://picme.me")!
         #endif
     }
 
