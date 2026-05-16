@@ -809,7 +809,6 @@ def ensure_store():
     UPLOADS.mkdir(exist_ok=True)
     THUMBS.mkdir(exist_ok=True)
     PREVIEWS.mkdir(exist_ok=True)
-    AVATARS.mkdir(exist_ok=True)
     if sqlite_enabled():
         migrate_json_to_sqlite_if_needed()
     elif not DB_FILE.exists():
@@ -1613,12 +1612,9 @@ def save_avatar_profile(user, source_path):
                 user["avatarObjectKey"] = metadata.get("object_key", "")
                 user["avatarUrl"] = oss_signed_or_empty(user["avatarObjectKey"]) or metadata.get("oss_url", "")
         else:
-            AVATARS.mkdir(parents=True, exist_ok=True)
-            target = AVATARS / ("%s.jpg" % user["id"])
-            shutil.move(str(avatar_path), str(target))
-            avatar_path = None
             user["avatarObjectKey"] = ""
-            user["avatarUrl"] = "/avatars/%s.jpg" % user["id"]
+            user["avatarUrl"] = ""
+            warning = warning or "OSS 未配置，头像不会保存，但已用于本地人脸推荐"
         return warning
     finally:
         cleanup_readable()
