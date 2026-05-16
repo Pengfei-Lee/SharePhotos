@@ -129,15 +129,15 @@ final class SharePhotosStore: ObservableObject {
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedNickname = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isValidUsername(normalizedUsername) else {
-            statusText = "登录账号需为 5-20 位字母、数字或下划线"
+            statusText = "登录账号需为 1-20 位字母、数字或下划线"
             return false
         }
         guard !normalizedNickname.isEmpty else {
             statusText = "请输入昵称"
             return false
         }
-        guard (6...20).contains(password.count) else {
-            statusText = "密码需为 6-20 位"
+        guard isValidPasswordFormat(password) else {
+            statusText = "密码需为 6-20 位，只能使用数字、字母和英文符号"
             return false
         }
         guard password == confirmPassword else {
@@ -675,8 +675,13 @@ final class SharePhotosStore: ObservableObject {
     }
 
     private func isValidUsername(_ username: String) -> Bool {
-        guard (5...20).contains(username.count) else { return false }
+        guard (1...20).contains(username.count) else { return false }
         return username.range(of: #"^[A-Za-z0-9_]+$"#, options: .regularExpression) != nil
+    }
+
+    private func isValidPasswordFormat(_ password: String) -> Bool {
+        guard (6...20).contains(password.count) else { return false }
+        return password.unicodeScalars.allSatisfy { (0x21...0x7E).contains($0.value) }
     }
 
     private func handleError(_ error: Error) -> String {

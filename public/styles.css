@@ -599,7 +599,7 @@ label {
 }
 
 .auth-field-icon,
-.auth-eye-icon {
+.auth-eye-button {
   position: absolute;
   z-index: 1;
   width: 24px;
@@ -610,20 +610,44 @@ label {
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
-  pointer-events: none;
 }
 
 .auth-field-icon {
   left: 20px;
   top: 40px;
+  pointer-events: none;
 }
 
-.auth-eye-icon {
+.auth-eye-button {
   right: 20px;
   top: 40px;
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  cursor: pointer;
 }
 
-.auth-field input:focus + small,
+.auth-eye-button:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.auth-eye-button svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .auth-field small {
   color: #72818a;
   font-size: 12px;
@@ -632,12 +656,20 @@ label {
   padding-left: 12px;
 }
 
+.auth-field small.is-valid {
+  color: #0a8f80;
+}
+
+.auth-field small.is-invalid {
+  color: var(--danger);
+}
+
 .auth-field:focus-within > span {
   color: var(--accent);
 }
 
 .auth-field:focus-within .auth-field-icon,
-.auth-field:focus-within .auth-eye-icon {
+.auth-field:focus-within .auth-eye-button {
   color: var(--accent);
 }
 

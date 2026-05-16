@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>识我 PicMe</title>
     <link rel="icon" href="/assets/logo.png?v=transparent-1" type="image/png" />
-    <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/styles.css?v=auth-username-1" />
   </head>
   <body>
     <section id="authView" class="auth-view" aria-live="polite">
@@ -39,10 +39,12 @@
               <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
             </svg>
             <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
-            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
-              <circle cx="12" cy="12" r="2.8"></circle>
-            </svg>
+            <button class="auth-eye-button" type="button" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+                <circle cx="12" cy="12" r="2.8"></circle>
+              </svg>
+            </button>
           </label>
           <button class="auth-forgot" type="button">忘记密码?</button>
           <button id="loginButton" class="auth-primary" type="submit">登录</button>
@@ -93,7 +95,7 @@
               <path d="M4.5 20c1.6-4.2 13.4-4.2 15 0"></path>
             </svg>
             <input id="registerUsername" name="username" autocomplete="username" required />
-            <small>5-20位，支持字母、数字、下划线</small>
+            <small>1-20位，支持字母、数字、下划线</small>
           </label>
           <label class="auth-field auth-field-password">
             <span>密码</span>
@@ -102,11 +104,13 @@
               <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
             </svg>
             <input id="registerPassword" name="password" type="password" autocomplete="new-password" required />
-            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
-              <circle cx="12" cy="12" r="2.8"></circle>
-            </svg>
-            <small>6-20位，建议包含字母和数字</small>
+            <button class="auth-eye-button" type="button" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+                <circle cx="12" cy="12" r="2.8"></circle>
+              </svg>
+            </button>
+            <small id="registerPasswordHint">6-20位，可使用数字、字母和英文符号</small>
           </label>
           <label class="auth-field auth-field-password">
             <span>确认密码</span>
@@ -115,10 +119,13 @@
               <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
             </svg>
             <input id="registerPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" required />
-            <svg class="auth-eye-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
-              <circle cx="12" cy="12" r="2.8"></circle>
-            </svg>
+            <button class="auth-eye-button" type="button" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+                <circle cx="12" cy="12" r="2.8"></circle>
+              </svg>
+            </button>
+            <small id="registerPasswordConfirmHint">请再次输入密码</small>
           </label>
           <button id="registerButton" class="auth-primary" type="submit">注册</button>
           <div id="registerStatus" class="auth-status" role="status"></div>
@@ -242,6 +249,6 @@
       </form>
     </dialog>
 
-    <script src="/assets/app.js"></script>
+    <script src="/assets/app.js?v=auth-username-1"></script>
   </body>
 </html>
