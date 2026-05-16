@@ -558,9 +558,9 @@ final class SharePhotosStore: ObservableObject {
             if photo.isLivePhoto {
                 statusText = "正在下载完整 Live Photo..."
                 showOperation(title: "保存 Live Photo", message: "正在下载 HEIC + MOV 原始资源", progress: nil)
-                let zipURL = try await api.downloadLivePackage(photo: photo)
+                let resources = try await api.downloadLiveResources(photo: photo)
                 showOperation(title: "保存 Live Photo", message: "正在写入系统相册", progress: 0.75)
-                try await saver.saveLivePackage(zipURL: zipURL)
+                try await saver.saveLivePhoto(imageURL: resources.imageURL, videoURL: resources.videoURL)
                 statusText = "已保存到系统相册，仍然可以长按播放"
                 showOperation(title: "保存完成", message: "已写入系统相册，可长按播放", progress: 1)
             } else {
@@ -596,8 +596,8 @@ final class SharePhotosStore: ObservableObject {
                 let progress = Double(index) / Double(max(photos.count, 1))
                 if photo.isLivePhoto {
                     showOperation(title: "保存照片", message: "正在保存第 \(index + 1)/\(photos.count) 张 Live Photo", progress: progress)
-                    let zipURL = try await api.downloadLivePackage(photo: photo)
-                    try await saver.saveLivePackage(zipURL: zipURL)
+                    let resources = try await api.downloadLiveResources(photo: photo)
+                    try await saver.saveLivePhoto(imageURL: resources.imageURL, videoURL: resources.videoURL)
                 } else {
                     showOperation(title: "保存照片", message: "正在保存第 \(index + 1)/\(photos.count) 张照片", progress: progress)
                     let imageURL = try await api.downloadStillImage(photo: photo)
@@ -633,10 +633,11 @@ final class SharePhotosStore: ObservableObject {
     }
 
     func livePhotoResources(for photo: Photo) async throws -> (imageURL: URL, videoURL: URL) {
-        let zipURL = try await api.downloadLivePackage(photo: photo)
-        return try await Task.detached(priority: .userInitiated) {
-            try LivePhotoSaveService().extractLivePackage(zipURL: zipURL)
-        }.value
+        try await api.downloadLiveResources(photo: photo)
+    }
+
+    func livePhotoVideo(for photo: Photo) async throws -> URL {
+        try await api.downloadLiveVideo(photo: photo)
     }
 
     private func upsert(_ album: Album) {

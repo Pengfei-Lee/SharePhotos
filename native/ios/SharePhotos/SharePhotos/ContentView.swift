@@ -2195,7 +2195,7 @@ private struct LivePhotoPlaybackView: View {
     @State private var videoURL: URL?
     @State private var playbackToken = 0
     @State private var isMotionPlaying = false
-    @State private var isLoading = true
+    @State private var isLoading = false
     @State private var errorText: String?
 
     var body: some View {
@@ -2222,7 +2222,7 @@ private struct LivePhotoPlaybackView: View {
                 VStack {
                     HStack {
                         Button {
-                            playLiveMotion()
+                            Task { await playLiveMotion() }
                         } label: {
                             Label("LIVE", systemImage: "livephoto")
                                 .font(.caption.weight(.black))
@@ -2231,7 +2231,7 @@ private struct LivePhotoPlaybackView: View {
                                 .background(.black.opacity(0.5), in: Capsule())
                                 .foregroundColor(.white)
                         }
-                        .disabled(videoURL == nil && livePhoto == nil)
+                        .disabled(isLoading)
                         Spacer()
                     }
                     Spacer()
@@ -2267,9 +2267,6 @@ private struct LivePhotoPlaybackView: View {
             .clipped()
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
-        .task(id: photo.id) {
-            await loadLivePhoto()
-        }
     }
 
     private func fittedPreviewSize(in availableSize: CGSize) -> CGSize {
@@ -2285,21 +2282,25 @@ private struct LivePhotoPlaybackView: View {
         return CGSize(width: availableSize.width, height: availableSize.width / previewAspectRatio)
     }
 
-    private func loadLivePhoto() async {
+    private func ensureLiveResources() async -> Bool {
+        if videoURL != nil || livePhoto != nil {
+            return true
+        }
         isLoading = true
         errorText = nil
+        defer { isLoading = false }
         do {
-            let resources = try await store.livePhotoResources(for: photo)
-            videoURL = resources.videoURL
+            videoURL = try await store.livePhotoVideo(for: photo)
             livePhoto = nil
-            playLiveMotion()
+            return true
         } catch {
             errorText = "Live Photo 预览失败\n\(error.localizedDescription)"
+            return false
         }
-        isLoading = false
     }
 
-    private func playLiveMotion() {
+    private func playLiveMotion() async {
+        guard await ensureLiveResources() else { return }
         if livePhoto != nil {
             playbackToken += 1
         }
@@ -2527,21 +2528,45 @@ private struct FolderMenu: View {
 private struct RemoteImage: View {
     let url: URL?
     let mode: ContentMode
+    @State private var state: RemoteImageState = .loading
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .empty:
+        Group {
+            switch state {
+            case .loading:
                 Rectangle().fill(.teal.opacity(0.08)).overlay(ProgressView())
             case .success(let image):
-                image.resizable().aspectRatio(contentMode: mode)
+                Image(uiImage: image).resizable().aspectRatio(contentMode: mode)
             case .failure:
                 Rectangle().fill(.gray.opacity(0.12)).overlay(Image(systemName: "photo").foregroundColor(.secondary))
-            @unknown default:
-                EmptyView()
             }
         }
+        .task(id: url) {
+            await load()
+        }
     }
+
+    private func load() async {
+        guard let url else {
+            state = .failure
+            return
+        }
+        state = .loading
+        do {
+            let image = try await PhotoDiskCache.shared.dataImage(for: url)
+            guard !Task.isCancelled else { return }
+            state = .success(image)
+        } catch {
+            guard !Task.isCancelled else { return }
+            state = .failure
+        }
+    }
+}
+
+private enum RemoteImageState {
+    case loading
+    case success(UIImage)
+    case failure
 }
 
 private struct BrandHeader: View {

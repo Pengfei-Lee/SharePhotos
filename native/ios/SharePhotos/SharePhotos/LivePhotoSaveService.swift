@@ -1,26 +1,9 @@
 import Foundation
 import Photos
-import ZIPFoundation
 
 final class LivePhotoSaveService {
-    func saveLivePackage(zipURL: URL) async throws {
-        let (imageURL, videoURL) = try extractLivePackage(zipURL: zipURL)
+    func saveLivePhoto(imageURL: URL, videoURL: URL) async throws {
         try await saveToPhotoLibrary(imageURL: imageURL, pairedVideoURL: videoURL)
-    }
-
-    func extractLivePackage(zipURL: URL) throws -> (imageURL: URL, videoURL: URL) {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try FileManager.default.unzipItem(at: zipURL, to: directory)
-
-        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        guard let imageURL = files.first(where: { Self.isLiveImage($0) }) else {
-            throw LivePhotoSaveError.missingImage
-        }
-        guard let videoURL = files.first(where: { Self.isLiveVideo($0) }) else {
-            throw LivePhotoSaveError.missingVideo
-        }
-        return (imageURL, videoURL)
     }
 
     func saveStillImage(fileURL: URL) async throws {
@@ -64,13 +47,6 @@ final class LivePhotoSaveService {
         }
     }
 
-    private static func isLiveImage(_ url: URL) -> Bool {
-        ["heic", "heif", "jpg", "jpeg"].contains(url.pathExtension.lowercased())
-    }
-
-    private static func isLiveVideo(_ url: URL) -> Bool {
-        ["mov", "mp4"].contains(url.pathExtension.lowercased())
-    }
 }
 
 enum LivePhotoSaveError: LocalizedError {
