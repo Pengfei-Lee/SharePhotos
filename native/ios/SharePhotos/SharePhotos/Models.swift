@@ -6,9 +6,20 @@ struct Album: Identifiable, Codable, Hashable {
     let photos: [Photo]
     let folders: [PhotoFolder]
     let contributors: [String]
+    let myPhotoIds: [String]?
+    let myPhotoCount: Int?
+    let myCoverUrl: String?
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
+}
+
+struct User: Identifiable, Codable, Hashable {
+    let id: String
+    let username: String
+    let nickname: String
+    let avatarUrl: String?
+    let hasFaceProfile: Bool
 }
 
 struct PhotoFolder: Identifiable, Codable, Hashable {
@@ -80,6 +91,16 @@ struct AlbumsResponse: Codable {
 
 struct AlbumResponse: Codable {
     let album: Album
+}
+
+struct AuthResponse: Codable {
+    let user: User
+    let token: String
+    let warning: String?
+}
+
+struct MeResponse: Codable {
+    let user: User
 }
 
 struct UploadResponse: Codable {

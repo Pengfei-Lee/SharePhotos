@@ -17,7 +17,7 @@ struct SharePhotosApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AuthGateView()
                 .environmentObject(store)
         }
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import cgi
 import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -8,6 +9,7 @@ import os
 import queue
 import re
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -55,7 +57,10 @@ DATA = Path(os.environ.get("DATA_DIR", str(ROOT / "data")))
 UPLOADS = DATA / "uploads"
 THUMBS = DATA / "thumbs"
 PREVIEWS = DATA / "previews"
+AVATARS = DATA / "avatars"
+DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite").strip().lower() or "sqlite"
 DB_FILE = DATA / "db.json"
+SQLITE_DB_FILE = Path(os.environ.get("SQLITE_DB_FILE", str(DATA / "sharephotos.db")))
 LOG_DIR = Path(os.environ.get("LOG_DIR", str(DATA / "logs")))
 
 
@@ -544,19 +549,280 @@ def migrate_local_resources_to_oss(db):
     return changed
 
 
+def sqlite_enabled():
+    return DB_BACKEND in {"sqlite", "sqlite3"}
+
+
+def sqlite_connect():
+    SQLITE_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(SQLITE_DB_FILE), timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA cache_size = -4096")
+    return conn
+
+
+def sqlite_init_store():
+    with sqlite_connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS store_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS albums (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                name TEXT,
+                created_at INTEGER,
+                data_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS photos (
+                album_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER,
+                status TEXT,
+                data_json TEXT NOT NULL,
+                PRIMARY KEY (album_id, id),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_photos_album_created
+                ON photos(album_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS folders (
+                album_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                name TEXT,
+                data_json TEXT NOT NULL,
+                PRIMARY KEY (album_id, id),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS contributors (
+                album_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (album_id, name),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                nickname TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                avatar_url TEXT,
+                avatar_object_key TEXT,
+                has_face_profile INTEGER NOT NULL DEFAULT 0,
+                data_json TEXT NOT NULL,
+                created_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            """
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO store_meta(key, value) VALUES(?, ?)",
+            ("schema_version", "2"),
+        )
+
+
+def sqlite_album_count():
+    with sqlite_connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM albums").fetchone()
+        return int(row["count"] if row else 0)
+
+
+def sqlite_dump_db():
+    with sqlite_connect() as conn:
+        albums = []
+        album_rows = conn.execute(
+            "SELECT data_json FROM albums ORDER BY sort_order ASC, created_at DESC, id ASC"
+        ).fetchall()
+        for album_row in album_rows:
+            album = json.loads(album_row["data_json"])
+            album_id = album.get("id")
+            folder_rows = conn.execute(
+                "SELECT data_json FROM folders WHERE album_id = ? ORDER BY sort_order ASC, id ASC",
+                (album_id,),
+            ).fetchall()
+            photo_rows = conn.execute(
+                "SELECT data_json FROM photos WHERE album_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC",
+                (album_id,),
+            ).fetchall()
+            contributor_rows = conn.execute(
+                "SELECT name FROM contributors WHERE album_id = ? ORDER BY sort_order ASC, name ASC",
+                (album_id,),
+            ).fetchall()
+            album["folders"] = [json.loads(row["data_json"]) for row in folder_rows]
+            album["photos"] = [json.loads(row["data_json"]) for row in photo_rows]
+            album["contributors"] = [row["name"] for row in contributor_rows]
+            albums.append(album)
+        user_rows = conn.execute(
+            "SELECT data_json FROM users ORDER BY created_at ASC, username ASC"
+        ).fetchall()
+        users = [json.loads(row["data_json"]) for row in user_rows]
+    return {"albums": albums, "users": users}
+
+
+def sqlite_write_db(db):
+    sqlite_init_store()
+    albums = db.get("albums", [])
+    with sqlite_connect() as conn:
+        with conn:
+            conn.execute("DELETE FROM contributors")
+            conn.execute("DELETE FROM folders")
+            conn.execute("DELETE FROM photos")
+            conn.execute("DELETE FROM albums")
+            for album_index, album in enumerate(albums):
+                album_id = album.get("id") or uuid.uuid4().hex[:10]
+                album["id"] = album_id
+                conn.execute(
+                    """
+                    INSERT INTO albums(id, sort_order, name, created_at, data_json)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (
+                        album_id,
+                        album_index,
+                        album.get("name"),
+                        int(album.get("createdAt") or 0),
+                        json.dumps(album, ensure_ascii=False, separators=(",", ":")),
+                    ),
+                )
+                for folder_index, folder in enumerate(album.get("folders", [])):
+                    folder_id = str(folder.get("id") or uuid.uuid4())
+                    folder["id"] = folder_id
+                    conn.execute(
+                        """
+                        INSERT INTO folders(album_id, id, sort_order, name, data_json)
+                        VALUES(?, ?, ?, ?, ?)
+                        """,
+                        (
+                            album_id,
+                            folder_id,
+                            folder_index,
+                            folder.get("name"),
+                            json.dumps(folder, ensure_ascii=False, separators=(",", ":")),
+                        ),
+                    )
+                for photo_index, photo in enumerate(album.get("photos", [])):
+                    photo_id = str(photo.get("id") or uuid.uuid4())
+                    photo["id"] = photo_id
+                    conn.execute(
+                        """
+                        INSERT INTO photos(album_id, id, sort_order, created_at, status, data_json)
+                        VALUES(?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            album_id,
+                            photo_id,
+                            photo_index,
+                            int(photo.get("createdAt") or 0),
+                            photo.get("status"),
+                            json.dumps(photo, ensure_ascii=False, separators=(",", ":")),
+                        ),
+                    )
+                for contributor_index, contributor in enumerate(album.get("contributors", [])):
+                    name = str(contributor).strip()
+                    if not name:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO contributors(album_id, name, sort_order)
+                        VALUES(?, ?, ?)
+                        """,
+                        (album_id, name, contributor_index),
+                    )
+            for user in db.get("users", []):
+                user_id = str(user.get("id") or uuid.uuid4())
+                user["id"] = user_id
+                username = normalize_username(user.get("username") or "")
+                if not username:
+                    continue
+                user["username"] = username
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO users(
+                        id, username, nickname, password_hash, avatar_url,
+                        avatar_object_key, has_face_profile, data_json, created_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        username,
+                        user.get("nickname") or username,
+                        user.get("passwordHash") or user.get("password_hash") or "",
+                        user.get("avatarUrl") or user.get("avatar_url") or "",
+                        user.get("avatarObjectKey") or user.get("avatar_object_key") or "",
+                        1 if user.get("hasFaceProfile") else 0,
+                        json.dumps(user, ensure_ascii=False, separators=(",", ":")),
+                        int(user.get("createdAt") or 0),
+                    ),
+                )
+
+
+def json_write_db(db):
+    DATA.mkdir(parents=True, exist_ok=True)
+    tmp = DB_FILE.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(db, fh, ensure_ascii=False, indent=2)
+    tmp.replace(DB_FILE)
+
+
+def migrate_json_to_sqlite_if_needed():
+    sqlite_init_store()
+    if sqlite_album_count() > 0:
+        return
+    if DB_FILE.exists():
+        with DB_FILE.open("r", encoding="utf-8") as fh:
+            db = json.load(fh)
+        sqlite_write_db(db)
+        LOGGER.info(
+            "source=%s target=%s albums=%d",
+            DB_FILE,
+            SQLITE_DB_FILE,
+            len(db.get("albums", [])),
+            extra={"event": "db.sqlite_migrate"},
+        )
+        return
+    sqlite_write_db({"albums": []})
+
+
 def ensure_store():
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     UPLOADS.mkdir(exist_ok=True)
     THUMBS.mkdir(exist_ok=True)
     PREVIEWS.mkdir(exist_ok=True)
-    if not DB_FILE.exists():
-        save_db({"albums": []})
+    AVATARS.mkdir(exist_ok=True)
+    if sqlite_enabled():
+        migrate_json_to_sqlite_if_needed()
+    elif not DB_FILE.exists():
+        json_write_db({"albums": [], "users": [], "authTokens": []})
 
 
 def load_db():
     ensure_store()
-    with DB_FILE.open("r", encoding="utf-8") as fh:
-        db = json.load(fh)
+    db = sqlite_dump_db() if sqlite_enabled() else json_load_db()
+    db.setdefault("albums", [])
+    db.setdefault("users", [])
+    if not sqlite_enabled():
+        db.setdefault("authTokens", [])
     if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
         write_db(db)
     if sync_all_folder_covers(db):
@@ -564,18 +830,159 @@ def load_db():
     return db
 
 
+def json_load_db():
+    with DB_FILE.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def write_db(db):
-    DATA.mkdir(exist_ok=True)
-    tmp = DB_FILE.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(db, fh, ensure_ascii=False, indent=2)
-    tmp.replace(DB_FILE)
+    if sqlite_enabled():
+        sqlite_write_db(db)
+    else:
+        json_write_db(db)
 
 
 def save_db(db):
     sync_all_folder_covers(db)
     write_db(db)
     LOGGER.info("albums=%d", len(db.get("albums", [])), extra={"event": "db.write"})
+
+
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,20}$")
+PASSWORD_MIN_LENGTH = 6
+PASSWORD_MAX_LENGTH = 20
+AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 30)))
+
+
+def normalize_username(value):
+    return str(value or "").strip().lower()
+
+
+def validate_username(username):
+    return bool(USERNAME_RE.match(username or ""))
+
+
+def hash_password(password, salt=None):
+    salt = salt or os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 120000)
+    return "pbkdf2_sha256$120000$%s$%s" % (salt, digest.hex())
+
+
+def verify_password(password, stored):
+    try:
+        algo, iterations, salt, digest = str(stored or "").split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        next_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), int(iterations)).hex()
+        return hmac.compare_digest(next_digest, digest)
+    except Exception:
+        return False
+
+
+def hash_auth_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def public_user(user, origin=""):
+    if not user:
+        return None
+    avatar_object_key = user.get("avatarObjectKey") or user.get("avatar_object_key") or ""
+    avatar_url = (oss_signed_or_empty(avatar_object_key) if avatar_object_key else "") or user.get("avatarUrl") or user.get("avatar_url") or ""
+    if avatar_url and origin and not re.match(r"^https?://", avatar_url):
+        avatar_url = urljoin(origin, avatar_url)
+    return {
+        "id": user.get("id", ""),
+        "username": user.get("username", ""),
+        "nickname": user.get("nickname", ""),
+        "avatarUrl": avatar_url,
+        "hasFaceProfile": bool(user.get("hasFaceProfile")),
+    }
+
+
+def find_user_by_username(db, username):
+    username = normalize_username(username)
+    return next((user for user in db.get("users", []) if normalize_username(user.get("username")) == username), None)
+
+
+def find_user_by_id(db, user_id):
+    return next((user for user in db.get("users", []) if user.get("id") == user_id), None)
+
+
+def upsert_user(db, user):
+    users = db.setdefault("users", [])
+    for index, current in enumerate(users):
+        if current.get("id") == user.get("id"):
+            users[index] = user
+            return
+    users.append(user)
+
+
+def create_auth_token(user_id):
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    token_hash = hash_auth_token(token)
+    now = int(time.time())
+    expires_at = now + AUTH_TOKEN_TTL_SECONDS
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    "DELETE FROM auth_tokens WHERE expires_at < ?",
+                    (now,),
+                )
+                conn.execute(
+                    "INSERT INTO auth_tokens(token_hash, user_id, created_at, expires_at) VALUES(?, ?, ?, ?)",
+                    (token_hash, user_id, now, expires_at),
+                )
+    else:
+        db = load_db()
+        db["authTokens"] = [
+            item for item in db.get("authTokens", [])
+            if int(item.get("expiresAt") or 0) >= now
+        ]
+        db["authTokens"].append({"tokenHash": token_hash, "userId": user_id, "createdAt": now, "expiresAt": expires_at})
+        write_db(db)
+    return token
+
+
+def delete_auth_token(token):
+    token_hash = hash_auth_token(token)
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
+    else:
+        db = load_db()
+        db["authTokens"] = [item for item in db.get("authTokens", []) if item.get("tokenHash") != token_hash]
+        write_db(db)
+
+
+def user_for_token(token):
+    if not token:
+        return None
+    token_hash = hash_auth_token(token)
+    now = int(time.time())
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            row = conn.execute(
+                "SELECT user_id, expires_at FROM auth_tokens WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            if int(row["expires_at"]) < now:
+                with conn:
+                    conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
+                return None
+            user_row = conn.execute("SELECT data_json FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+            return json.loads(user_row["data_json"]) if user_row else None
+    db = load_db()
+    token_row = next((item for item in db.get("authTokens", []) if item.get("tokenHash") == token_hash), None)
+    if not token_row or int(token_row.get("expiresAt") or 0) < now:
+        return None
+    return find_user_by_id(db, token_row.get("userId"))
 
 
 def slugify(value):
@@ -1071,7 +1478,7 @@ def sync_all_folder_covers(db):
     return changed
 
 
-def public_album(album):
+def public_album(album, current_user=None):
     sync_folder_covers(album)
     visible = dict(album)
     visible["folders"] = []
@@ -1124,7 +1531,99 @@ def public_album(album):
             if item.get("folderId") in folder_names:
                 item["folderName"] = folder_names[item["folderId"]]
         visible["photos"].append(item)
+    apply_my_photo_recommendation(visible, album, current_user)
     return visible
+
+
+def apply_my_photo_recommendation(visible, album, current_user):
+    user_embedding = (current_user or {}).get("avatarEmbedding")
+    user_engine = (current_user or {}).get("avatarEmbeddingEngine")
+    if not user_embedding or not user_engine:
+        visible["myPhotoIds"] = []
+        visible["myPhotoCount"] = 0
+        visible["myCoverUrl"] = ""
+        return
+    best_folder = None
+    best_distance = 999.0
+    for folder in album.get("folders", []):
+        if folder.get("id") in {"pending", "group-photo", "no-face"}:
+            continue
+        if folder.get("embeddingEngine") != user_engine or not folder.get("embedding"):
+            continue
+        distance = cosine_distance(user_embedding, folder.get("embedding"))
+        if distance < best_distance:
+            best_distance = distance
+            best_folder = folder
+    threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
+    if not best_folder or best_distance > threshold:
+        visible["myPhotoIds"] = []
+        visible["myPhotoCount"] = 0
+        visible["myCoverUrl"] = ""
+        return
+    folder_id = best_folder["id"]
+    my_photo_ids = [
+        photo.get("id") for photo in album.get("photos", [])
+        if folder_id in photo_folder_ids(photo)
+    ]
+    my_photo_ids = [photo_id for photo_id in my_photo_ids if photo_id]
+    visible["myPhotoIds"] = my_photo_ids
+    visible["myPhotoCount"] = len(my_photo_ids)
+    visible["myMatchedFolderId"] = folder_id
+    visible["myMatchedFolderName"] = best_folder.get("name") or "我的照片"
+    public_photos_by_id = {photo.get("id"): photo for photo in visible.get("photos", [])}
+    cover_photo = next((public_photos_by_id.get(photo_id) for photo_id in my_photo_ids if public_photos_by_id.get(photo_id)), None)
+    visible["myCoverUrl"] = (cover_photo or {}).get("faceUrl") or (cover_photo or {}).get("coverUrl") or (cover_photo or {}).get("cardUrl") or ""
+
+
+def save_avatar_profile(user, source_path):
+    readable, cleanup_readable = readable_source_for_path(source_path)
+    if not readable:
+        return "头像无法读取，暂不能推荐我的照片"
+    warning = ""
+    try:
+        embedding, note, meta = extract_face_embedding(readable)
+        if embedding:
+            user["avatarEmbedding"] = embedding
+            user["avatarEmbeddingEngine"] = meta.get("engine") or "opencv"
+            user["hasFaceProfile"] = True
+        else:
+            user["hasFaceProfile"] = False
+            warning = note or "头像未识别人脸，暂不能推荐我的照片"
+        avatar_target = tempfile.NamedTemporaryFile(prefix="picme-avatar-", suffix=".jpg", delete=False)
+        avatar_target.close()
+        avatar_path = Path(avatar_target.name)
+        image = cv2.imread(str(readable), cv2.IMREAD_COLOR)
+        if image is None:
+            warning = warning or "头像无法生成预览，暂不能展示头像"
+            return warning
+        height, width = image.shape[:2]
+        side = min(width, height)
+        left = max(0, (width - side) // 2)
+        top = max(0, (height - side) // 2)
+        crop = cv2.resize(image[top:top + side, left:left + side], (420, 420), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if not ok:
+            warning = warning or "头像无法生成预览，暂不能展示头像"
+            return warning
+        avatar_path.write_bytes(encoded.tobytes())
+        if oss_enabled():
+            key = OSS_SERVICE.generateObjectKey("avatars", user_id=user["id"])
+            metadata = OSS_SERVICE.uploadFile(avatar_path, key, "image/jpeg", "avatars")
+            if metadata:
+                user["avatarObjectKey"] = metadata.get("object_key", "")
+                user["avatarUrl"] = oss_signed_or_empty(user["avatarObjectKey"]) or metadata.get("oss_url", "")
+        else:
+            AVATARS.mkdir(parents=True, exist_ok=True)
+            target = AVATARS / ("%s.jpg" % user["id"])
+            shutil.move(str(avatar_path), str(target))
+            avatar_path = None
+            user["avatarObjectKey"] = ""
+            user["avatarUrl"] = "/avatars/%s.jpg" % user["id"]
+        return warning
+    finally:
+        cleanup_readable()
+        if "avatar_path" in locals() and avatar_path:
+            avatar_path.unlink(missing_ok=True)
 
 
 FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -2110,6 +2609,25 @@ class AppHandler(BaseHTTPRequestHandler):
     def send_error_json(self, message, status=400):
         self.send_json({"error": message}, status)
 
+    def bearer_token(self):
+        value = self.headers.get("Authorization") or ""
+        if value.lower().startswith("bearer "):
+            return value[7:].strip()
+        return ""
+
+    def current_user(self):
+        if hasattr(self, "_current_user"):
+            return self._current_user
+        self._current_user = user_for_token(self.bearer_token())
+        return self._current_user
+
+    def require_user(self):
+        user = self.current_user()
+        if not user:
+            self.send_error_json("请先登录", 401)
+            return None
+        return user
+
     def request_origin(self):
         proto = self.headers.get("X-Forwarded-Proto") or "http"
         host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost:%s" % os.environ.get("PORT", "8000")
@@ -2148,28 +2666,47 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.serve_face_thumbnail(match.group(1), match.group(2))
         if path.startswith("/uploads/"):
             return self.serve_file(UPLOADS / path.removeprefix("/uploads/"))
+        if path.startswith("/avatars/"):
+            return self.serve_file(AVATARS / path.removeprefix("/avatars/"))
+        if path == "/api/me":
+            user = self.require_user()
+            if not user:
+                return
+            return self.send_json({"user": public_user(user, self.request_origin())})
         if path == "/api/albums":
+            current_user = self.require_user()
+            if not current_user:
+                return
             with LOCK:
                 db = load_db()
-            return self.send_json({"albums": [public_album(album) for album in db["albums"]]})
+            return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"]]})
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)$", path)
         if match:
             return self.get_worker_job(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
+            current_user = self.require_user()
+            if not current_user:
+                return
             with LOCK:
                 album = find_album(load_db(), match.group(1))
             if not album:
                 return self.send_error_json("Album not found", 404)
-            return self.send_json({"album": public_album(album)})
+            return self.send_json({"album": public_album(album, current_user)})
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/download$", path)
         if match:
+            if not self.require_user():
+                return
             return self.download_folder(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-image$", path)
         if match:
+            if not self.require_user():
+                return
             return self.download_photo_image(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-live$", path)
         if match:
+            if not self.require_user():
+                return
             return self.download_live_photo(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
 
@@ -2178,11 +2715,20 @@ class AppHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         if path.startswith("/api/"):
             LOGGER.info("method=POST path=%s", path, extra={"event": "api.request"})
+        if path == "/api/auth/register":
+            return self.register_user_request()
+        if path == "/api/auth/login":
+            return self.login_user_request()
+        if path == "/api/auth/logout":
+            return self.logout_user_request()
         if path == "/api/worker/jobs/claim":
             return self.claim_worker_job()
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)/complete$", path)
         if match:
             return self.complete_worker_job(match.group(1), match.group(2))
+        current_user = self.require_user()
+        if not current_user:
+            return
         if path == "/api/albums":
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
@@ -2205,7 +2751,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 save_db(db)
             LOGGER.info("album_id=%s name=%s", album["id"], album["name"], extra={"event": "album.create"})
             (UPLOADS / album["id"]).mkdir(parents=True, exist_ok=True)
-            return self.send_json({"album": public_album(album)}, 201)
+            return self.send_json({"album": public_album(album, current_user)}, 201)
 
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
@@ -2250,6 +2796,8 @@ class AppHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         if path.startswith("/api/"):
             LOGGER.info("method=DELETE path=%s", path, extra={"event": "api.request"})
+        if not self.require_user():
+            return
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
             return self.delete_album_request(match.group(1))
@@ -2260,6 +2808,83 @@ class AppHandler(BaseHTTPRequestHandler):
         if match:
             return self.delete_photo_request(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
+
+    def register_user_request(self):
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type"),
+            },
+        )
+        username = normalize_username(form.getfirst("username") or "")
+        nickname = (form.getfirst("nickname") or "").strip()[:40]
+        password = form.getfirst("password") or ""
+        if not validate_username(username):
+            return self.send_error_json("登录账号需为 5-20 位字母、数字或下划线")
+        if not nickname:
+            return self.send_error_json("昵称不能为空")
+        if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
+            return self.send_error_json("密码需为 6-20 位")
+
+        with LOCK:
+            db = load_db()
+            if find_user_by_username(db, username):
+                return self.send_error_json("这个登录账号已被使用", 409)
+            now = int(time.time())
+            user = {
+                "id": uuid.uuid4().hex,
+                "username": username,
+                "nickname": nickname,
+                "passwordHash": hash_password(password),
+                "avatarUrl": "",
+                "avatarObjectKey": "",
+                "hasFaceProfile": False,
+                "createdAt": now,
+            }
+            warning = ""
+            avatar_item = form["avatar"] if "avatar" in form else None
+            if avatar_item is not None and getattr(avatar_item, "filename", None):
+                suffix = Path(avatar_item.filename).suffix.lower() or ".jpg"
+                tmp = tempfile.NamedTemporaryFile(prefix="picme-register-avatar-", suffix=suffix, delete=False)
+                tmp.close()
+                avatar_source = Path(tmp.name)
+                try:
+                    with avatar_source.open("wb") as out:
+                        shutil.copyfileobj(avatar_item.file, out)
+                    warning = save_avatar_profile(user, avatar_source)
+                finally:
+                    avatar_source.unlink(missing_ok=True)
+            upsert_user(db, user)
+            save_db(db)
+        token = create_auth_token(user["id"])
+        LOGGER.info("user_id=%s username=%s face=%s", user["id"], username, user.get("hasFaceProfile"), extra={"event": "auth.register"})
+        payload = {"user": public_user(user, self.request_origin()), "token": token}
+        if warning:
+            payload["warning"] = warning
+        return self.send_json(payload, 201)
+
+    def login_user_request(self):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        username = normalize_username(payload.get("username") or "")
+        password = payload.get("password") or ""
+        with LOCK:
+            db = load_db()
+            user = find_user_by_username(db, username)
+        if not user or not verify_password(password, user.get("passwordHash")):
+            return self.send_error_json("登录账号或密码不正确", 401)
+        token = create_auth_token(user["id"])
+        LOGGER.info("user_id=%s username=%s", user["id"], username, extra={"event": "auth.login"})
+        return self.send_json({"user": public_user(user, self.request_origin()), "token": token})
+
+    def logout_user_request(self):
+        token = self.bearer_token()
+        if token:
+            delete_auth_token(token)
+        return self.send_json({"ok": True})
 
     def init_direct_uploads(self, album_id):
         if not oss_enabled():
@@ -2425,7 +3050,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         queued.append(photo_id)
 
             save_db(db)
-            response_album = public_album(album)
+            response_album = public_album(album, self.current_user())
             response_created = [
                 item for item in response_album.get("photos", [])
                 if item.get("id") in {photo.get("id") for photo in created}
@@ -2599,7 +3224,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     extra={"event": "upload.photo_created"},
                 )
             save_db(db)
-            response_album = public_album(album)
+            response_album = public_album(album, self.current_user())
             response_created = [
                 item for item in response_album.get("photos", [])
                 if item.get("id") in queued
@@ -2728,7 +3353,7 @@ class AppHandler(BaseHTTPRequestHandler):
             prune_empty_folders(album)
             save_db(db)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.complete_saved"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def reanalyze_album_request(self, album_id):
         with LOCK:
@@ -2739,7 +3364,7 @@ class AppHandler(BaseHTTPRequestHandler):
             reanalyze_album(album)
             save_db(db)
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.reanalyze"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def merge_folder_request(self, album_id, source_folder_id):
         payload, error = self.read_json_body()
@@ -2765,7 +3390,7 @@ class AppHandler(BaseHTTPRequestHandler):
             target_folder_id,
             extra={"event": "folder.merge"},
         )
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def rename_folder_request(self, album_id, folder_id):
         payload, error = self.read_json_body()
@@ -2781,7 +3406,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(rename_error)
             save_db(db)
         LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.rename"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def rename_album_request(self, album_id):
         payload, error = self.read_json_body()
@@ -2797,7 +3422,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(rename_error)
             save_db(db)
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.rename"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def mark_no_face_request(self, album_id, source_folder_id):
         with LOCK:
@@ -2807,13 +3432,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json("Album not found", 404)
             target = get_no_face_folder(album)
             if source_folder_id == target["id"]:
-                return self.send_json({"album": public_album(album)})
+                return self.send_json({"album": public_album(album, self.current_user())})
             _, merge_error = merge_folder(album, source_folder_id, target["id"])
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
         LOGGER.info("album_id=%s source_folder_id=%s", album_id, source_folder_id, extra={"event": "folder.mark_no_face"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def move_photo_request(self, album_id, photo_id):
         payload, error = self.read_json_body()
@@ -2839,7 +3464,7 @@ class AppHandler(BaseHTTPRequestHandler):
             target_folder_id,
             extra={"event": "photo.move"},
         )
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def reclassify_photo_request(self, album_id, photo_id):
         with LOCK:
@@ -2852,7 +3477,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(reclassify_error)
             save_db(db)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.reclassify"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def delete_photo_request(self, album_id, photo_id):
         with LOCK:
@@ -2865,7 +3490,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(delete_error, 404)
             save_db(db)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.delete_request"})
-        return self.send_json({"album": public_album(album)})
+        return self.send_json({"album": public_album(album, self.current_user())})
 
     def delete_selected_photos(self, album_id):
         payload, error = self.read_json_body()
@@ -2891,7 +3516,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     deleted += 1
             save_db(db)
         LOGGER.info("album_id=%s deleted=%d missing=%d", album_id, deleted, len(missing), extra={"event": "photo.delete_selected"})
-        return self.send_json({"album": public_album(album), "deleted": deleted, "missing": missing})
+        return self.send_json({"album": public_album(album, self.current_user()), "deleted": deleted, "missing": missing})
 
     def delete_folder_request(self, album_id, folder_id):
         with LOCK:
@@ -2904,7 +3529,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(delete_error, 404)
             save_db(db)
         LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.delete_request"})
-        return self.send_json({"album": public_album(album), "deleted": result})
+        return self.send_json({"album": public_album(album, self.current_user()), "deleted": result})
 
     def delete_album_request(self, album_id):
         with LOCK:
@@ -3051,7 +3676,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def serve_file(self, path):
         path = path.resolve()
-        allowed = [PUBLIC.resolve(), UPLOADS.resolve(), PREVIEWS.resolve()]
+        allowed = [PUBLIC.resolve(), UPLOADS.resolve(), PREVIEWS.resolve(), AVATARS.resolve()]
         if not any(str(path).startswith(str(root)) for root in allowed) or not path.exists() or path.is_dir():
             return self.send_error_json("Not found", 404)
         content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"

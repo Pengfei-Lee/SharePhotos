@@ -11,6 +11,8 @@ services:
     environment:
       - PORT=8000
       - DATA_DIR=/app/data
+      - DB_BACKEND=${DB_BACKEND:-sqlite}
+      - SQLITE_DB_FILE=${SQLITE_DB_FILE:-/app/data/sharephotos.db}
       - FACE_WORKER_MODE=${FACE_WORKER_MODE:-remote}
       - WORKER_TOKEN=${WORKER_TOKEN:-}
       - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
@@ -41,6 +43,8 @@ services:
       - redis
     environment:
       - DATA_DIR=/app/data
+      - DB_BACKEND=${DB_BACKEND:-sqlite}
+      - SQLITE_DB_FILE=${SQLITE_DB_FILE:-/app/data/sharephotos.db}
       - FACE_WORKER_MODE=redis
       - WORKER_API_URL=${WORKER_API_URL:-}
       - WORKER_TOKEN=${WORKER_TOKEN:-}
