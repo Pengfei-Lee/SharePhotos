@@ -190,6 +190,36 @@ final class SharePhotosStore: ObservableObject {
         statusText = "已退出登录"
     }
 
+    func updateAvatar(avatarData: Data) async -> Bool {
+        guard currentUser != nil else { return false }
+        let oldAvatarURL = imageURL(currentUser?.avatarUrl)
+        isBusy = true
+        showOperation(title: "更新头像", message: "正在识别头像并刷新资料", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.updateAvatar(avatarData: avatarData)
+            if let oldAvatarURL {
+                await PhotoDiskCache.shared.removeCachedFile(for: oldAvatarURL)
+            }
+            if let newAvatarURL = imageURL(response.user.avatarUrl) {
+                await PhotoDiskCache.shared.removeCachedFile(for: newAvatarURL)
+            }
+            currentUser = response.user
+            uploader = response.user.nickname
+            authWarning = response.warning
+            statusText = response.warning ?? "头像已更新"
+            showOperation(title: "头像已更新", message: response.warning ?? "你的资料已经刷新", progress: 1)
+            hideOperation(after: 1.0)
+            await loadAlbums()
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "更新失败", message: message, progress: nil)
+            return false
+        }
+    }
+
     func loadAlbums() async {
         showOperation(title: "连接服务中", message: "正在读取 \(serverAddress)", progress: nil)
         do {

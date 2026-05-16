@@ -103,6 +103,11 @@ struct MeResponse: Codable {
     let user: User
 }
 
+struct ProfileResponse: Codable {
+    let user: User
+    let warning: String?
+}
+
 struct UploadResponse: Codable {
     let album: Album
     let queued: Int

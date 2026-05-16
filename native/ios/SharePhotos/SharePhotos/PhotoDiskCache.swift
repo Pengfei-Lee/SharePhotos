@@ -81,6 +81,21 @@ actor PhotoDiskCache {
         }.value
     }
 
+    func removeCachedFile(for remoteURL: URL, preferredExtension: String? = nil) async {
+        let identifier = stableIdentifier(for: remoteURL)
+        if let preferredExtension {
+            try? FileManager.default.removeItem(at: fileURL(for: identifier, preferredExtension: preferredExtension))
+            return
+        }
+        let prefix = cacheKey(for: identifier) + "."
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil) else {
+            return
+        }
+        for file in files where file.lastPathComponent.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     func stableIdentifier(for remoteURL: URL) -> String {
         if var components = URLComponents(url: remoteURL, resolvingAgainstBaseURL: false) {
             components.query = nil

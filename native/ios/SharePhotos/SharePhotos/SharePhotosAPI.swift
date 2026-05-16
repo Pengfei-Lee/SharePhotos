@@ -82,6 +82,21 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(MeResponse.self, from: data).user
     }
 
+    func updateAvatar(avatarData: Data) async throws -> ProfileResponse {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = authorizedRequest(path: "/api/me/avatar")
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        appendFile(data: avatarData, fieldName: "avatar", filename: "avatar.jpg", contentType: "image/jpeg", boundary: boundary, to: &body)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(ProfileResponse.self, from: data)
+    }
+
     func fetchAlbums() async throws -> [Album] {
         let data = try await request(path: "/api/albums")
         return try JSONDecoder().decode(AlbumsResponse.self, from: data).albums
@@ -288,7 +303,7 @@ final class SharePhotosAPI {
         ) else {
             throw APIError.badResponse
         }
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
             guard values.isRegularFile == true else { continue }
             let entryName = fileURL.path.replacingOccurrences(of: stagingDirectory.path + "/", with: "")

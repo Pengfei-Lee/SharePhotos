@@ -2592,12 +2592,18 @@ private struct BrandHeader: View {
 
 private struct AccountMenu: View {
     @EnvironmentObject private var store: SharePhotosStore
+    @State private var profilePresented = false
 
     var body: some View {
         Menu {
             if let user = store.currentUser {
                 Text(user.nickname)
                 Text("@\(user.username)")
+            }
+            Button {
+                profilePresented = true
+            } label: {
+                Label("我的资料", systemImage: "person.crop.circle")
             }
             Button(role: .destructive) {
                 Task { await store.logout() }
@@ -2619,6 +2625,155 @@ private struct AccountMenu: View {
             .overlay(Circle().stroke(.white, lineWidth: 2))
             .shadow(color: .black.opacity(0.10), radius: 10, y: 5)
         }
+        .sheet(isPresented: $profilePresented) {
+            ProfileSheet()
+        }
+    }
+}
+
+private struct ProfileSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var avatarPickerPresented = false
+    @State private var avatarData: Data?
+    @State private var avatarImage: UIImage?
+
+    private var canUpload: Bool {
+        avatarData != nil && !store.isBusy
+    }
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("我的资料")
+                            .font(.system(size: 34, weight: .black))
+                            .foregroundColor(.primaryText)
+                        Text("上传清晰的人脸头像后，PicMe 会更准确地推荐属于你的照片")
+                            .font(.headline)
+                            .foregroundColor(.secondaryText)
+                            .lineSpacing(4)
+                    }
+
+                    Button {
+                        avatarPickerPresented = true
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            profileAvatar
+                                .frame(width: 148, height: 148)
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(.white, lineWidth: 5))
+                                .shadow(color: .teal.opacity(0.14), radius: 18, y: 8)
+
+                            Image(systemName: "camera.fill")
+                                .font(.title3.weight(.bold))
+                                .foregroundColor(.white)
+                                .frame(width: 50, height: 50)
+                                .background(Color.teal, in: Circle())
+                                .overlay(Circle().stroke(.white, lineWidth: 4))
+                                .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(spacing: 12) {
+                        ProfileInfoRow(icon: "person", title: "昵称", value: store.currentUser?.nickname ?? "-")
+                        ProfileInfoRow(icon: "at", title: "登录账号", value: store.currentUser.map { "@\($0.username)" } ?? "-")
+                        ProfileInfoRow(
+                            icon: store.currentUser?.hasFaceProfile == true ? "checkmark.seal" : "exclamationmark.triangle",
+                            title: "我的照片推荐",
+                            value: store.currentUser?.hasFaceProfile == true ? "已启用人脸推荐" : "头像未识别人脸，暂不能推荐"
+                        )
+                    }
+
+                    Button {
+                        Task {
+                            guard let avatarData else { return }
+                            if await store.updateAvatar(avatarData: avatarData) {
+                                self.avatarData = nil
+                                self.avatarImage = nil
+                            }
+                        }
+                    } label: {
+                        Text(store.isBusy ? "上传中..." : "更新头像")
+                            .font(.title3.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .foregroundColor(.white)
+                            .shadow(color: .teal.opacity(0.24), radius: 14, y: 8)
+                    }
+                    .disabled(!canUpload)
+                    .opacity(canUpload ? 1 : 0.55)
+
+                    if let authWarning = store.authWarning, !authWarning.isEmpty {
+                        Text(authWarning)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
+                .padding(22)
+            }
+            .background(AppBackground())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $avatarPickerPresented) {
+                AvatarImagePicker { image, data in
+                    avatarImage = image
+                    avatarData = data
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var profileAvatar: some View {
+        if let avatarImage {
+            Image(uiImage: avatarImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
+            RemoteImage(url: url, mode: .fill)
+        } else {
+            Circle()
+                .fill(Color.teal.opacity(0.12))
+                .overlay(Image(systemName: "person.fill").font(.system(size: 58, weight: .medium)).foregroundColor(.teal.opacity(0.48)))
+        }
+    }
+}
+
+private struct ProfileInfoRow: View {
+    let icon: String
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.headline.weight(.bold))
+                .foregroundColor(.teal)
+                .frame(width: 36, height: 36)
+                .background(Color.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(.secondaryText)
+                Text(value)
+                    .font(.headline.weight(.semibold))
+                    .foregroundColor(.primaryText)
+            }
+            Spacer()
+        }
+        .padding(16)
+        .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
     }
 }
 
