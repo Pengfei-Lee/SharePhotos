@@ -1592,31 +1592,19 @@ def public_album(album, current_user=None):
 
 
 def apply_my_photo_recommendation(visible, album, current_user):
-    user_embedding = (current_user or {}).get("avatarEmbedding")
-    user_engine = (current_user or {}).get("avatarEmbeddingEngine")
-    if not user_embedding or not user_engine:
+    match = resolve_user_album_match(album, current_user)
+    if not match or not match.get("matched") or not match.get("folderId"):
         visible["myPhotoIds"] = []
         visible["myPhotoCount"] = 0
         visible["myCoverUrl"] = ""
         return
-    best_folder = None
-    best_distance = 999.0
-    for folder in album.get("folders", []):
-        if folder.get("id") in {"pending", "group-photo", "no-face"}:
-            continue
-        if folder.get("embeddingEngine") != user_engine or not folder.get("embedding"):
-            continue
-        distance = cosine_distance(user_embedding, folder.get("embedding"))
-        if distance < best_distance:
-            best_distance = distance
-            best_folder = folder
-    threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
-    if not best_folder or best_distance > threshold:
+    folder_id = match["folderId"]
+    best_folder = next((folder for folder in album.get("folders", []) if folder.get("id") == folder_id), None)
+    if not best_folder:
         visible["myPhotoIds"] = []
         visible["myPhotoCount"] = 0
         visible["myCoverUrl"] = ""
         return
-    folder_id = best_folder["id"]
     my_photo_ids = [
         photo.get("id") for photo in album.get("photos", [])
         if folder_id in photo_folder_ids(photo)
@@ -1631,6 +1619,114 @@ def apply_my_photo_recommendation(visible, album, current_user):
     visible["myCoverUrl"] = (cover_photo or {}).get("faceUrl") or (cover_photo or {}).get("coverUrl") or (cover_photo or {}).get("cardUrl") or ""
 
 
+def user_avatar_match_key(user):
+    embedding = (user or {}).get("avatarEmbedding")
+    engine = (user or {}).get("avatarEmbeddingEngine") or ""
+    updated_at = int((user or {}).get("avatarProfileUpdatedAt") or 0)
+    digest = hashlib.sha256(json.dumps(embedding or [], separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    return "%s:%s:%s" % (engine, updated_at, digest)
+
+
+def album_folder_fingerprint(album):
+    parts = []
+    for folder in album.get("folders", []):
+        if folder.get("id") in {"pending", "group-photo", "no-face"}:
+            continue
+        if not folder.get("embedding") or not folder.get("embeddingEngine"):
+            continue
+        parts.append(
+            "%s:%s:%s:%s" % (
+                folder.get("id", ""),
+                folder.get("embeddingEngine", ""),
+                int(folder.get("embeddingCount") or 0),
+                int(folder.get("embeddingUpdatedAt") or folder.get("createdAt") or 0),
+            )
+        )
+    return "|".join(sorted(parts))
+
+
+def compute_user_album_match(album, current_user):
+    user_embedding = (current_user or {}).get("avatarEmbedding")
+    user_engine = (current_user or {}).get("avatarEmbeddingEngine")
+    base = {
+        "albumId": album.get("id", ""),
+        "matched": False,
+        "folderId": "",
+        "distance": None,
+        "avatarMatchKey": user_avatar_match_key(current_user),
+        "folderFingerprint": album_folder_fingerprint(album),
+        "updatedAt": int(time.time()),
+    }
+    if not user_embedding or not user_engine:
+        return base
+    best_folder = None
+    best_distance = 999.0
+    for folder in album.get("folders", []):
+        if folder.get("id") in {"pending", "group-photo", "no-face"}:
+            continue
+        if folder.get("embeddingEngine") != user_engine or not folder.get("embedding"):
+            continue
+        distance = cosine_distance(user_embedding, folder.get("embedding"))
+        if distance < best_distance:
+            best_distance = distance
+            best_folder = folder
+    threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
+    if not best_folder or best_distance > threshold:
+        return base
+    base.update(
+        {
+            "matched": True,
+            "folderId": best_folder.get("id", ""),
+            "folderName": best_folder.get("name") or "我的照片",
+            "distance": round(float(best_distance), 6),
+            "engine": user_engine,
+            "threshold": threshold,
+        }
+    )
+    return base
+
+
+def stored_user_album_match(album, current_user):
+    matches = (current_user or {}).get("avatarAlbumMatches") or {}
+    if not isinstance(matches, dict):
+        return None
+    match = matches.get(album.get("id", ""))
+    if not isinstance(match, dict):
+        return None
+    if match.get("avatarMatchKey") != user_avatar_match_key(current_user):
+        return None
+    if match.get("folderFingerprint") != album_folder_fingerprint(album):
+        return None
+    if match.get("matched"):
+        folder_id = match.get("folderId")
+        folder = next((item for item in album.get("folders", []) if item.get("id") == folder_id), None)
+        if not folder or folder.get("id") in {"pending", "group-photo", "no-face"}:
+            return None
+    return match
+
+
+def resolve_user_album_match(album, current_user):
+    return stored_user_album_match(album, current_user) or compute_user_album_match(album, current_user)
+
+
+def ensure_user_album_match(db, album, current_user):
+    if not current_user or not current_user.get("id"):
+        return False
+    user = find_user_by_id(db, current_user.get("id"))
+    if not user:
+        return False
+    next_match = resolve_user_album_match(album, user)
+    matches = user.setdefault("avatarAlbumMatches", {})
+    album_id = album.get("id", "")
+    if matches.get(album_id) == next_match:
+        return False
+    matches[album_id] = next_match
+    upsert_user(db, user)
+    if current_user is not user:
+        current_user["avatarAlbumMatches"] = user.get("avatarAlbumMatches", {})
+    return True
+
+
 def save_avatar_profile(user, source_path):
     readable, cleanup_readable = readable_source_for_path(source_path)
     if not readable:
@@ -1641,9 +1737,13 @@ def save_avatar_profile(user, source_path):
         if embedding:
             user["avatarEmbedding"] = embedding
             user["avatarEmbeddingEngine"] = meta.get("engine") or "opencv"
+            user["avatarProfileUpdatedAt"] = int(time.time())
+            user["avatarAlbumMatches"] = {}
             user["hasFaceProfile"] = True
         else:
             user["hasFaceProfile"] = False
+            user["avatarProfileUpdatedAt"] = int(time.time())
+            user["avatarAlbumMatches"] = {}
             warning = note or "头像未识别人脸，暂不能推荐我的照片"
         avatar_target = tempfile.NamedTemporaryFile(prefix="picme-avatar-", suffix=".jpg", delete=False)
         avatar_target.close()
@@ -1943,12 +2043,14 @@ def update_folder_embedding(folder, embedding, engine):
         folder["embedding"] = embedding
         folder["embeddingEngine"] = engine
         folder["embeddingCount"] = 1
+        folder["embeddingUpdatedAt"] = int(time.time())
         return
     updated = ((np.asarray(current, dtype=np.float32) * count) + np.asarray(embedding, dtype=np.float32)) / (count + 1)
     norm = float(np.linalg.norm(updated)) + 1e-6
     folder["embedding"] = (updated / norm).round(6).tolist()
     folder["embeddingEngine"] = engine
     folder["embeddingCount"] = count + 1
+    folder["embeddingUpdatedAt"] = int(time.time())
 
 
 def create_folder(album, name, embedding=None, folder_id=None, engine=None):
@@ -1962,6 +2064,7 @@ def create_folder(album, name, embedding=None, folder_id=None, engine=None):
         folder["embedding"] = embedding
         folder["embeddingEngine"] = engine or "opencv"
         folder["embeddingCount"] = 1
+        folder["embeddingUpdatedAt"] = int(time.time())
     existing = {item["id"] for item in folders}
     base = folder["id"]
     index = 2
@@ -2192,6 +2295,7 @@ def merge_embeddings(target, source):
         target.pop("embedding", None)
         target.pop("embeddingCount", None)
         target.pop("embeddingEngine", None)
+        target.pop("embeddingUpdatedAt", None)
         return
     source_embedding = source.get("embedding")
     if not source_embedding or target.get("embeddingEngine") != source.get("embeddingEngine"):
@@ -2202,6 +2306,8 @@ def merge_embeddings(target, source):
     if not target_embedding or target_count <= 0:
         target["embedding"] = source_embedding
         target["embeddingCount"] = source_count
+        target["embeddingEngine"] = source.get("embeddingEngine")
+        target["embeddingUpdatedAt"] = int(time.time())
         return
     merged = (
         (np.asarray(target_embedding, dtype=np.float32) * target_count)
@@ -2210,6 +2316,7 @@ def merge_embeddings(target, source):
     norm = float(np.linalg.norm(merged)) + 1e-6
     target["embedding"] = (merged / norm).round(6).tolist()
     target["embeddingCount"] = target_count + source_count
+    target["embeddingUpdatedAt"] = int(time.time())
 
 
 def merge_folder(album, source_id, target_id):
@@ -2732,6 +2839,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             with LOCK:
                 db = load_db()
+                changed = False
+                for album in db["albums"]:
+                    changed = ensure_user_album_match(db, album, current_user) or changed
+                if changed:
+                    save_db(db)
             return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"]]})
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)$", path)
         if match:
@@ -2742,7 +2854,10 @@ class AppHandler(BaseHTTPRequestHandler):
             if not current_user:
                 return
             with LOCK:
-                album = find_album(load_db(), match.group(1))
+                db = load_db()
+                album = find_album(db, match.group(1))
+                if album and ensure_user_album_match(db, album, current_user):
+                    save_db(db)
             if not album:
                 return self.send_error_json("Album not found", 404)
             return self.send_json({"album": public_album(album, current_user)})

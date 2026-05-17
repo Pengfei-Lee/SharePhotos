@@ -2595,21 +2595,8 @@ private struct AccountMenu: View {
     @State private var profilePresented = false
 
     var body: some View {
-        Menu {
-            if let user = store.currentUser {
-                Text(user.nickname)
-                Text("@\(user.username)")
-            }
-            Button {
-                profilePresented = true
-            } label: {
-                Label("我的资料", systemImage: "person.crop.circle")
-            }
-            Button(role: .destructive) {
-                Task { await store.logout() }
-            } label: {
-                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-            }
+        Button {
+            profilePresented = true
         } label: {
             ZStack {
                 if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
@@ -2625,6 +2612,7 @@ private struct AccountMenu: View {
             .overlay(Circle().stroke(.white, lineWidth: 2))
             .shadow(color: .black.opacity(0.10), radius: 10, y: 5)
         }
+        .buttonStyle(.plain)
         .sheet(isPresented: $profilePresented) {
             ProfileSheet()
         }
@@ -2680,7 +2668,7 @@ private struct ProfileSheet: View {
 
                     VStack(spacing: 12) {
                         ProfileInfoRow(icon: "person", title: "昵称", value: store.currentUser?.nickname ?? "-")
-                        ProfileInfoRow(icon: "at", title: "登录账号", value: store.currentUser.map { "@\($0.username)" } ?? "-")
+                        ProfileInfoRow(icon: "at", title: "登录账号", value: store.currentUser?.username ?? "-")
                         ProfileInfoRow(
                             icon: store.currentUser?.hasFaceProfile == true ? "checkmark.seal" : "exclamationmark.triangle",
                             title: "我的照片推荐",
@@ -2714,6 +2702,22 @@ private struct ProfileSheet: View {
                             .foregroundColor(.secondaryText)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
+
+                    Button(role: .destructive) {
+                        Task {
+                            dismiss()
+                            await store.logout()
+                        }
+                    } label: {
+                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .foregroundColor(.red)
+                            .background(.white.opacity(0.80), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.red.opacity(0.18), lineWidth: 1))
+                    }
+                    .padding(.top, 18)
                 }
                 .padding(22)
             }
