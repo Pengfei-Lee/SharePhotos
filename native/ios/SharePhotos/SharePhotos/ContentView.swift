@@ -2530,6 +2530,18 @@ private struct RemoteImage: View {
     let mode: ContentMode
     @State private var state: RemoteImageState = .loading
 
+    private var loadKey: String {
+        guard let url else { return "" }
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.query = nil
+            components.fragment = nil
+            if let normalized = components.string, !normalized.isEmpty {
+                return normalized
+            }
+        }
+        return url.absoluteString
+    }
+
     var body: some View {
         Group {
             switch state {
@@ -2541,7 +2553,7 @@ private struct RemoteImage: View {
                 Rectangle().fill(.gray.opacity(0.12)).overlay(Image(systemName: "photo").foregroundColor(.secondary))
             }
         }
-        .task(id: url) {
+        .task(id: loadKey) {
             await load()
         }
     }
@@ -2551,15 +2563,32 @@ private struct RemoteImage: View {
             state = .failure
             return
         }
-        state = .loading
+        if let cachedImage = await cachedImage(for: url) {
+            guard !Task.isCancelled else { return }
+            state = .success(cachedImage)
+        } else if !state.isSuccess {
+            state = .loading
+        }
         do {
             let image = try await PhotoDiskCache.shared.dataImage(for: url)
             guard !Task.isCancelled else { return }
             state = .success(image)
         } catch {
             guard !Task.isCancelled else { return }
-            state = .failure
+            if !state.isSuccess {
+                state = .failure
+            }
         }
+    }
+
+    private func cachedImage(for url: URL) async -> UIImage? {
+        let preferredExtension = await PhotoDiskCache.shared.preferredExtension(for: url, fallback: "img")
+        guard let fileURL = await PhotoDiskCache.shared.cachedFile(for: url, preferredExtension: preferredExtension) else {
+            return nil
+        }
+        return await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: fileURL.path)
+        }.value
     }
 }
 
@@ -2567,6 +2596,13 @@ private enum RemoteImageState {
     case loading
     case success(UIImage)
     case failure
+
+    var isSuccess: Bool {
+        if case .success = self {
+            return true
+        }
+        return false
+    }
 }
 
 private struct BrandHeader: View {
