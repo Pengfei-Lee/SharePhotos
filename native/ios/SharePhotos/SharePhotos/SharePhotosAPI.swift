@@ -121,6 +121,37 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(AlbumResponse.self, from: data).album
     }
 
+    func albumInvite(albumId: String) async throws -> AlbumInvite {
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite", method: "POST", body: [:])
+        return try JSONDecoder().decode(AlbumInviteResponse.self, from: data).invite
+    }
+
+    func resetAlbumInvite(albumId: String) async throws -> AlbumInvite {
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite/reset", method: "POST", body: [:])
+        return try JSONDecoder().decode(AlbumInviteResponse.self, from: data).invite
+    }
+
+    func invite(code: String) async throws -> InviteResponse {
+        let data = try await request(path: "/api/invites/\(code)")
+        return try JSONDecoder().decode(InviteResponse.self, from: data)
+    }
+
+    func requestJoin(code: String) async throws -> JoinRequestResponse {
+        let data = try await request(path: "/api/invites/\(code)/request", method: "POST")
+        return try JSONDecoder().decode(JoinRequestResponse.self, from: data)
+    }
+
+    func joinRequests(albumId: String) async throws -> [JoinRequest] {
+        let data = try await request(path: "/api/albums/\(albumId)/join-requests")
+        return try JSONDecoder().decode(JoinRequestsResponse.self, from: data).requests
+    }
+
+    func reviewJoinRequest(albumId: String, requestId: String, approve: Bool) async throws -> ReviewJoinRequestResponse {
+        let action = approve ? "approve" : "reject"
+        let data = try await request(path: "/api/albums/\(albumId)/join-requests/\(requestId)/\(action)", method: "POST")
+        return try JSONDecoder().decode(ReviewJoinRequestResponse.self, from: data)
+    }
+
     func upload(albumId: String, uploader: String, files: [UploadFile]) async throws -> UploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = authorizedRequest(path: "/api/albums/\(albumId)/upload")

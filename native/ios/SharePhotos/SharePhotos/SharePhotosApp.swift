@@ -19,6 +19,14 @@ struct SharePhotosApp: App {
         WindowGroup {
             AuthGateView()
                 .environmentObject(store)
+                .onOpenURL { url in
+                    store.handleIncomingURL(url)
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL {
+                        store.handleIncomingURL(url)
+                    }
+                }
         }
     }
 }

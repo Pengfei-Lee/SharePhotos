@@ -2,14 +2,17 @@
 import cgi
 import hashlib
 import hmac
+import html
 import json
 import logging
 import mimetypes
 import os
 import queue
 import re
+import secrets
 import shutil
 import sqlite3
+import string
 import tempfile
 import threading
 import time
@@ -31,6 +34,12 @@ try:
     import redis
 except Exception:
     redis = None
+
+try:
+    import qrcode
+    import qrcode.image.svg
+except Exception:
+    qrcode = None
 
 try:
     import fcntl
@@ -62,6 +71,10 @@ DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite").strip().lower() or "sqlite"
 DB_FILE = DATA / "db.json"
 SQLITE_DB_FILE = Path(os.environ.get("SQLITE_DB_FILE", str(DATA / "sharephotos.db")))
 LOG_DIR = Path(os.environ.get("LOG_DIR", str(DATA / "logs")))
+LEGACY_ALBUM_OWNER_USERNAME = os.environ.get("LEGACY_ALBUM_OWNER_USERNAME", "lpf").strip().lower() or "lpf"
+APP_ASSOCIATED_DOMAIN = os.environ.get("APP_ASSOCIATED_DOMAIN", "picme.me").strip() or "picme.me"
+IOS_BUNDLE_IDENTIFIER = os.environ.get("IOS_BUNDLE_IDENTIFIER", "com.sharephotos.app").strip() or "com.sharephotos.app"
+APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "").strip()
 
 
 class DailyLogFileHandler(logging.Handler):
@@ -565,6 +578,53 @@ def sqlite_connect():
     return conn
 
 
+def sqlite_ensure_legacy_album_members(conn):
+    album_rows = conn.execute("SELECT id FROM albums").fetchall()
+    if not album_rows:
+        return
+    owner_row = conn.execute(
+        "SELECT id, username FROM users WHERE lower(username) = ?",
+        (LEGACY_ALBUM_OWNER_USERNAME,),
+    ).fetchone()
+    if not owner_row:
+        user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        if int(user_count or 0) == 0:
+            return
+        LOGGER.error(
+            "username=%s albums=%d",
+            LEGACY_ALBUM_OWNER_USERNAME,
+            len(album_rows),
+            extra={"event": "album.member_migrate_failed"},
+        )
+        raise RuntimeError("LEGACY_ALBUM_OWNER_USERNAME=%s 不存在，无法为旧相册建立 owner 权限" % LEGACY_ALBUM_OWNER_USERNAME)
+
+    now = int(time.time())
+    migrated = 0
+    for album_row in album_rows:
+        member_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM album_members WHERE album_id = ? AND status = 'active'",
+            (album_row["id"],),
+        ).fetchone()["count"]
+        if int(member_count or 0) > 0:
+            continue
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO album_members(album_id, user_id, role, status, created_at, joined_at, approved_by)
+            VALUES(?, ?, 'owner', 'active', ?, ?, ?)
+            """,
+            (album_row["id"], owner_row["id"], now, now, owner_row["id"]),
+        )
+        migrated += 1
+    if migrated:
+        LOGGER.info(
+            "owner_username=%s owner_id=%s albums=%d",
+            owner_row["username"],
+            owner_row["id"],
+            migrated,
+            extra={"event": "album.member_migrate"},
+        )
+
+
 def sqlite_init_store():
     with sqlite_connect() as conn:
         conn.executescript(
@@ -633,12 +693,65 @@ def sqlite_init_store():
                 expires_at INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS album_members (
+                album_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER NOT NULL,
+                joined_at INTEGER,
+                approved_by TEXT,
+                PRIMARY KEY (album_id, user_id),
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_album_members_user
+                ON album_members(user_id, status);
+
+            CREATE TABLE IF NOT EXISTS album_invites (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL,
+                code TEXT NOT NULL UNIQUE,
+                token_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_album_invites_album
+                ON album_invites(album_id, status);
+
+            CREATE TABLE IF NOT EXISTS album_join_requests (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL,
+                invite_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL,
+                reviewed_by TEXT,
+                reviewed_at INTEGER,
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
+                FOREIGN KEY (invite_id) REFERENCES album_invites(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_join_requests_album
+                ON album_join_requests(album_id, status, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_join_requests_user
+                ON album_join_requests(user_id, status, created_at);
             """
         )
         conn.execute(
             "INSERT OR REPLACE INTO store_meta(key, value) VALUES(?, ?)",
-            ("schema_version", "2"),
+            ("schema_version", "3"),
         )
+        sqlite_ensure_legacy_album_members(conn)
 
 
 def sqlite_album_count():
@@ -702,6 +815,27 @@ def sqlite_write_db(db):
     albums = db.get("albums", [])
     with sqlite_connect() as conn:
         with conn:
+            preserved_members = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT album_id, user_id, role, status, created_at, joined_at, approved_by FROM album_members"
+                ).fetchall()
+            ]
+            preserved_invites = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT id, album_id, code, token_hash, status, created_by, created_at, revoked_at FROM album_invites"
+                ).fetchall()
+            ]
+            preserved_join_requests = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT id, album_id, invite_id, user_id, status, created_at, reviewed_by, reviewed_at
+                    FROM album_join_requests
+                    """
+                ).fetchall()
+            ]
             conn.execute("DELETE FROM contributors")
             conn.execute("DELETE FROM folders")
             conn.execute("DELETE FROM photos")
@@ -793,6 +927,82 @@ def sqlite_write_db(db):
                         int(user.get("createdAt") or 0),
                     ),
                 )
+            current_album_ids = {
+                row["id"] for row in conn.execute("SELECT id FROM albums").fetchall()
+            }
+            current_user_ids = {
+                row["id"] for row in conn.execute("SELECT id FROM users").fetchall()
+            }
+            restored_invite_ids = set()
+            for member in preserved_members:
+                if member["album_id"] not in current_album_ids or member["user_id"] not in current_user_ids:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO album_members(
+                        album_id, user_id, role, status, created_at, joined_at, approved_by
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        member["album_id"],
+                        member["user_id"],
+                        member["role"],
+                        member["status"],
+                        int(member["created_at"] or 0),
+                        member["joined_at"],
+                        member["approved_by"] if member["approved_by"] in current_user_ids else None,
+                    ),
+                )
+            for invite in preserved_invites:
+                if invite["album_id"] not in current_album_ids or invite["created_by"] not in current_user_ids:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO album_invites(
+                        id, album_id, code, token_hash, status, created_by, created_at, revoked_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        invite["id"],
+                        invite["album_id"],
+                        invite["code"],
+                        invite["token_hash"],
+                        invite["status"],
+                        invite["created_by"],
+                        int(invite["created_at"] or 0),
+                        invite["revoked_at"],
+                    ),
+                )
+                restored_invite_ids.add(invite["id"])
+            for join_request in preserved_join_requests:
+                if (
+                    join_request["album_id"] not in current_album_ids
+                    or join_request["invite_id"] not in restored_invite_ids
+                    or join_request["user_id"] not in current_user_ids
+                ):
+                    continue
+                reviewed_by = join_request["reviewed_by"]
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO album_join_requests(
+                        id, album_id, invite_id, user_id, status, created_at, reviewed_by, reviewed_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        join_request["id"],
+                        join_request["album_id"],
+                        join_request["invite_id"],
+                        join_request["user_id"],
+                        join_request["status"],
+                        int(join_request["created_at"] or 0),
+                        reviewed_by if reviewed_by in current_user_ids else None,
+                        join_request["reviewed_at"],
+                    ),
+                )
+            sqlite_ensure_legacy_album_members(conn)
 
 
 def json_write_db(db):
@@ -937,6 +1147,154 @@ def upsert_user(db, user):
             users[index] = user
             return
     users.append(user)
+
+
+def active_album_member_row(album_id, user_id):
+    if not album_id or not user_id:
+        return None
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            return conn.execute(
+                """
+                SELECT album_id, user_id, role, status, created_at, joined_at, approved_by
+                FROM album_members
+                WHERE album_id = ? AND user_id = ? AND status = 'active'
+                """,
+                (album_id, user_id),
+            ).fetchone()
+    return None
+
+
+def album_member_role(album_id, user_id):
+    row = active_album_member_row(album_id, user_id)
+    return row["role"] if row else ""
+
+
+def user_album_ids(user_id):
+    if not user_id:
+        return set()
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            rows = conn.execute(
+                "SELECT album_id FROM album_members WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            ).fetchall()
+            return {row["album_id"] for row in rows}
+    return set()
+
+
+def add_album_member(album_id, user_id, role="member", approved_by=""):
+    if not album_id or not user_id:
+        return
+    now = int(time.time())
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO album_members(album_id, user_id, role, status, created_at, joined_at, approved_by)
+                    VALUES(?, ?, ?, 'active', ?, ?, ?)
+                    ON CONFLICT(album_id, user_id) DO UPDATE SET
+                        role = excluded.role,
+                        status = 'active',
+                        joined_at = excluded.joined_at,
+                        approved_by = excluded.approved_by
+                    """,
+                    (album_id, user_id, role, now, now, approved_by or user_id),
+                )
+
+
+def generate_invite_code():
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def invite_public_payload(row, origin, album=None, current_user=None):
+    if not row:
+        return None
+    code = row["code"] if isinstance(row, sqlite3.Row) else row.get("code")
+    album_id = row["album_id"] if isinstance(row, sqlite3.Row) else row.get("albumId") or row.get("album_id")
+    payload = {
+        "id": row["id"] if isinstance(row, sqlite3.Row) else row.get("id"),
+        "albumId": album_id,
+        "code": code,
+        "status": row["status"] if isinstance(row, sqlite3.Row) else row.get("status", "active"),
+        "shareUrl": urljoin(origin, "/join/%s" % quote(code)),
+        "qrUrl": urljoin(origin, "/api/invites/%s/qr.svg" % quote(code)),
+        "createdAt": row["created_at"] if isinstance(row, sqlite3.Row) else row.get("createdAt") or row.get("created_at"),
+    }
+    if album:
+        payload["albumName"] = album.get("name", "")
+        payload["photoCount"] = len(album.get("photos", []))
+    if current_user:
+        payload["currentUserRole"] = album_member_role(album_id, current_user.get("id"))
+    return payload
+
+
+def active_invite_for_album(album_id, created_by, origin, album=None, current_user=None):
+    if not sqlite_enabled():
+        return None
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM album_invites
+            WHERE album_id = ? AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (album_id,),
+        ).fetchone()
+        if row:
+            return invite_public_payload(row, origin, album, current_user)
+
+        now = int(time.time())
+        for _ in range(20):
+            code = generate_invite_code()
+            try:
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO album_invites(id, album_id, code, token_hash, status, created_by, created_at, revoked_at)
+                        VALUES(?, ?, ?, ?, 'active', ?, ?, NULL)
+                        """,
+                        (uuid.uuid4().hex, album_id, code, hash_auth_token("%s:%s" % (code, uuid.uuid4().hex)), created_by, now),
+                    )
+                break
+            except sqlite3.IntegrityError:
+                continue
+        row = conn.execute("SELECT * FROM album_invites WHERE album_id = ? AND status = 'active'", (album_id,)).fetchone()
+        return invite_public_payload(row, origin, album, current_user)
+
+
+def invite_by_code(code):
+    if not sqlite_enabled():
+        return None
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        return conn.execute(
+            "SELECT * FROM album_invites WHERE upper(code) = ? AND status = 'active'",
+            (str(code or "").strip().upper(),),
+        ).fetchone()
+
+
+def latest_join_request(album_id, user_id):
+    if not sqlite_enabled():
+        return None
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM album_join_requests
+            WHERE album_id = ? AND user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (album_id, user_id),
+        ).fetchone()
 
 
 def create_auth_token(user_id):
@@ -1537,6 +1895,10 @@ def sync_all_folder_covers(db):
 def public_album(album, current_user=None):
     sync_folder_covers(album)
     visible = dict(album)
+    role = album_member_role(album.get("id"), current_user.get("id")) if current_user else ""
+    visible["currentUserRole"] = role
+    visible["canManage"] = role in {"owner", "admin", "member"}
+    visible["canAdmin"] = role in {"owner", "admin"}
     visible["folders"] = []
     for folder in album.get("folders", []):
         if folder.get("id") == "pending":
@@ -1624,7 +1986,7 @@ def user_avatar_match_key(user):
     engine = (user or {}).get("avatarEmbeddingEngine") or ""
     updated_at = int((user or {}).get("avatarProfileUpdatedAt") or 0)
     digest = hashlib.sha256(json.dumps(embedding or [], separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
-    return "%s:%s:%s" % (engine, updated_at, digest)
+    return "%s:%s:%s:%s" % (MY_PHOTOS_MATCH_ALGORITHM_VERSION, engine, updated_at, digest)
 
 
 def album_folder_fingerprint(album):
@@ -1666,13 +2028,37 @@ def compute_user_album_match(album, current_user):
             continue
         if folder.get("embeddingEngine") != user_engine or not folder.get("embedding"):
             continue
-        distance = cosine_distance(user_embedding, folder.get("embedding"))
-        if distance < best_distance:
-            best_distance = distance
+        candidates = [folder.get("embedding")]
+        samples = folder.get("embeddingSamples")
+        if isinstance(samples, list):
+            candidates.extend(sample for sample in samples if sample)
+        folder_distance = min(cosine_distance(user_embedding, candidate) for candidate in candidates)
+        if folder_distance < best_distance:
+            best_distance = folder_distance
             best_folder = folder
     threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
     if not best_folder or best_distance > threshold:
+        LOGGER.info(
+            "album_id=%s user_id=%s engine=%s best_folder_id=%s distance=%s threshold=%s",
+            album.get("id", ""),
+            (current_user or {}).get("id", ""),
+            user_engine,
+            (best_folder or {}).get("id", ""),
+            "" if best_distance == 999.0 else round(float(best_distance), 6),
+            threshold,
+            extra={"event": "my_photos.match_miss"},
+        )
         return base
+    LOGGER.info(
+        "album_id=%s user_id=%s engine=%s folder_id=%s distance=%s threshold=%s",
+        album.get("id", ""),
+        (current_user or {}).get("id", ""),
+        user_engine,
+        best_folder.get("id", ""),
+        round(float(best_distance), 6),
+        threshold,
+        extra={"event": "my_photos.match_hit"},
+    )
     base.update(
         {
             "matched": True,
@@ -1784,6 +2170,8 @@ EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tre
 OPENCV_MATCH_THRESHOLD = 0.46
 INSIGHTFACE_MATCH_THRESHOLD = 0.55
 INSIGHTFACE_MIN_DET_SCORE = 0.42
+FACE_FOLDER_SAMPLE_LIMIT = 12
+MY_PHOTOS_MATCH_ALGORITHM_VERSION = "samples-v1"
 # Keep comparable faces for real group photos; remove only tiny, weak, off-edge background detections.
 FACE_FILTER_MIN_AREA_RATIO = 0.004
 FACE_FILTER_SMALL_AREA_RATIO = 0.008
@@ -2037,6 +2425,12 @@ def choose_face_folder(album, embedding, engine):
 
 
 def update_folder_embedding(folder, embedding, engine):
+    samples = folder.get("embeddingSamples")
+    if not isinstance(samples, list):
+        samples = []
+    samples.append(embedding)
+    folder["embeddingSamples"] = samples[-FACE_FOLDER_SAMPLE_LIMIT:]
+
     current = folder.get("embedding")
     count = int(folder.get("embeddingCount") or 0)
     if not current or count <= 0:
@@ -2064,6 +2458,7 @@ def create_folder(album, name, embedding=None, folder_id=None, engine=None):
         folder["embedding"] = embedding
         folder["embeddingEngine"] = engine or "opencv"
         folder["embeddingCount"] = 1
+        folder["embeddingSamples"] = [embedding]
         folder["embeddingUpdatedAt"] = int(time.time())
     existing = {item["id"] for item in folders}
     base = folder["id"]
@@ -2788,6 +3183,25 @@ class AppHandler(BaseHTTPRequestHandler):
             return None
         return user
 
+    def require_album_member(self, album_id):
+        user = self.require_user()
+        if not user:
+            return None
+        if not album_member_role(album_id, user.get("id")):
+            self.send_error_json("你还没有加入这个相册", 403)
+            return None
+        return user
+
+    def require_album_admin(self, album_id):
+        user = self.require_album_member(album_id)
+        if not user:
+            return None
+        role = album_member_role(album_id, user.get("id"))
+        if role not in {"owner", "admin"}:
+            self.send_error_json("只有相册管理员可以执行这个操作", 403)
+            return None
+        return user
+
     def request_origin(self):
         proto = self.headers.get("X-Forwarded-Proto") or "http"
         host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost:%s" % os.environ.get("PORT", "8000")
@@ -2813,6 +3227,11 @@ class AppHandler(BaseHTTPRequestHandler):
             LOGGER.info("method=GET path=%s", path, extra={"event": "api.request"})
         if path == "/":
             return self.serve_file(PUBLIC / "index.html")
+        if path == "/.well-known/apple-app-site-association":
+            return self.serve_apple_app_site_association()
+        match = re.match(r"^/join/([A-Za-z0-9_-]+)$", path)
+        if match:
+            return self.serve_join_landing(match.group(1))
         if path.startswith("/assets/"):
             return self.serve_file(PUBLIC / path.removeprefix("/assets/"))
         match = re.match(r"^/thumbs/([^/]+)/(tiny|card|cover)/([^/]+)$", path)
@@ -2839,18 +3258,29 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             with LOCK:
                 db = load_db()
+                allowed_ids = user_album_ids(current_user.get("id"))
                 changed = False
                 for album in db["albums"]:
+                    if album.get("id") not in allowed_ids:
+                        continue
                     changed = ensure_user_album_match(db, album, current_user) or changed
                 if changed:
                     save_db(db)
-            return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"]]})
+            return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"] if album.get("id") in allowed_ids]})
+        match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/qr\.svg$", path)
+        if match:
+            return self.serve_invite_qr(match.group(1))
+        match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)$", path)
+        if match:
+            if not self.require_user():
+                return
+            return self.get_invite_request(match.group(1))
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)$", path)
         if match:
             return self.get_worker_job(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
-            current_user = self.require_user()
+            current_user = self.require_album_member(match.group(1))
             if not current_user:
                 return
             with LOCK:
@@ -2863,19 +3293,24 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_json({"album": public_album(album, current_user)})
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/download$", path)
         if match:
-            if not self.require_user():
+            if not self.require_album_member(match.group(1)):
                 return
             return self.download_folder(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-image$", path)
         if match:
-            if not self.require_user():
+            if not self.require_album_member(match.group(1)):
                 return
             return self.download_photo_image(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-live$", path)
         if match:
-            if not self.require_user():
+            if not self.require_album_member(match.group(1)):
                 return
             return self.download_live_photo(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/join-requests$", path)
+        if match:
+            if not self.require_album_admin(match.group(1)):
+                return
+            return self.list_join_requests(match.group(1))
         return self.send_error_json("Not found", 404)
 
     def do_POST(self):
@@ -2894,6 +3329,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)/complete$", path)
         if match:
             return self.complete_worker_job(match.group(1), match.group(2))
+        match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/request$", path)
+        if match:
+            current_user = self.require_user()
+            if not current_user:
+                return
+            return self.create_join_request(match.group(1), current_user)
         current_user = self.require_user()
         if not current_user:
             return
@@ -2919,45 +3360,85 @@ class AppHandler(BaseHTTPRequestHandler):
                 db = load_db()
                 db["albums"].insert(0, album)
                 save_db(db)
+            add_album_member(album["id"], current_user["id"], "owner", current_user["id"])
             LOGGER.info("album_id=%s name=%s", album["id"], album["name"], extra={"event": "album.create"})
             (UPLOADS / album["id"]).mkdir(parents=True, exist_ok=True)
             return self.send_json({"album": public_album(album, current_user)}, 201)
 
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.upload_photos(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/uploads/init$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.init_direct_uploads(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/uploads/complete$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.complete_direct_uploads(match.group(1))
+        match = re.match(r"^/api/albums/([^/]+)/invite$", path)
+        if match:
+            if not self.require_album_admin(match.group(1)):
+                return
+            return self.get_or_create_album_invite(match.group(1), current_user)
+        match = re.match(r"^/api/albums/([^/]+)/invite/reset$", path)
+        if match:
+            if not self.require_album_admin(match.group(1)):
+                return
+            return self.reset_album_invite(match.group(1), current_user)
+        match = re.match(r"^/api/albums/([^/]+)/join-requests/([^/]+)/(approve|reject)$", path)
+        if match:
+            if not self.require_album_admin(match.group(1)):
+                return
+            return self.review_join_request(match.group(1), match.group(2), match.group(3), current_user)
         match = re.match(r"^/api/albums/([^/]+)/rename$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.rename_album_request(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/reanalyze$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.reanalyze_album_request(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/photos/download-selected$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.download_selected_photos(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/photos/delete-selected$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.delete_selected_photos(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/merge$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.merge_folder_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/rename$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.rename_folder_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/mark-no-face$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.mark_no_face_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/move$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.move_photo_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/reclassify$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.reclassify_photo_request(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
 
@@ -2970,12 +3451,18 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
+            if not self.require_album_admin(match.group(1)):
+                return
             return self.delete_album_request(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.delete_folder_request(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)$", path)
         if match:
+            if not self.require_album_member(match.group(1)):
+                return
             return self.delete_photo_request(match.group(1), match.group(2))
         return self.send_error_json("Not found", 404)
 
@@ -3456,6 +3943,148 @@ class AppHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return None, "Invalid JSON"
 
+    def get_or_create_album_invite(self, album_id, current_user):
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+        invite = active_invite_for_album(album_id, current_user["id"], self.request_origin(), album, current_user)
+        LOGGER.info("album_id=%s code=%s", album_id, invite.get("code") if invite else "", extra={"event": "invite.get"})
+        return self.send_json({"invite": invite})
+
+    def reset_album_invite(self, album_id, current_user):
+        if not sqlite_enabled():
+            return self.send_error_json("相册分享需要 SQLite 存储", 409)
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+        now = int(time.time())
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    "UPDATE album_invites SET status = 'revoked', revoked_at = ? WHERE album_id = ? AND status = 'active'",
+                    (now, album_id),
+                )
+        invite = active_invite_for_album(album_id, current_user["id"], self.request_origin(), album, current_user)
+        LOGGER.info("album_id=%s code=%s", album_id, invite.get("code") if invite else "", extra={"event": "invite.reset"})
+        return self.send_json({"invite": invite})
+
+    def get_invite_request(self, code):
+        row = invite_by_code(code)
+        if not row:
+            return self.send_error_json("相册码无效或已失效", 404)
+        current_user = self.current_user()
+        with LOCK:
+            db = load_db()
+            album = find_album(db, row["album_id"])
+        if not album:
+            return self.send_error_json("Album not found", 404)
+        status = "none"
+        role = album_member_role(row["album_id"], current_user.get("id"))
+        if role:
+            status = "member"
+        else:
+            request = latest_join_request(row["album_id"], current_user.get("id"))
+            if request:
+                status = request["status"]
+        invite = invite_public_payload(row, self.request_origin(), album, current_user)
+        return self.send_json({"invite": invite, "joinStatus": status, "currentUserRole": role})
+
+    def create_join_request(self, code, current_user):
+        row = invite_by_code(code)
+        if not row:
+            return self.send_error_json("相册码无效或已失效", 404)
+        if album_member_role(row["album_id"], current_user.get("id")):
+            return self.send_json({"status": "member", "message": "你已经在这个相册中"})
+        existing = latest_join_request(row["album_id"], current_user.get("id"))
+        if existing and existing["status"] == "pending":
+            return self.send_json({"status": "pending", "requestId": existing["id"], "message": "申请已提交，等待管理员批准"})
+        now = int(time.time())
+        request_id = uuid.uuid4().hex
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO album_join_requests(id, album_id, invite_id, user_id, status, created_at, reviewed_by, reviewed_at)
+                    VALUES(?, ?, ?, ?, 'pending', ?, NULL, NULL)
+                    """,
+                    (request_id, row["album_id"], row["id"], current_user["id"], now),
+                )
+        LOGGER.info("album_id=%s user_id=%s request_id=%s", row["album_id"], current_user["id"], request_id, extra={"event": "invite.request"})
+        return self.send_json({"status": "pending", "requestId": request_id, "message": "申请已提交，等待管理员批准"}, 201)
+
+    def list_join_requests(self, album_id):
+        if not sqlite_enabled():
+            return self.send_json({"requests": []})
+        with sqlite_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.id, r.album_id, r.invite_id, r.user_id, r.status, r.created_at, r.reviewed_by, r.reviewed_at,
+                       u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                FROM album_join_requests r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.album_id = ?
+                ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+                """,
+                (album_id,),
+            ).fetchall()
+        requests = []
+        for row in rows:
+            user = json.loads(row["data_json"])
+            user.update({
+                "id": row["user_id"],
+                "username": row["username"],
+                "nickname": row["nickname"],
+                "avatarUrl": row["avatar_url"] or "",
+                "avatarObjectKey": row["avatar_object_key"] or "",
+                "hasFaceProfile": bool(row["has_face_profile"]),
+            })
+            requests.append({
+                "id": row["id"],
+                "albumId": row["album_id"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "reviewedAt": row["reviewed_at"],
+                "user": public_user(user, self.request_origin()),
+            })
+        return self.send_json({"requests": requests})
+
+    def review_join_request(self, album_id, request_id, action, current_user):
+        if not sqlite_enabled():
+            return self.send_error_json("相册分享需要 SQLite 存储", 409)
+        with sqlite_connect() as conn:
+            request = conn.execute(
+                "SELECT * FROM album_join_requests WHERE id = ? AND album_id = ?",
+                (request_id, album_id),
+            ).fetchone()
+            if not request:
+                return self.send_error_json("申请不存在", 404)
+            if request["status"] != "pending":
+                return self.send_error_json("这个申请已经处理过", 409)
+            next_status = "approved" if action == "approve" else "rejected"
+            now = int(time.time())
+            with conn:
+                conn.execute(
+                    "UPDATE album_join_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+                    (next_status, current_user["id"], now, request_id),
+                )
+        if action == "approve":
+            add_album_member(album_id, request["user_id"], "member", current_user["id"])
+        LOGGER.info(
+            "album_id=%s request_id=%s action=%s reviewer=%s",
+            album_id,
+            request_id,
+            action,
+            current_user["id"],
+            extra={"event": "invite.review"},
+        )
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        return self.send_json({"status": next_status, "album": public_album(album, current_user) if album else None})
+
     def claim_worker_job(self):
         if not self.worker_authorized():
             return
@@ -3827,6 +4456,107 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_bytes(self, body, content_type, status=200, cache_control="no-store"):
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def serve_apple_app_site_association(self):
+        payload = {
+            "applinks": {
+                "apps": [],
+                "details": [
+                    {
+                        "appIDs": ["%s.%s" % (os.environ.get("APPLE_TEAM_ID", "5FM245WCM5"), IOS_BUNDLE_IDENTIFIER)],
+                        "components": [
+                            {"/": "/join/*", "comment": "PicMe album invites"}
+                        ],
+                    }
+                ],
+            }
+        }
+        return self.send_bytes(json.dumps(payload, separators=(",", ":")), "application/json")
+
+    def serve_join_landing(self, code):
+        clean_code = re.sub(r"[^A-Za-z0-9_-]", "", code).upper()
+        row = invite_by_code(clean_code)
+        album_name = "PicMe 共享相册"
+        photo_count = ""
+        if row:
+            with LOCK:
+                album = find_album(load_db(), row["album_id"])
+            if album:
+                album_name = album.get("name") or album_name
+                photo_count = "%d 张照片" % len(album.get("photos", []))
+        share_url = urljoin(self.request_origin(), "/join/%s" % quote(clean_code))
+        download_url = APP_DOWNLOAD_URL or "#"
+        body = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>加入%s</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=share-invite-1" />
+</head>
+<body>
+  <main class="join-landing">
+    <section class="join-card">
+      <img src="/assets/logo.png?v=transparent-1" alt="PicMe" class="join-logo" />
+      <p class="eyebrow">PicMe album invite</p>
+      <h1>%s</h1>
+      <p>%s</p>
+      <strong class="join-code">%s</strong>
+      <div class="join-actions">
+        <a class="join-primary" href="%s">打开识我 App</a>
+        <a class="join-secondary" href="/?invite=%s">网页登录并申请加入</a>
+        <a class="join-secondary" href="%s">%s</a>
+      </div>
+      <p class="join-hint">如果已经安装 App，点击上方按钮会直接打开对应相册；未安装时请先下载 App，或在网页端登录后提交加入申请。</p>
+    </section>
+  </main>
+  <script>
+    window.setTimeout(function () {
+      if (!document.hidden) return;
+    }, 1200);
+  </script>
+</body>
+</html>""" % (
+            html.escape(album_name),
+            html.escape(album_name),
+            html.escape(photo_count or "好友邀请你加入这个旅行相册"),
+            html.escape(clean_code),
+            html.escape(share_url),
+            quote(clean_code),
+            html.escape(download_url),
+            "下载识我 App" if APP_DOWNLOAD_URL else "下载链接准备中",
+        )
+        return self.send_bytes(body, "text/html; charset=utf-8", cache_control="private, max-age=60")
+
+    def serve_invite_qr(self, code):
+        clean_code = re.sub(r"[^A-Za-z0-9_-]", "", code).upper()
+        if not invite_by_code(clean_code):
+            return self.send_error_json("相册码无效或已失效", 404)
+        share_url = urljoin(self.request_origin(), "/join/%s" % quote(clean_code))
+        if qrcode:
+            image = qrcode.make(share_url, image_factory=qrcode.image.svg.SvgImage)
+            out = tempfile.NamedTemporaryFile(prefix="picme-qr-", suffix=".svg", delete=False)
+            out.close()
+            target = Path(out.name)
+            try:
+                image.save(str(target))
+                body = target.read_bytes()
+            finally:
+                target.unlink(missing_ok=True)
+        else:
+            body = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320"><rect width="100%" height="100%" fill="white"/><text x="20" y="160" font-size="22">%s</text></svg>' % html.escape(clean_code)
+        return self.send_bytes(body, "image/svg+xml; charset=utf-8", cache_control="private, max-age=300")
 
     def find_photo_for_download(self, album_id, photo_id):
         with LOCK:

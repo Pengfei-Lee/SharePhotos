@@ -7,3 +7,4 @@ Pillow==10.4.0
 pillow-heif==0.18.0
 oss2==2.18.6
 redis==5.0.8
+qrcode==7.4.2

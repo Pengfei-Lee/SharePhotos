@@ -3,6 +3,7 @@ import PhotosUI
 import SwiftUI
 import UIKit
 import AVFoundation
+import CoreImage.CIFilterBuiltins
 
 struct AuthGateView: View {
     @EnvironmentObject private var store: SharePhotosStore
@@ -466,11 +467,12 @@ private struct AuthStatusText: View {
 struct ContentView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @State private var createAlbumPresented = false
+    @State private var joinAlbumPresented = false
 
     var body: some View {
         ZStack(alignment: .top) {
             NavigationView {
-                HomeView(createAlbumPresented: $createAlbumPresented)
+                HomeView(createAlbumPresented: $createAlbumPresented, joinAlbumPresented: $joinAlbumPresented)
                     .navigationBarHidden(true)
             }
             .navigationViewStyle(.stack)
@@ -490,6 +492,12 @@ struct ContentView: View {
         .sheet(isPresented: $createAlbumPresented) {
             CreateAlbumSheet()
         }
+        .sheet(isPresented: $joinAlbumPresented) {
+            JoinAlbumSheet(initialCode: "")
+        }
+        .sheet(item: $store.pendingDeepLink) { deepLink in
+            JoinAlbumSheet(initialCode: deepLink.code)
+        }
         .sheet(isPresented: $store.isServerSettingsPresented) {
             ServerSettingsSheet()
         }
@@ -504,6 +512,7 @@ struct ContentView: View {
 private struct HomeView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Binding var createAlbumPresented: Bool
+    @Binding var joinAlbumPresented: Bool
     @State private var deletingAlbum: Album?
     @State private var renamingAlbum: Album?
 
@@ -576,6 +585,20 @@ private struct HomeView: View {
             }
             .padding(.horizontal, 28)
             .padding(.bottom, 22)
+
+            Button {
+                joinAlbumPresented = true
+            } label: {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.headline.weight(.bold))
+                    .frame(width: 54, height: 54)
+                    .background(.white.opacity(0.92), in: Circle())
+                    .foregroundColor(.teal)
+                    .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
+            }
+            .padding(.trailing, 22)
+            .padding(.bottom, 94)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .background(AppBackground())
         .alert("删除这个共享相册？", isPresented: Binding(
@@ -720,6 +743,8 @@ private struct AlbumDetailView: View {
     @State private var uploadPresented = false
     @State private var deletingFolder: PhotoFolder?
     @State private var renamingFolder: PhotoFolder?
+    @State private var shareInvite: AlbumInvite?
+    @State private var approvalPresented = false
 
     var album: Album? { store.album(id: albumId) }
 
@@ -799,6 +824,40 @@ private struct AlbumDetailView: View {
                     .disabled(store.isBusy)
                     .opacity(store.isBusy ? 0.55 : 1)
 
+                    HStack(spacing: 12) {
+                        Button {
+                            Task {
+                                do {
+                                    shareInvite = try await store.fetchInvite(album: album)
+                                } catch {
+                                    store.statusText = error.sharePhotosNetworkMessage
+                                }
+                            }
+                        } label: {
+                            Label("分享相册", systemImage: "square.and.arrow.up")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                        }
+                        .buttonStyle(.plain)
+
+                        if album.isAdmin {
+                            Button {
+                                approvalPresented = true
+                            } label: {
+                                Label("审批", systemImage: "person.badge.plus")
+                                    .font(.headline.weight(.bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 16)
+                                    .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     NavigationLink {
                         AllPhotosView(albumId: album.id)
                     } label: {
@@ -832,6 +891,16 @@ private struct AlbumDetailView: View {
         }
         .sheet(isPresented: $uploadPresented) {
             UploadSheet(albumId: albumId)
+        }
+        .sheet(item: $shareInvite) { invite in
+            ShareAlbumSheet(album: album, invite: invite) { reset in
+                shareInvite = reset
+            }
+        }
+        .sheet(isPresented: $approvalPresented) {
+            if let album {
+                JoinRequestsSheet(album: album)
+            }
         }
         .sheet(item: $renamingFolder) { folder in
             if let album {
@@ -1279,6 +1348,197 @@ private struct CreateAlbumSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct JoinAlbumSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var code: String
+
+    init(initialCode: String) {
+        _code = State(initialValue: initialCode.uppercased())
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("相册码") {
+                    TextField("例如 A1B2C3D4", text: $code)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                }
+                Section {
+                    Button {
+                        Task {
+                            if await store.submitJoinRequest(code: code) {
+                                store.clearPendingDeepLink()
+                                dismiss()
+                            }
+                        }
+                    } label: {
+                        Label("申请加入相册", systemImage: "person.badge.plus")
+                    }
+                    .disabled(store.isBusy)
+                } footer: {
+                    Text("管理员批准后，你就能查看、上传和协作整理这个旅行相册。")
+                }
+            }
+            .navigationTitle("加入相册")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") {
+                        store.clearPendingDeepLink()
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ShareAlbumSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album?
+    let invite: AlbumInvite
+    let onReset: (AlbumInvite) -> Void
+    @State private var activityPresented = false
+
+    private var shareURL: URL? { URL(string: invite.shareUrl) }
+    private var qrImage: UIImage? { QRCodeRenderer.image(from: invite.shareUrl) }
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let qrImage {
+                        Image(uiImage: qrImage)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 230, height: 230)
+                            .padding(16)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    Text(invite.code)
+                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .tracking(3)
+                        .foregroundColor(.teal)
+                    Text(invite.shareUrl)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+
+                    if let shareURL {
+                        Button {
+                            activityPresented = true
+                        } label: {
+                            Label("分享到微信或朋友", systemImage: "square.and.arrow.up")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(primaryGradient, in: Capsule())
+                                .foregroundColor(.white)
+                        }
+                        .sheet(isPresented: $activityPresented) {
+                            ActivityView(items: ["我邀请你加入 PicMe 相册：\(album?.name ?? invite.albumName ?? "共享相册")", shareURL])
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        Task {
+                            guard let album else { return }
+                            do {
+                                let reset = try await store.resetInvite(album: album)
+                                onReset(reset)
+                            } catch {
+                                store.statusText = error.sharePhotosNetworkMessage
+                            }
+                        }
+                    } label: {
+                        Text("重置相册码")
+                            .font(.headline.weight(.bold))
+                    }
+                }
+                .padding(22)
+            }
+            .navigationTitle("分享相册")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct JoinRequestsSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album
+    @State private var requests: [JoinRequest] = []
+
+    var body: some View {
+        NavigationView {
+            List {
+                let pending = requests.filter { $0.status == "pending" }
+                if pending.isEmpty {
+                    Text("暂无待审批申请")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(pending) { request in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(request.user.nickname)
+                                .font(.headline)
+                            Text("@\(request.user.username)")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Button("批准") {
+                                    Task {
+                                        await store.reviewJoinRequest(album: album, request: request, approve: true)
+                                        requests = await store.loadJoinRequests(album: album)
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Button("拒绝", role: .destructive) {
+                                    Task {
+                                        await store.reviewJoinRequest(album: album, request: request, approve: false)
+                                        requests = await store.loadJoinRequests(album: album)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            .navigationTitle("加入申请")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .task {
+                requests = await store.loadJoinRequests(album: album)
+            }
+        }
+    }
+}
+
+private enum QRCodeRenderer {
+    static func image(from value: String) -> UIImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }
 
@@ -2530,6 +2790,18 @@ private struct RemoteImage: View {
     let mode: ContentMode
     @State private var state: RemoteImageState = .loading
 
+    private var loadKey: String {
+        guard let url else { return "" }
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.query = nil
+            components.fragment = nil
+            if let normalized = components.string, !normalized.isEmpty {
+                return normalized
+            }
+        }
+        return url.absoluteString
+    }
+
     var body: some View {
         Group {
             switch state {
@@ -2541,7 +2813,7 @@ private struct RemoteImage: View {
                 Rectangle().fill(.gray.opacity(0.12)).overlay(Image(systemName: "photo").foregroundColor(.secondary))
             }
         }
-        .task(id: url) {
+        .task(id: loadKey) {
             await load()
         }
     }
@@ -2551,15 +2823,32 @@ private struct RemoteImage: View {
             state = .failure
             return
         }
-        state = .loading
+        if let cachedImage = await cachedImage(for: url) {
+            guard !Task.isCancelled else { return }
+            state = .success(cachedImage)
+        } else if !state.isSuccess {
+            state = .loading
+        }
         do {
             let image = try await PhotoDiskCache.shared.dataImage(for: url)
             guard !Task.isCancelled else { return }
             state = .success(image)
         } catch {
             guard !Task.isCancelled else { return }
-            state = .failure
+            if !state.isSuccess {
+                state = .failure
+            }
         }
+    }
+
+    private func cachedImage(for url: URL) async -> UIImage? {
+        let preferredExtension = await PhotoDiskCache.shared.preferredExtension(for: url, fallback: "img")
+        guard let fileURL = await PhotoDiskCache.shared.cachedFile(for: url, preferredExtension: preferredExtension) else {
+            return nil
+        }
+        return await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: fileURL.path)
+        }.value
     }
 }
 
@@ -2567,6 +2856,13 @@ private enum RemoteImageState {
     case loading
     case success(UIImage)
     case failure
+
+    var isSuccess: Bool {
+        if case .success = self {
+            return true
+        }
+        return false
+    }
 }
 
 private struct BrandHeader: View {

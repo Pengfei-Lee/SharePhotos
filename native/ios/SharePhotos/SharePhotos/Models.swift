@@ -9,9 +9,13 @@ struct Album: Identifiable, Codable, Hashable {
     let myPhotoIds: [String]?
     let myPhotoCount: Int?
     let myCoverUrl: String?
+    let currentUserRole: String?
+    let canManage: Bool?
+    let canAdmin: Bool?
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
+    var isAdmin: Bool { canAdmin == true || ["owner", "admin"].contains(currentUserRole ?? "") }
 }
 
 struct User: Identifiable, Codable, Hashable {
@@ -108,6 +112,52 @@ struct ProfileResponse: Codable {
     let warning: String?
 }
 
+struct AlbumInvite: Identifiable, Codable, Hashable {
+    let id: String
+    let albumId: String
+    let code: String
+    let status: String
+    let shareUrl: String
+    let qrUrl: String
+    let albumName: String?
+    let photoCount: Int?
+    let createdAt: Int?
+}
+
+struct InviteResponse: Codable {
+    let invite: AlbumInvite
+    let joinStatus: String?
+    let currentUserRole: String?
+}
+
+struct JoinRequestResponse: Codable {
+    let status: String
+    let requestId: String?
+    let message: String?
+}
+
+struct AlbumInviteResponse: Codable {
+    let invite: AlbumInvite
+}
+
+struct JoinRequest: Identifiable, Codable, Hashable {
+    let id: String
+    let albumId: String
+    let status: String
+    let createdAt: Int?
+    let reviewedAt: Int?
+    let user: User
+}
+
+struct JoinRequestsResponse: Codable {
+    let requests: [JoinRequest]
+}
+
+struct ReviewJoinRequestResponse: Codable {
+    let status: String
+    let album: Album?
+}
+
 struct UploadResponse: Codable {
     let album: Album
     let queued: Int
@@ -145,4 +195,9 @@ enum AppRoute: Hashable {
 struct ShareableFile: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+struct PendingDeepLink: Identifiable, Hashable {
+    let id = UUID()
+    let code: String
 }

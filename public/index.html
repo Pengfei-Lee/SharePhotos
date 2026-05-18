@@ -178,6 +178,7 @@
           <div>
             <h3>暂无相册</h3>
             <p>创建一个相册后，就可以邀请朋友一起上传照片。</p>
+            <button id="emptyJoinAlbum" class="secondary" type="button">输入相册码</button>
           </div>
         </section>
 
@@ -247,6 +248,28 @@
           <button type="submit">创建</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="joinAlbumDialog" class="create-album-dialog">
+      <form id="joinAlbumForm" method="dialog" class="create-album-form">
+        <div>
+          <p class="eyebrow">Join album</p>
+          <h3>输入相册码</h3>
+        </div>
+        <input id="joinAlbumCode" name="code" placeholder="例如：A1B2C3D4" autocomplete="off" />
+        <p id="joinAlbumStatus" class="dialog-status"></p>
+        <div class="dialog-actions">
+          <button id="cancelJoinAlbum" class="secondary" type="button">取消</button>
+          <button type="submit">申请加入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shareAlbumDialog" class="share-album-dialog">
+      <div class="share-album-panel">
+        <button id="closeShareAlbum" class="viewer-close" type="button" aria-label="关闭">×</button>
+        <div id="shareAlbumContent"></div>
+      </div>
     </dialog>
 
     <script src="/assets/app.js?v=auth-username-1"></script>

@@ -24,6 +24,7 @@ const state = {
   viewerPhotos: [],
   viewerIndex: -1,
   viewerTouchStart: null,
+  pendingInviteCode: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -58,6 +59,14 @@ const albumName = $("#albumName");
 const openCreateAlbum = $("#openCreateAlbum");
 const createAlbumDialog = $("#createAlbumDialog");
 const cancelCreateAlbum = $("#cancelCreateAlbum");
+const joinAlbumDialog = $("#joinAlbumDialog");
+const joinAlbumForm = $("#joinAlbumForm");
+const joinAlbumCode = $("#joinAlbumCode");
+const joinAlbumStatus = $("#joinAlbumStatus");
+const cancelJoinAlbum = $("#cancelJoinAlbum");
+const shareAlbumDialog = $("#shareAlbumDialog");
+const shareAlbumContent = $("#shareAlbumContent");
+const closeShareAlbum = $("#closeShareAlbum");
 const albumList = $("#albumList");
 const sidebar = $(".sidebar");
 const albumContextName = $("#albumContextName");
@@ -68,6 +77,7 @@ const topbar = $(".topbar");
 const currentAlbumTitle = $("#currentAlbumTitle");
 const stats = $("#stats");
 const emptyState = $("#emptyState");
+const emptyJoinAlbum = $("#emptyJoinAlbum");
 const homeAlbums = $("#homeAlbums");
 const albumPanel = $("#albumPanel");
 const myPhotosPanel = $("#myPhotosPanel");
@@ -91,6 +101,12 @@ const closeViewer = $("#closeViewer");
 
 function pathPart(value) {
   return encodeURIComponent(value);
+}
+
+function inviteCodeFromLocation() {
+  const joinMatch = window.location.pathname.match(/^\/join\/([A-Za-z0-9_-]+)$/);
+  if (joinMatch) return joinMatch[1].toUpperCase();
+  return (new URLSearchParams(window.location.search).get("invite") || "").trim().toUpperCase();
 }
 
 function authHeaders(extra = {}) {
@@ -891,7 +907,14 @@ function renderHomeAlbums() {
 
   emptyState.classList.add("hidden");
   homeAlbums.classList.remove("hidden");
-  homeAlbums.insertAdjacentHTML("beforeend", `<div class="section-heading"><h3>相册</h3><p>${state.albums.length} 个一级相册</p></div>`);
+  homeAlbums.insertAdjacentHTML(
+    "beforeend",
+    `<div class="section-heading home-actions-heading">
+      <div><h3>相册</h3><p>${state.albums.length} 个一级相册</p></div>
+      <button id="openJoinAlbum" class="secondary" type="button">输入相册码</button>
+    </div>`,
+  );
+  $("#openJoinAlbum").addEventListener("click", () => openJoinDialog());
   state.albums.forEach((album) => {
     const folderPreviews = sortedFolders(album)
       .map((folder) => {
@@ -1029,6 +1052,10 @@ function render() {
   }
 }
 
+function canAdminAlbum(album) {
+  return album.canAdmin || ["owner", "admin"].includes(album.currentUserRole || "");
+}
+
 function renderFolders(album) {
   if (state.myPhotosOpen) {
     uploadForm.classList.add("hidden");
@@ -1080,8 +1107,26 @@ function renderFolders(album) {
   folders.innerHTML = "";
   folders.insertAdjacentHTML(
     "beforeend",
-    `<div class="section-heading"><h3>按人打包带走</h3><p>${album.folders.length} 个可下载小相册</p></div>`,
+    `<div class="album-share-card">
+      <div>
+        <strong>邀请同行朋友</strong>
+        <span>分享链接、二维码或相册码，朋友申请后由管理员批准加入。</span>
+      </div>
+      <div class="album-share-actions">
+        <button class="secondary share-album" type="button">分享相册</button>
+        ${canAdminAlbum(album) ? `<button class="secondary manage-join-requests" type="button">审批申请</button>` : ""}
+      </div>
+    </div>
+    <div class="section-heading"><h3>按人打包带走</h3><p>${album.folders.length} 个可下载小相册</p></div>`,
   );
+  const shareButton = folders.querySelector(".share-album");
+  if (shareButton) {
+    shareButton.addEventListener("click", () => shareAlbum(album).catch((error) => alert(error.message)));
+  }
+  const requestsButton = folders.querySelector(".manage-join-requests");
+  if (requestsButton) {
+    requestsButton.addEventListener("click", () => manageJoinRequests(album).catch((error) => alert(error.message)));
+  }
   sortedFolders(album).forEach((folder) => {
     const folderName = folderDisplayName(folder);
     const photos = album.photos
@@ -1755,6 +1800,104 @@ async function toggleViewerLivePlayback() {
   }
 }
 
+function openJoinDialog(code = "") {
+  joinAlbumStatus.textContent = "";
+  joinAlbumCode.value = (code || "").toUpperCase();
+  if (typeof joinAlbumDialog.showModal === "function") {
+    joinAlbumDialog.showModal();
+  } else {
+    joinAlbumDialog.setAttribute("open", "");
+  }
+  joinAlbumCode.focus();
+}
+
+async function submitJoinCode(code) {
+  const normalized = (code || "").trim().toUpperCase();
+  if (!normalized) {
+    joinAlbumStatus.textContent = "请输入相册码";
+    return;
+  }
+  const preview = await api(`/api/invites/${pathPart(normalized)}`);
+  if (preview.joinStatus === "member") {
+    joinAlbumStatus.textContent = "你已经在这个相册中";
+    await loadAlbums();
+    const albumId = preview.invite && preview.invite.albumId;
+    if (albumId) state.currentAlbumId = albumId;
+    if (joinAlbumDialog.open) joinAlbumDialog.close();
+    render();
+    return;
+  }
+  if (preview.joinStatus === "pending") {
+    joinAlbumStatus.textContent = "申请已提交，等待管理员批准";
+    return;
+  }
+  if (!window.confirm(`申请加入「${preview.invite.albumName || "共享相册"}」？管理员批准后即可查看和协作整理。`)) {
+    return;
+  }
+  const payload = await api(`/api/invites/${pathPart(normalized)}/request`, { method: "POST" });
+  joinAlbumStatus.textContent = payload.message || "申请已提交，等待管理员批准";
+}
+
+async function shareAlbum(album) {
+  const payload = await api(`/api/albums/${pathPart(album.id)}/invite`, { method: "POST" });
+  const invite = payload.invite;
+  shareAlbumContent.innerHTML = `
+    <p class="eyebrow">Share album</p>
+    <h3>${escapeHtml(album.name)}</h3>
+    <img class="share-qr" src="${escapeHtml(invite.qrUrl)}" alt="相册二维码" />
+    <div class="share-code">${escapeHtml(invite.code)}</div>
+    <input class="share-url-input" value="${escapeHtml(invite.shareUrl)}" readonly />
+    <div class="dialog-actions">
+      <button class="secondary copy-share-link" type="button">复制链接</button>
+      <button class="secondary reset-share-link" type="button">重置相册码</button>
+      <button class="native-share-link" type="button">系统分享</button>
+    </div>
+    <p class="dialog-status">朋友扫码或打开链接后，需要管理员批准才能加入。</p>
+  `;
+  shareAlbumContent.querySelector(".copy-share-link").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(invite.shareUrl);
+    alert("分享链接已复制");
+  });
+  shareAlbumContent.querySelector(".native-share-link").addEventListener("click", async () => {
+    if (navigator.share) {
+      await navigator.share({ title: `加入 ${album.name}`, text: `我邀请你加入 PicMe 相册：${album.name}`, url: invite.shareUrl });
+    } else {
+      await navigator.clipboard.writeText(invite.shareUrl);
+      alert("浏览器不支持系统分享，已复制链接");
+    }
+  });
+  shareAlbumContent.querySelector(".reset-share-link").addEventListener("click", async () => {
+    if (!window.confirm("重置后旧二维码和相册码会失效，继续吗？")) return;
+    const reset = await api(`/api/albums/${pathPart(album.id)}/invite/reset`, { method: "POST" });
+    shareAlbumDialog.close();
+    await shareAlbum({ ...album, shareInfo: reset.invite });
+  });
+  if (typeof shareAlbumDialog.showModal === "function") {
+    shareAlbumDialog.showModal();
+  } else {
+    shareAlbumDialog.setAttribute("open", "");
+  }
+}
+
+async function manageJoinRequests(album) {
+  const payload = await api(`/api/albums/${pathPart(album.id)}/join-requests`);
+  const pending = (payload.requests || []).filter((item) => item.status === "pending");
+  if (!pending.length) {
+    alert("暂无待审批申请");
+    return;
+  }
+  for (const request of pending) {
+    const nickname = request.user?.nickname || request.user?.username || "用户";
+    const action = window.prompt(`处理 ${nickname} 的加入申请：输入 A 批准，输入 R 拒绝，留空跳过`, "A");
+    if (!action) continue;
+    const normalized = action.trim().toUpperCase();
+    if (normalized !== "A" && normalized !== "R") continue;
+    await api(`/api/albums/${pathPart(album.id)}/join-requests/${pathPart(request.id)}/${normalized === "A" ? "approve" : "reject"}`, { method: "POST" });
+  }
+  await refreshCurrentAlbum();
+  alert("审批完成");
+}
+
 function showAdjacentViewerPhoto(direction) {
   if (!state.viewerPhotos.length) return;
   const nextIndex = state.viewerIndex + direction;
@@ -2137,6 +2280,24 @@ cancelCreateAlbum.addEventListener("click", () => {
   createAlbumDialog.close();
 });
 
+emptyJoinAlbum.addEventListener("click", () => openJoinDialog());
+
+joinAlbumForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitJoinCode(joinAlbumCode.value).catch((error) => {
+    joinAlbumStatus.textContent = error.message;
+  });
+});
+
+cancelJoinAlbum.addEventListener("click", () => {
+  joinAlbumCode.value = "";
+  joinAlbumDialog.close();
+});
+
+closeShareAlbum.addEventListener("click", () => {
+  shareAlbumDialog.close();
+});
+
 createAlbumDialog.addEventListener("click", (event) => {
   if (event.target === createAlbumDialog) {
     createAlbumDialog.close();
@@ -2162,11 +2323,20 @@ window.addEventListener("resize", () => {
 });
 
 async function boot() {
+  state.pendingInviteCode = inviteCodeFromLocation();
   renderAuth();
-  if (!state.token) return;
+  if (!state.token) {
+    if (state.pendingInviteCode) {
+      loginStatus.textContent = "请先登录，再申请加入相册";
+    }
+    return;
+  }
   const loadedUser = await loadCurrentUser();
   if (!loadedUser) return;
   await loadAlbums();
+  if (state.pendingInviteCode) {
+    openJoinDialog(state.pendingInviteCode);
+  }
 }
 
 boot().catch((error) => {

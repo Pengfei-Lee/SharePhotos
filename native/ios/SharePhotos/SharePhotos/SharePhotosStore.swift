@@ -27,6 +27,7 @@ final class SharePhotosStore: ObservableObject {
     @Published var authToken: String?
     @Published var authWarning: String?
     @Published var isCheckingAuth = false
+    @Published var pendingDeepLink: PendingDeepLink?
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
@@ -341,6 +342,82 @@ final class SharePhotosStore: ObservableObject {
             statusText = message
             showOperation(title: "创建失败", message: message, progress: nil)
             return nil
+        }
+    }
+
+    func handleIncomingURL(_ url: URL) {
+        guard let code = Self.inviteCode(from: url) else { return }
+        pendingDeepLink = PendingDeepLink(code: code)
+        statusText = isAuthenticated ? "准备申请加入相册 \(code)" : "请先登录，再加入相册 \(code)"
+    }
+
+    func clearPendingDeepLink() {
+        pendingDeepLink = nil
+    }
+
+    func fetchInvite(album: Album) async throws -> AlbumInvite {
+        try await api.albumInvite(albumId: album.id)
+    }
+
+    func resetInvite(album: Album) async throws -> AlbumInvite {
+        try await api.resetAlbumInvite(albumId: album.id)
+    }
+
+    func submitJoinRequest(code: String) async -> Bool {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalized.isEmpty else {
+            statusText = "请输入相册码"
+            return false
+        }
+        isBusy = true
+        showOperation(title: "申请加入", message: "正在确认相册码", progress: nil)
+        defer { isBusy = false }
+        do {
+            let preview = try await api.invite(code: normalized)
+            if preview.joinStatus == "member" {
+                await loadAlbums()
+                selectedAlbumId = preview.invite.albumId
+                statusText = "已打开 \(preview.invite.albumName ?? "相册")"
+                hideOperation(after: 0.6)
+                return true
+            }
+            let response = try await api.requestJoin(code: normalized)
+            statusText = response.message ?? "申请已提交，等待管理员批准"
+            showOperation(title: "申请已提交", message: statusText, progress: 1)
+            hideOperation(after: 1.2)
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "申请失败", message: message, progress: nil)
+            return false
+        }
+    }
+
+    func loadJoinRequests(album: Album) async -> [JoinRequest] {
+        do {
+            return try await api.joinRequests(albumId: album.id)
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func reviewJoinRequest(album: Album, request: JoinRequest, approve: Bool) async {
+        isBusy = true
+        showOperation(title: approve ? "批准加入" : "拒绝申请", message: "正在处理 \(request.user.nickname)", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.reviewJoinRequest(albumId: album.id, requestId: request.id, approve: approve)
+            if let album = response.album {
+                upsert(album)
+            }
+            statusText = approve ? "已批准 \(request.user.nickname) 加入" : "已拒绝申请"
+            hideOperation(after: 0.8)
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "处理失败", message: message, progress: nil)
         }
     }
 
@@ -713,6 +790,20 @@ final class SharePhotosStore: ObservableObject {
     private func isValidPasswordFormat(_ password: String) -> Bool {
         guard (6...20).contains(password.count) else { return false }
         return password.unicodeScalars.allSatisfy { (0x21...0x7E).contains($0.value) }
+    }
+
+    private static func inviteCode(from url: URL) -> String? {
+        let parts = url.pathComponents
+        if let joinIndex = parts.firstIndex(of: "join"), parts.indices.contains(joinIndex + 1) {
+            let code = parts[joinIndex + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+            return code.isEmpty ? nil : code.uppercased()
+        }
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let code = components.queryItems?.first(where: { $0.name == "invite" })?.value,
+           !code.isEmpty {
+            return code.uppercased()
+        }
+        return nil
     }
 
     private func handleError(_ error: Error) -> String {
