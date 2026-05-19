@@ -39,6 +39,12 @@ final class SharePhotosStore: ObservableObject {
         self.api = api.withBaseURL(URL(string: apiAddress) ?? api.baseURL)
         self.authToken = tokenStore.readToken()
         self.api.authToken = authToken
+        self.api.refreshToken = tokenStore.readRefreshToken()
+        self.api.onAuthTokensChanged = { [weak self] response in
+            Task { @MainActor in
+                self?.updateTokens(from: response)
+            }
+        }
     }
 
     var isAuthenticated: Bool {
@@ -100,7 +106,7 @@ final class SharePhotosStore: ObservableObject {
         defer { isBusy = false }
         do {
             let response = try await api.login(username: normalizedUsername, password: password)
-            setAuthenticated(user: response.user, token: response.token, warning: nil)
+            setAuthenticated(response: response, warning: nil)
             await loadAlbums()
             statusText = "欢迎回来，\(response.user.nickname)"
             return true
@@ -142,7 +148,7 @@ final class SharePhotosStore: ObservableObject {
                 password: password,
                 avatarData: avatarData
             )
-            setAuthenticated(user: response.user, token: response.token, warning: response.warning)
+            setAuthenticated(response: response, warning: response.warning)
             statusText = response.warning ?? "账号已创建，欢迎 \(response.user.nickname)"
             await loadAlbums()
             return true
@@ -160,12 +166,12 @@ final class SharePhotosStore: ObservableObject {
         defer { isCheckingAuth = false }
         do {
             let user = try await api.me()
-            guard authToken == tokenSnapshot else { return }
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             currentUser = user
             uploader = user.nickname
             clearExpiredStatusIfNeeded()
         } catch {
-            guard authToken == tokenSnapshot else { return }
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             if case APIError.unauthorized = error {
                 expireSession()
             } else {
@@ -221,13 +227,13 @@ final class SharePhotosStore: ObservableObject {
         showOperation(title: "连接服务中", message: "正在读取 \(serverAddress)", progress: nil)
         do {
             let loadedAlbums = try await fetchAlbumsWithFallback()
-            guard authToken == tokenSnapshot else { return }
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             albums = loadedAlbums
             reconcileSelectedAlbum()
             clearExpiredStatusIfNeeded()
             hideOperation(after: 0.6)
         } catch {
-            guard authToken == tokenSnapshot else { return }
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             let message = handleError(error, unauthorizedMessage: "相册刷新失败，请稍后重试")
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)
@@ -247,6 +253,7 @@ final class SharePhotosStore: ObservableObject {
         do {
             let candidateAPI = api.withBaseURL(url)
             candidateAPI.authToken = authToken
+            candidateAPI.refreshToken = tokenStore.readRefreshToken()
             albums = try await candidateAPI.fetchAlbums()
             api = candidateAPI
             serverAddress = normalized
@@ -278,6 +285,7 @@ final class SharePhotosStore: ObservableObject {
             do {
                 let candidateAPI = api.withBaseURL(url)
                 candidateAPI.authToken = authToken
+                candidateAPI.refreshToken = tokenStore.readRefreshToken()
                 let albums = try await candidateAPI.fetchAlbums()
                 api = candidateAPI
                 serverAddress = address
@@ -755,13 +763,21 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
-    private func setAuthenticated(user: User, token: String, warning: String?) {
-        currentUser = user
-        authToken = token
+    private func setAuthenticated(response: AuthResponse, warning: String?) {
+        currentUser = response.user
+        authToken = response.effectiveAccessToken
         authWarning = warning
-        tokenStore.saveToken(token)
-        api.authToken = token
-        uploader = user.nickname
+        tokenStore.save(accessToken: response.effectiveAccessToken, refreshToken: response.refreshToken)
+        api.authToken = response.effectiveAccessToken
+        api.refreshToken = response.refreshToken
+        uploader = response.user.nickname
+    }
+
+    private func updateTokens(from response: AuthResponse) {
+        authToken = response.effectiveAccessToken
+        tokenStore.save(accessToken: response.effectiveAccessToken, refreshToken: response.refreshToken)
+        api.authToken = response.effectiveAccessToken
+        api.refreshToken = response.refreshToken
     }
 
     private func clearAuth() {
@@ -770,6 +786,7 @@ final class SharePhotosStore: ObservableObject {
         authWarning = nil
         tokenStore.deleteToken()
         api.authToken = nil
+        api.refreshToken = nil
         showsOperation = false
     }
 
@@ -814,6 +831,10 @@ final class SharePhotosStore: ObservableObject {
     private func clearExpiredStatusIfNeeded() {
         guard statusText == APIError.unauthorized.localizedDescription else { return }
         statusText = albums.isEmpty ? "已登录，还没有相册" : "已同步 \(albums.count) 个相册"
+    }
+
+    private func tokenStillRepresentsCurrentSession(_ tokenSnapshot: String?) -> Bool {
+        authToken == tokenSnapshot || (tokenSnapshot != nil && authToken != nil)
     }
 
     private func pollRecognition(albumId: String, tokenSnapshot: String?) async {
@@ -883,10 +904,35 @@ final class SharePhotosStore: ObservableObject {
 
 final class KeychainTokenStore {
     private let service = "me.picme.SharePhotos"
-    private let account = "authToken"
+    private let accessAccount = "authToken"
+    private let refreshAccount = "refreshToken"
 
     func readToken() -> String? {
-        var query = baseQuery
+        readToken(account: accessAccount)
+    }
+
+    func readRefreshToken() -> String? {
+        readToken(account: refreshAccount)
+    }
+
+    func save(accessToken: String, refreshToken: String?) {
+        saveToken(accessToken, account: accessAccount)
+        if let refreshToken, !refreshToken.isEmpty {
+            saveToken(refreshToken, account: refreshAccount)
+        }
+    }
+
+    func saveToken(_ token: String) {
+        saveToken(token, account: accessAccount)
+    }
+
+    func deleteToken() {
+        SecItemDelete(baseQuery(account: accessAccount) as CFDictionary)
+        SecItemDelete(baseQuery(account: refreshAccount) as CFDictionary)
+    }
+
+    private func readToken(account: String) -> String? {
+        var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -896,19 +942,15 @@ final class KeychainTokenStore {
         return String(data: data, encoding: .utf8)
     }
 
-    func saveToken(_ token: String) {
-        deleteToken()
-        var query = baseQuery
+    private func saveToken(_ token: String, account: String) {
+        SecItemDelete(baseQuery(account: account) as CFDictionary)
+        var query = baseQuery(account: account)
         query[kSecValueData as String] = Data(token.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemAdd(query as CFDictionary, nil)
     }
 
-    func deleteToken() {
-        SecItemDelete(baseQuery as CFDictionary)
-    }
-
-    private var baseQuery: [String: Any] {
+    private func baseQuery(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
