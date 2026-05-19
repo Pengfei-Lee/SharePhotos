@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 import AVFoundation
 import CoreImage.CIFilterBuiltins
+import LinkPresentation
 
 struct AuthGateView: View {
     @EnvironmentObject private var store: SharePhotosStore
@@ -498,9 +499,6 @@ struct ContentView: View {
         .sheet(item: $store.pendingDeepLink) { deepLink in
             JoinAlbumSheet(initialCode: deepLink.code)
         }
-        .sheet(isPresented: $store.isServerSettingsPresented) {
-            ServerSettingsSheet()
-        }
         .sheet(item: $store.shareableFile) { file in
             ActivityView(items: [file.url])
         }
@@ -566,8 +564,7 @@ private struct HomeView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
 
-                    ServerStatusRow()
-                        .padding(.bottom, 112)
+                    Spacer(minLength: 112)
                 }
                 .padding(.horizontal, 18)
             }
@@ -621,116 +618,56 @@ private struct HomeView: View {
     }
 }
 
-private struct ServerStatusRow: View {
-    @EnvironmentObject private var store: SharePhotosStore
+private enum AlbumDetailTab: String, CaseIterable, Identifiable {
+    case mine
+    case folders
+    case all
 
-    var body: some View {
-        Button {
-            store.isServerSettingsPresented = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "wifi.router")
-                    .font(.headline)
-                    .foregroundColor(.teal)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("服务地址")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(.secondaryText)
-                    Text(store.serverAddress)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundColor(.primaryText)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Text("修改")
-                    .font(.footnote.weight(.bold))
-                    .foregroundColor(.teal)
-            }
-            .padding(14)
-            .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.12)))
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .mine: return "我的照片"
+        case .folders: return "人物小相册"
+        case .all: return "全部照片"
         }
-        .buttonStyle(.plain)
     }
 }
 
-private struct ServerSettingsSheet: View {
-    @EnvironmentObject private var store: SharePhotosStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var address = ""
-    @State private var isSaving = false
+private struct AlbumDetailTabBar: View {
+    @Binding var selection: AlbumDetailTab
+    let album: Album
 
-    private var trimmedAddress: String {
-        address.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func count(for tab: AlbumDetailTab) -> Int {
+        switch tab {
+        case .mine: return album.myPhotoCount ?? (album.myPhotoIds ?? []).count
+        case .folders: return album.folders.count
+        case .all: return album.photos.count
+        }
     }
 
     var body: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("手机真机不能访问 Mac 的 localhost。请填写 Mac 当前局域网地址，格式类似 http://192.168.3.25:8000。")
-                    .font(.subheadline)
-                    .foregroundColor(.secondaryText)
-                    .lineSpacing(4)
-
-                TextField("http://192.168.3.25:8000", text: $address)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.body.weight(.semibold))
-                    .padding(16)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(.teal.opacity(0.18)))
-
+        HStack(spacing: 8) {
+            ForEach(AlbumDetailTab.allCases) { tab in
                 Button {
-                    Task {
-                        isSaving = true
-                        let didConnect = await store.updateServerAddress(address)
-                        isSaving = false
-                        if didConnect {
-                            dismiss()
-                        }
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selection = tab
                     }
                 } label: {
-                    Text(isSaving ? "连接中..." : "保存并重连")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .foregroundColor(.white)
-                }
-                .disabled(trimmedAddress.isEmpty || isSaving)
-                .opacity(trimmedAddress.isEmpty || isSaving ? 0.55 : 1)
-
-                Button {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
+                    VStack(spacing: 3) {
+                        Text(tab.title)
+                            .font(.footnote.weight(.bold))
+                        Text("\(count(for: tab))")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(selection == tab ? .white.opacity(0.86) : .secondaryText)
                     }
-                } label: {
-                    Label("检查本地网络权限", systemImage: "gearshape")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .foregroundColor(.teal)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(selection == tab ? AnyShapeStyle(primaryGradient) : AnyShapeStyle(Color.white.opacity(0.78)), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .foregroundColor(selection == tab ? .white : .primaryText)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selection == tab ? Color.clear : Color.teal.opacity(0.12)))
                 }
-
-                Text("如果 Safari 能打开同一个地址，但 App 不能连，通常是 iOS 的“本地网络”权限没打开。")
-                    .font(.footnote)
-                    .foregroundColor(.secondaryText)
-
-                Spacer()
-            }
-            .padding(20)
-            .background(AppBackground())
-            .navigationTitle("服务连接")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                }
-            }
-            .onAppear {
-                address = store.serverAddress
+                .buttonStyle(.plain)
             }
         }
     }
@@ -745,6 +682,7 @@ private struct AlbumDetailView: View {
     @State private var renamingFolder: PhotoFolder?
     @State private var shareInvite: AlbumInvite?
     @State private var approvalPresented = false
+    @State private var activeTab: AlbumDetailTab = .folders
 
     var album: Album? { store.album(id: albumId) }
 
@@ -756,58 +694,64 @@ private struct AlbumDetailView: View {
 
                     AlbumHero(album: album)
 
-                    MyPhotosRecommendationCard(album: album)
+                    AlbumDetailTabBar(selection: $activeTab, album: album)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("按人打包带走")
-                            .font(.system(size: 32, weight: .black))
-                        Text("\(album.folders.count) 个可下载小相册")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
+                    if activeTab == .mine {
+                        AlbumMyPhotosTab(album: album)
                     }
 
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
-                        ForEach(album.folders) { folder in
-                            NavigationLink {
-                                FolderDetailView(albumId: album.id, folderId: folder.id)
-                            } label: {
-                                FolderCard(album: album, folder: folder, compact: true)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button {
-                                    renamingFolder = folder
+                    if activeTab == .folders {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("按人打包带走")
+                                .font(.system(size: 32, weight: .black))
+                            Text("\(album.folders.count) 个可下载小相册")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                        }
+
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                            ForEach(album.folders) { folder in
+                                NavigationLink {
+                                    FolderDetailView(albumId: album.id, folderId: folder.id)
                                 } label: {
-                                    Label("重命名小相册", systemImage: "pencil")
+                                    FolderCard(album: album, folder: folder, compact: true)
                                 }
-                                Button {
-                                    Task { await store.downloadFolder(album: album, folder: folder) }
-                                } label: {
-                                    Label("下载照片包", systemImage: "square.and.arrow.down")
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button {
+                                        renamingFolder = folder
+                                    } label: {
+                                        Label("重命名小相册", systemImage: "pencil")
+                                    }
+                                    Button {
+                                        Task { await store.downloadFolder(album: album, folder: folder) }
+                                    } label: {
+                                        Label("下载照片包", systemImage: "square.and.arrow.down")
+                                    }
+                                    Button(role: .destructive) {
+                                        deletingFolder = folder
+                                    } label: {
+                                        Label("删除小相册", systemImage: "trash")
+                                    }
                                 }
-                                Button(role: .destructive) {
-                                    deletingFolder = folder
-                                } label: {
-                                    Label("删除小相册", systemImage: "trash")
+                                .overlay(alignment: .topTrailing) {
+                                    FolderMenu(
+                                        album: album,
+                                        folder: folder,
+                                        onRename: { renamingFolder = folder },
+                                        onDelete: { deletingFolder = folder }
+                                    )
+                                        .padding(10)
                                 }
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                FolderMenu(
-                                    album: album,
-                                    folder: folder,
-                                    onRename: { renamingFolder = folder },
-                                    onDelete: { deletingFolder = folder }
-                                )
-                                    .padding(10)
                             }
                         }
-                    }
-                    if album.folders.isEmpty {
-                        EmptyContentState(
-                            systemImage: "person.2.crop.square.stack",
-                            title: "还没有人物小相册",
-                            message: album.photos.isEmpty ? "先上传照片，后台整理完成后会自动生成小相册。" : "照片还在整理中，稍后刷新就能看到人物小相册。"
-                        )
+                        if album.folders.isEmpty {
+                            EmptyContentState(
+                                systemImage: "person.2.crop.square.stack",
+                                title: "还没有人物小相册",
+                                message: album.photos.isEmpty ? "先上传照片，后台整理完成后会自动生成小相册。" : "照片还在整理中，稍后刷新就能看到人物小相册。"
+                            )
+                        }
                     }
 
                     Button {
@@ -858,22 +802,9 @@ private struct AlbumDetailView: View {
                         }
                     }
 
-                    NavigationLink {
-                        AllPhotosView(albumId: album.id)
-                    } label: {
-                        VStack(spacing: 6) {
-                            Text("查看所有照片")
-                                .font(.title3.weight(.bold))
-                            Text("\(album.photos.count) 张原始上传，点开看大图")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 22)
-                        .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                    if activeTab == .all {
+                        AlbumAllPhotosTab(album: album)
                     }
-                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 18)
@@ -921,6 +852,113 @@ private struct AlbumDetailView: View {
         } message: {
             Text("会按 H5 规则删除这个子相册里的照片；合照仍会保留在其他人的小相册中。")
         }
+    }
+}
+
+private struct AlbumMyPhotosTab: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    @State private var selectedPhoto: Photo?
+    @State private var gridColumnCount = 3
+    @State private var gridZoomScale: CGFloat = 1
+
+    private var photos: [Photo] {
+        store.myPhotos(in: album)
+    }
+
+    var body: some View {
+        ZStack {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("我的照片")
+                        .font(.system(size: 32, weight: .black))
+                    Text("\(photos.count) 张由头像匹配到的照片")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                }
+                if photos.isEmpty {
+                    EmptyContentState(
+                        systemImage: "person.crop.circle.badge.questionmark",
+                        title: "暂时没有匹配到你的照片",
+                        message: store.currentUser?.hasFaceProfile == true ? "可以稍后刷新，或在个人资料换一张更清晰的正脸头像。" : "你还没有可用于识别的人脸头像，所以暂时不能推荐。"
+                    )
+                } else {
+                    PhotoLibraryGrid(
+                        album: album,
+                        photos: photos,
+                        columnCount: $gridColumnCount,
+                        zoomScale: gridZoomScale,
+                        selectedPhoto: $selectedPhoto,
+                        isSelecting: false,
+                        selectedPhotoIds: .constant(Set<String>())
+                    )
+                }
+            }
+
+            if let photo = selectedPhoto {
+                PhotoViewer(albumId: album.id, photos: photos, initialPhotoId: photo.id) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = nil
+                    }
+                }
+                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
+                .zIndex(10)
+            }
+        }
+        .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+    }
+}
+
+private struct AlbumAllPhotosTab: View {
+    let album: Album
+    @State private var selectedPhoto: Photo?
+    @State private var gridColumnCount = 3
+    @State private var gridZoomScale: CGFloat = 1
+
+    private var photos: [Photo] {
+        album.photos.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
+    }
+
+    var body: some View {
+        ZStack {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("全部照片")
+                        .font(.system(size: 32, weight: .black))
+                    Text("\(photos.count) 张原始上传，点开看大图")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                }
+                if photos.isEmpty {
+                    EmptyContentState(
+                        systemImage: "photo.on.rectangle",
+                        title: "还没有照片",
+                        message: "先上传照片，朋友们也可以通过分享链接加入后一起上传。"
+                    )
+                } else {
+                    PhotoLibraryGrid(
+                        album: album,
+                        photos: photos,
+                        columnCount: $gridColumnCount,
+                        zoomScale: gridZoomScale,
+                        selectedPhoto: $selectedPhoto,
+                        isSelecting: false,
+                        selectedPhotoIds: .constant(Set<String>())
+                    )
+                }
+            }
+
+            if let photo = selectedPhoto {
+                PhotoViewer(albumId: album.id, photos: photos, initialPhotoId: photo.id) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedPhoto = nil
+                    }
+                }
+                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
+                .zIndex(10)
+            }
+        }
+        .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
     }
 }
 
@@ -1443,7 +1481,12 @@ private struct ShareAlbumSheet: View {
                                 .foregroundColor(.white)
                         }
                         .sheet(isPresented: $activityPresented) {
-                            ActivityView(items: ["我邀请你加入 PicMe 相册：\(album?.name ?? invite.albumName ?? "共享相册")", shareURL])
+                            ActivityView(items: [
+                                ShareInviteActivityItem(
+                                    title: "加入 PicMe 相册：\(album?.name ?? invite.albumName ?? "共享相册")",
+                                    url: shareURL
+                                )
+                            ])
                         }
                     }
 
@@ -3238,6 +3281,37 @@ private struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private final class ShareInviteActivityItem: NSObject, UIActivityItemSource {
+    let title: String
+    let url: URL
+
+    init(title: String, url: URL) {
+        self.title = title
+        self.url = url
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        url
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        url
+    }
+
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = title
+        metadata.originalURL = url
+        metadata.url = url
+        if let logo = UIImage(named: "PicMeLogo") {
+            let provider = NSItemProvider(object: logo)
+            metadata.iconProvider = provider
+            metadata.imageProvider = provider
+        }
+        return metadata
+    }
 }
 
 private struct EdgeSwipeBackModifier: ViewModifier {

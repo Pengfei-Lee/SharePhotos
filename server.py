@@ -2023,9 +2023,12 @@ def compute_user_album_match(album, current_user):
         return base
     best_folder = None
     best_distance = 999.0
+    candidate_engines = set()
     for folder in album.get("folders", []):
         if folder.get("id") in {"pending", "group-photo", "no-face"}:
             continue
+        if folder.get("embeddingEngine"):
+            candidate_engines.add(folder.get("embeddingEngine"))
         if folder.get("embeddingEngine") != user_engine or not folder.get("embedding"):
             continue
         candidates = [folder.get("embedding")]
@@ -2039,13 +2042,14 @@ def compute_user_album_match(album, current_user):
     threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
     if not best_folder or best_distance > threshold:
         LOGGER.info(
-            "album_id=%s user_id=%s engine=%s best_folder_id=%s distance=%s threshold=%s",
+            "album_id=%s user_id=%s engine=%s best_folder_id=%s distance=%s threshold=%s candidate_engines=%s",
             album.get("id", ""),
             (current_user or {}).get("id", ""),
             user_engine,
             (best_folder or {}).get("id", ""),
             "" if best_distance == 999.0 else round(float(best_distance), 6),
             threshold,
+            ",".join(sorted(candidate_engines)),
             extra={"event": "my_photos.match_miss"},
         )
         return base
@@ -2398,9 +2402,10 @@ def extract_face_embedding(image_path):
     embedding, note, meta = extract_insightface_embedding(image_path)
     if embedding:
         return embedding, note, meta
-    if meta.get("engine") == "insightface":
-        return embedding, note, meta
-    return extract_opencv_embedding(image_path)
+    fallback_embedding, fallback_note, fallback_meta = extract_opencv_embedding(image_path)
+    if fallback_embedding:
+        return fallback_embedding, fallback_note, fallback_meta
+    return embedding, note, meta
 
 
 def choose_face_folder(album, embedding, engine):
@@ -4496,6 +4501,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 album_name = album.get("name") or album_name
                 photo_count = "%d 张照片" % len(album.get("photos", []))
         share_url = urljoin(self.request_origin(), "/join/%s" % quote(clean_code))
+        logo_url = urljoin(self.request_origin(), "/assets/logo.png?v=transparent-1")
+        page_title = "加入 PicMe 相册：%s" % album_name
+        page_description = photo_count or "好友邀请你加入 PicMe 旅行共享相册"
         download_url = APP_DOWNLOAD_URL or "#"
         body = """<!doctype html>
 <html lang="zh-CN">
@@ -4503,6 +4511,21 @@ class AppHandler(BaseHTTPRequestHandler):
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>加入%s</title>
+  <meta name="description" content="%s" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PicMe" />
+  <meta property="og:title" content="%s" />
+  <meta property="og:description" content="%s" />
+  <meta property="og:url" content="%s" />
+  <meta property="og:image" content="%s" />
+  <meta property="og:image:width" content="1298" />
+  <meta property="og:image:height" content="1298" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="%s" />
+  <meta name="twitter:description" content="%s" />
+  <meta name="twitter:image" content="%s" />
+  <link rel="apple-touch-icon" href="%s" />
+  <link rel="icon" href="/assets/logo.png?v=transparent-1" type="image/png" />
   <link rel="stylesheet" href="/assets/styles.css?v=share-invite-1" />
 </head>
 <body>
@@ -4529,6 +4552,15 @@ class AppHandler(BaseHTTPRequestHandler):
 </body>
 </html>""" % (
             html.escape(album_name),
+            html.escape(page_description),
+            html.escape(page_title),
+            html.escape(page_description),
+            html.escape(share_url),
+            html.escape(logo_url),
+            html.escape(page_title),
+            html.escape(page_description),
+            html.escape(logo_url),
+            html.escape(logo_url),
             html.escape(album_name),
             html.escape(photo_count or "好友邀请你加入这个旅行相册"),
             html.escape(clean_code),

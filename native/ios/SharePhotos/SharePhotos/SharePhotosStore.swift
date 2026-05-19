@@ -22,7 +22,6 @@ final class SharePhotosStore: ObservableObject {
     @Published var operationProgress: Double?
     @Published var showsOperation = false
     @Published var serverAddress: String
-    @Published var isServerSettingsPresented = false
     @Published var currentUser: User?
     @Published var authToken: String?
     @Published var authWarning: String?
@@ -33,24 +32,11 @@ final class SharePhotosStore: ObservableObject {
     private let exporter = PhotoKitLivePhotoExporter()
     private let saver = LivePhotoSaveService()
     private let tokenStore = KeychainTokenStore()
-    private let serverAddressKey = "SharePhotosServerAddress"
-    private let fallbackServerAddresses = [
-        "http://192.168.3.25:8000",
-        "http://192.168.0.175:8000"
-    ]
 
     init(api: SharePhotosAPI) {
-        let savedAddress = UserDefaults.standard.string(forKey: serverAddressKey)
         let apiAddress = api.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        var initialAddress = savedAddress ?? apiAddress
-        #if !targetEnvironment(simulator)
-        if Self.isLocalhostAddress(initialAddress) {
-            initialAddress = apiAddress
-            UserDefaults.standard.set(apiAddress, forKey: serverAddressKey)
-        }
-        #endif
-        self.serverAddress = initialAddress
-        self.api = api.withBaseURL(URL(string: initialAddress) ?? api.baseURL)
+        self.serverAddress = apiAddress
+        self.api = api.withBaseURL(URL(string: apiAddress) ?? api.baseURL)
         self.authToken = tokenStore.readToken()
         self.api.authToken = authToken
     }
@@ -175,7 +161,11 @@ final class SharePhotosStore: ObservableObject {
         do {
             currentUser = try await api.me()
         } catch {
-            _ = handleError(error)
+            if case APIError.unauthorized = error {
+                clearAuth()
+            } else {
+                statusText = error.sharePhotosNetworkMessage
+            }
         }
     }
 
@@ -237,7 +227,7 @@ final class SharePhotosStore: ObservableObject {
     func updateServerAddress(_ address: String) async -> Bool {
         let normalized = normalizeServerAddress(address)
         guard let url = URL(string: normalized), url.scheme != nil, url.host != nil else {
-            let message = "服务地址格式不对，请填写类似 http://192.168.3.25:8000 的地址"
+            let message = "服务地址格式不对"
             statusText = message
             showOperation(title: "地址不可用", message: message, progress: nil)
             return false
@@ -250,7 +240,6 @@ final class SharePhotosStore: ObservableObject {
             albums = try await candidateAPI.fetchAlbums()
             api = candidateAPI
             serverAddress = normalized
-            UserDefaults.standard.set(normalized, forKey: serverAddressKey)
             reconcileSelectedAlbum()
             statusText = albums.isEmpty ? "已连接服务，还没有相册" : "已连接服务，读取到 \(albums.count) 个相册"
             hideOperation(after: 0.6)
@@ -265,7 +254,7 @@ final class SharePhotosStore: ObservableObject {
 
     private func fetchAlbumsWithFallback() async throws -> [Album] {
         var seen = Set<String>()
-        let addresses = ([serverAddress] + fallbackServerAddresses)
+        let addresses = [serverAddress]
             .map(normalizeServerAddress)
             .filter { address in
                 guard !seen.contains(address) else { return false }
@@ -282,7 +271,6 @@ final class SharePhotosStore: ObservableObject {
                 let albums = try await candidateAPI.fetchAlbums()
                 api = candidateAPI
                 serverAddress = address
-                UserDefaults.standard.set(address, forKey: serverAddressKey)
                 return albums
             } catch {
                 if case APIError.unauthorized = error {
@@ -299,13 +287,6 @@ final class SharePhotosStore: ObservableObject {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
         return withScheme.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    }
-
-    private static func isLocalhostAddress(_ address: String) -> Bool {
-        guard let url = URL(string: address.contains("://") ? address : "http://\(address)") else {
-            return false
-        }
-        return url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"
     }
 
     func selectAlbum(id: String) {
@@ -808,7 +789,6 @@ final class SharePhotosStore: ObservableObject {
 
     private func handleError(_ error: Error) -> String {
         if case APIError.unauthorized = error {
-            clearAuth()
             return APIError.unauthorized.localizedDescription
         }
         return error.sharePhotosNetworkMessage
