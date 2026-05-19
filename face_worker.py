@@ -19,6 +19,10 @@ import server
 LOGGER = server.LOGGER
 
 
+def elapsed_ms(started_at):
+    return int((time.perf_counter() - started_at) * 1000)
+
+
 def safe_url_label(url):
     return (url or "").split("?", 1)[0]
 
@@ -67,26 +71,53 @@ def collect_resource_metadata(photo, prefixes=("preview", "thumb", "face")):
 
 
 def analyze_and_upload_resources(album_id, photo_id, image_path):
+    started_at = time.perf_counter()
     LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.analysis_start"})
     photo = {"id": photo_id, "albumId": album_id}
     resources = {}
     if server.oss_enabled():
+        derivative_started_at = time.perf_counter()
         server.generate_preview_for_photo(album_id, photo, image_path)
         server.generate_thumbnail_for_photo(album_id, photo, image_path)
         resources = collect_resource_metadata(photo, ("preview", "thumb"))
+        LOGGER.info(
+            "Worker照片预览与缩略图生成完成：album_id=%s photo_id=%s 耗时=%sms",
+            album_id,
+            photo_id,
+            elapsed_ms(derivative_started_at),
+            extra={"event": "worker.derivatives_complete"},
+        )
     readable, cleanup = server.readable_source_for_path(image_path)
     try:
         if not readable:
             LOGGER.warning("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.analysis_unreadable"})
             return {"status": "failed", "note": "图片无法读取"}, resources
+        analysis_started_at = time.perf_counter()
         analysis = server.analyze_photo_faces(readable)
+        LOGGER.info(
+            "Worker照片人脸识别完成：album_id=%s photo_id=%s status=%s engine=%s 耗时=%sms",
+            album_id,
+            photo_id,
+            analysis.get("status"),
+            analysis.get("engine", ""),
+            elapsed_ms(analysis_started_at),
+            extra={"event": "worker.analysis_face_complete"},
+        )
         if server.oss_enabled():
+            face_thumb_started_at = time.perf_counter()
             server.generate_face_thumbnail_for_photo(album_id, photo, readable, album_id)
             resources.update(collect_resource_metadata(photo, ("face",)))
+            LOGGER.info(
+                "Worker人脸小图生成完成：album_id=%s photo_id=%s 耗时=%sms",
+                album_id,
+                photo_id,
+                elapsed_ms(face_thumb_started_at),
+                extra={"event": "worker.face_thumb_complete"},
+            )
     finally:
         cleanup()
     LOGGER.info(
-        "album_id=%s photo_id=%s status=%s engine=%s face_count=%s raw_faces=%s filtered_faces=%s",
+        "Worker照片分析全部完成：album_id=%s photo_id=%s status=%s engine=%s face_count=%s raw_faces=%s filtered_faces=%s 总耗时=%sms",
         album_id,
         photo_id,
         analysis.get("status"),
@@ -94,6 +125,7 @@ def analyze_and_upload_resources(album_id, photo_id, image_path):
         analysis.get("faceCount", ""),
         analysis.get("rawFaceCount", ""),
         analysis.get("filteredFaceCount", ""),
+        elapsed_ms(started_at),
         extra={"event": "worker.analysis_complete"},
     )
     return analysis, resources
@@ -114,11 +146,19 @@ def complete_remote_job(base_url, album_id, photo_id, analysis, resources=None):
 
 
 def analyze_avatar_image(image_path):
+    started_at = time.perf_counter()
     readable, cleanup = server.readable_source_for_path(image_path)
     try:
         if not readable:
             return {"status": "failed", "note": "头像无法读取"}
         embedding, note, meta = server.extract_face_embedding(readable)
+        LOGGER.info(
+            "Worker头像人脸识别完成：status=%s engine=%s 耗时=%sms",
+            "ready" if embedding else "failed",
+            meta.get("engine") if meta else "",
+            elapsed_ms(started_at),
+            extra={"event": "worker.avatar_analysis_complete"},
+        )
         return {
             "status": "ready" if embedding else "failed",
             "embedding": embedding,
@@ -168,6 +208,7 @@ def process_remote_task(base_url, job):
         )
         return
     if job_type == server.FACE_JOB_AVATAR_ANALYZE:
+        started_at = time.perf_counter()
         user_id = job["userId"]
         payload = request_json("%s/api/worker/avatar-jobs/%s" % (base_url, user_id))
         remote_job = payload.get("job") if payload else None
@@ -181,8 +222,16 @@ def process_remote_task(base_url, job):
             image_path = download_job_image(source_url, tmp)
             analysis = analyze_avatar_image(image_path)
         complete_avatar_job(base_url, user_id, analysis)
+        LOGGER.info(
+            "Worker头像任务完成：user_id=%s status=%s 总耗时=%sms",
+            user_id,
+            analysis.get("status"),
+            elapsed_ms(started_at),
+            extra={"event": "worker.avatar_job_complete"},
+        )
         return
     if job_type == server.FACE_JOB_ALBUM_MATCH:
+        started_at = time.perf_counter()
         album_id = job["albumId"]
         user_id = job["userId"]
         payload = request_json("%s/api/worker/match-jobs/%s/%s" % (base_url, album_id, user_id))
@@ -190,8 +239,26 @@ def process_remote_task(base_url, job):
         if not remote_job:
             LOGGER.info("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_job_missing"})
             return
+        match_started_at = time.perf_counter()
         match = server.compute_user_album_match(remote_job.get("album") or {}, remote_job.get("user") or {})
+        LOGGER.info(
+            "Worker相册关联匹配计算完成：album_id=%s user_id=%s matched=%s folder_id=%s 耗时=%sms",
+            album_id,
+            user_id,
+            match.get("matched"),
+            match.get("folderId", ""),
+            elapsed_ms(match_started_at),
+            extra={"event": "worker.match_compute_complete"},
+        )
         complete_match_job(base_url, album_id, user_id, match)
+        LOGGER.info(
+            "Worker相册关联任务完成：album_id=%s user_id=%s matched=%s 总耗时=%sms",
+            album_id,
+            user_id,
+            match.get("matched"),
+            elapsed_ms(started_at),
+            extra={"event": "worker.match_job_complete"},
+        )
         return
     LOGGER.warning("job=%s", job, extra={"event": "worker.unknown_job"})
 
