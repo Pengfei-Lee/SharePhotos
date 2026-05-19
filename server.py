@@ -1141,6 +1141,10 @@ def save_db(db):
     LOGGER.info("albums=%d", len(db.get("albums", [])), extra={"event": "db.write"})
 
 
+def elapsed_ms(started_at):
+    return int((time.perf_counter() - started_at) * 1000)
+
+
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 PASSWORD_RE = re.compile(r"^[\x21-\x7E]{6,20}$")
 PASSWORD_MIN_LENGTH = 6
@@ -2259,6 +2263,7 @@ def album_folder_fingerprint(album):
 
 
 def compute_user_album_match(album, current_user):
+    started_at = time.perf_counter()
     user_embedding = (current_user or {}).get("avatarEmbedding")
     user_engine = (current_user or {}).get("avatarEmbeddingEngine")
     base = {
@@ -2271,6 +2276,13 @@ def compute_user_album_match(album, current_user):
         "updatedAt": int(time.time()),
     }
     if not user_embedding or not user_engine:
+        LOGGER.info(
+            "相册关联匹配跳过：缺少头像特征 album_id=%s user_id=%s 耗时=%sms",
+            album.get("id", ""),
+            (current_user or {}).get("id", ""),
+            elapsed_ms(started_at),
+            extra={"event": "my_photos.match_skip"},
+        )
         return base
     best_folder = None
     best_distance = 999.0
@@ -2293,7 +2305,7 @@ def compute_user_album_match(album, current_user):
     threshold = INSIGHTFACE_MATCH_THRESHOLD if user_engine == "insightface" else OPENCV_MATCH_THRESHOLD
     if not best_folder or best_distance > threshold:
         LOGGER.info(
-            "album_id=%s user_id=%s engine=%s best_folder_id=%s distance=%s threshold=%s candidate_engines=%s",
+            "相册关联匹配未命中：album_id=%s user_id=%s engine=%s best_folder_id=%s distance=%s threshold=%s candidate_engines=%s 耗时=%sms",
             album.get("id", ""),
             (current_user or {}).get("id", ""),
             user_engine,
@@ -2301,17 +2313,19 @@ def compute_user_album_match(album, current_user):
             "" if best_distance == 999.0 else round(float(best_distance), 6),
             threshold,
             ",".join(sorted(candidate_engines)),
+            elapsed_ms(started_at),
             extra={"event": "my_photos.match_miss"},
         )
         return base
     LOGGER.info(
-        "album_id=%s user_id=%s engine=%s folder_id=%s distance=%s threshold=%s",
+        "相册关联匹配命中：album_id=%s user_id=%s engine=%s folder_id=%s distance=%s threshold=%s 耗时=%sms",
         album.get("id", ""),
         (current_user or {}).get("id", ""),
         user_engine,
         best_folder.get("id", ""),
         round(float(best_distance), 6),
         threshold,
+        elapsed_ms(started_at),
         extra={"event": "my_photos.match_hit"},
     )
     base.update(
@@ -3234,6 +3248,7 @@ def enqueue_pending_jobs():
 
 
 def process_photo_job(album_id, photo_id):
+    job_started_at = time.perf_counter()
     LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.process_start"})
     cleanup_source = lambda: None
     with LOCK:
@@ -3256,6 +3271,7 @@ def process_photo_job(album_id, photo_id):
     source, cleanup_source = materialize_photo_source(album_id, photo)
     derivative_updates = {}
     try:
+        derivative_started_at = time.perf_counter()
         if not source:
             raise ValueError("图片源文件不存在")
         generate_preview_for_photo(album_id, photo, source)
@@ -3264,6 +3280,13 @@ def process_photo_job(album_id, photo_id):
             key: value for key, value in photo.items()
             if key.startswith(("preview", "thumb")) or key.startswith(("preview_", "thumb_"))
         }
+        LOGGER.info(
+            "照片预览与缩略图生成完成：album_id=%s photo_id=%s 耗时=%sms",
+            album_id,
+            photo_id,
+            elapsed_ms(derivative_started_at),
+            extra={"event": "derivatives.complete"},
+        )
     except Exception as error:
         LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "derivatives.failed"})
         with LOCK:
@@ -3292,6 +3315,7 @@ def process_photo_job(album_id, photo_id):
         save_db(db)
 
     try:
+        analysis_started_at = time.perf_counter()
         readable, cleanup_readable = readable_source_for_path(source) if source else (None, lambda: None)
         if not readable:
             raise ValueError("图片无法生成预览图")
@@ -3299,11 +3323,20 @@ def process_photo_job(album_id, photo_id):
             analysis = analyze_photo_faces(readable)
         finally:
             cleanup_readable()
+        LOGGER.info(
+            "照片识别人脸阶段完成：album_id=%s photo_id=%s status=%s 耗时=%sms",
+            album_id,
+            photo_id,
+            analysis.get("status"),
+            elapsed_ms(analysis_started_at),
+            extra={"event": "face.analysis_stage_complete"},
+        )
     except Exception as error:
         analysis = {"status": "failed", "note": str(error)}
         LOGGER.exception("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "face.analysis_failed"})
 
     with LOCK:
+        classify_started_at = time.perf_counter()
         db = load_db()
         album = find_album(db, album_id)
         if not album:
@@ -3322,12 +3355,29 @@ def process_photo_job(album_id, photo_id):
             LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "face.thumb_failed"})
         prune_empty_folders(album)
         save_db(db)
+        LOGGER.info(
+            "照片分类入库完成：album_id=%s photo_id=%s status=%s folders=%s 耗时=%sms",
+            album_id,
+            photo_id,
+            photo.get("status"),
+            ",".join(photo_folder_ids(photo)),
+            elapsed_ms(classify_started_at),
+            extra={"event": "face.classify_complete"},
+        )
     cleanup_source()
-    LOGGER.info("album_id=%s photo_id=%s status=%s", album_id, photo_id, analysis.get("status"), extra={"event": "worker.process_complete"})
+    LOGGER.info(
+        "照片后台处理完成：album_id=%s photo_id=%s status=%s 总耗时=%sms",
+        album_id,
+        photo_id,
+        analysis.get("status"),
+        elapsed_ms(job_started_at),
+        extra={"event": "worker.process_complete"},
+    )
     enqueue_album_match_jobs_for_album(album_id)
 
 
 def process_avatar_job(user_id):
+    started_at = time.perf_counter()
     LOGGER.info("user_id=%s", user_id, extra={"event": "worker.avatar_start"})
     with LOCK:
         db = load_db()
@@ -3348,7 +3398,16 @@ def process_avatar_job(user_id):
                 if not readable:
                     result = {"status": "failed", "note": "头像无法读取"}
                 else:
+                    analysis_started_at = time.perf_counter()
                     embedding, note, meta = extract_face_embedding(readable)
+                    LOGGER.info(
+                        "头像人脸识别完成：user_id=%s status=%s engine=%s 耗时=%sms",
+                        user_id,
+                        "ready" if embedding else "failed",
+                        meta.get("engine") if meta else "",
+                        elapsed_ms(analysis_started_at),
+                        extra={"event": "worker.avatar_analysis_complete"},
+                    )
                     result = {
                         "status": "ready" if embedding else "failed",
                         "embedding": embedding,
@@ -3360,10 +3419,18 @@ def process_avatar_job(user_id):
     finally:
         cleanup_source()
     complete_avatar_analysis(user_id, result)
-    LOGGER.info("user_id=%s status=%s engine=%s", user_id, result.get("status"), result.get("engine", ""), extra={"event": "worker.avatar_complete"})
+    LOGGER.info(
+        "头像后台识别完成：user_id=%s status=%s engine=%s 总耗时=%sms",
+        user_id,
+        result.get("status"),
+        result.get("engine", ""),
+        elapsed_ms(started_at),
+        extra={"event": "worker.avatar_complete"},
+    )
 
 
 def complete_avatar_analysis(user_id, result):
+    started_at = time.perf_counter()
     now = int(time.time())
     with LOCK:
         db = load_db()
@@ -3387,11 +3454,20 @@ def complete_avatar_analysis(user_id, result):
             user["faceProfileError"] = result.get("note") or "头像未识别人脸，暂不能推荐我的照片"
         upsert_user(db, user)
         save_db(db)
+    LOGGER.info(
+        "头像识别结果已入库：user_id=%s status=%s has_face=%s 耗时=%sms",
+        user_id,
+        result.get("status"),
+        bool(result.get("embedding")),
+        elapsed_ms(started_at),
+        extra={"event": "worker.avatar_saved"},
+    )
     enqueue_album_match_jobs_for_user(user_id)
     return True
 
 
 def process_album_match_job(album_id, user_id):
+    started_at = time.perf_counter()
     LOGGER.info("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_start"})
     with LOCK:
         db = load_db()
@@ -3406,11 +3482,12 @@ def process_album_match_job(album_id, user_id):
         upsert_user(db, user)
         save_db(db)
     LOGGER.info(
-        "album_id=%s user_id=%s matched=%s folder_id=%s",
+        "头像与相册关联匹配完成：album_id=%s user_id=%s matched=%s folder_id=%s 耗时=%sms",
         album_id,
         user_id,
         match.get("matched"),
         match.get("folderId", ""),
+        elapsed_ms(started_at),
         extra={"event": "worker.match_complete"},
     )
 
@@ -3492,6 +3569,7 @@ def classify_photo(album, image_path):
 
 
 def analyze_photo_faces(image_path):
+    started_at = time.perf_counter()
     app = get_insightface_app()
     if app:
         image = cv2.imread(str(image_path))
@@ -3500,10 +3578,11 @@ def analyze_photo_faces(image_path):
         faces, filter_stats = filter_subject_faces(app.get(image), image.shape)
         if not faces:
             LOGGER.info(
-                "path=%s raw_faces=%s filtered_faces=%s",
+                "照片人脸识别完成：path=%s status=no_face raw_faces=%s filtered_faces=%s 耗时=%sms",
                 Path(image_path).name,
                 filter_stats.get("raw", 0),
                 filter_stats.get("filtered", 0),
+                elapsed_ms(started_at),
                 extra={"event": "face.analysis_result"},
             )
             return {"status": "no_face", "note": "未检测到人脸", "engine": "insightface", "faces": []}
@@ -3523,18 +3602,25 @@ def analyze_photo_faces(image_path):
             "note": "",
         }
         LOGGER.info(
-            "path=%s face_count=%d raw_faces=%s filtered_faces=%s",
+            "照片人脸识别完成：path=%s status=ready face_count=%d raw_faces=%s filtered_faces=%s 耗时=%sms",
             Path(image_path).name,
             result["faceCount"],
             result["rawFaceCount"],
             result["filteredFaceCount"],
+            elapsed_ms(started_at),
             extra={"event": "face.analysis_result"},
         )
         return result
 
     embedding, note, meta = extract_opencv_embedding(image_path)
     if not embedding:
-        LOGGER.info("path=%s note=%s", Path(image_path).name, note, extra={"event": "face.analysis_result"})
+        LOGGER.info(
+            "照片人脸识别完成：path=%s status=no_face note=%s 耗时=%sms",
+            Path(image_path).name,
+            note,
+            elapsed_ms(started_at),
+            extra={"event": "face.analysis_result"},
+        )
         return {"status": "no_face", "note": note, "engine": meta.get("engine") or "opencv", "faces": []}
     result = {
         "status": "ready",
@@ -3543,7 +3629,13 @@ def analyze_photo_faces(image_path):
         "embeddings": [embedding],
         "note": "",
     }
-    LOGGER.info("path=%s engine=%s face_count=1", Path(image_path).name, result["engine"], extra={"event": "face.analysis_result"})
+    LOGGER.info(
+        "照片人脸识别完成：path=%s status=ready engine=%s face_count=1 耗时=%sms",
+        Path(image_path).name,
+        result["engine"],
+        elapsed_ms(started_at),
+        extra={"event": "face.analysis_result"},
+    )
     return result
 
 
@@ -3690,6 +3782,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return self.send_json({"job": {"type": FACE_JOB_AVATAR_ANALYZE, "userId": user_id, "sourceUrl": source_url}})
 
     def complete_avatar_job(self, user_id):
+        started_at = time.perf_counter()
         if not self.worker_authorized():
             return
         payload, error = self.read_json_body()
@@ -3698,6 +3791,13 @@ class AppHandler(BaseHTTPRequestHandler):
         result = payload.get("analysis") or payload.get("result") or payload
         if not complete_avatar_analysis(user_id, result):
             return self.send_error_json("User not found", 404)
+        LOGGER.info(
+            "Worker头像结果回写完成：user_id=%s status=%s 耗时=%sms",
+            user_id,
+            result.get("status"),
+            elapsed_ms(started_at),
+            extra={"event": "worker.avatar_complete_http"},
+        )
         return self.send_json({"ok": True})
 
     def worker_match_job(self, album_id, user_id):
@@ -3714,6 +3814,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return self.send_json({"job": {"type": FACE_JOB_ALBUM_MATCH, "albumId": album_id, "userId": user_id, "album": album, "user": user}})
 
     def complete_match_job(self, album_id, user_id):
+        started_at = time.perf_counter()
         if not self.worker_authorized():
             return
         payload, error = self.read_json_body()
@@ -3729,7 +3830,15 @@ class AppHandler(BaseHTTPRequestHandler):
             matches[album_id] = match
             upsert_user(db, user)
             save_db(db)
-        LOGGER.info("album_id=%s user_id=%s matched=%s", album_id, user_id, match.get("matched"), extra={"event": "worker.match_saved"})
+        LOGGER.info(
+            "Worker相册关联结果已保存：album_id=%s user_id=%s matched=%s folder_id=%s 耗时=%sms",
+            album_id,
+            user_id,
+            match.get("matched"),
+            match.get("folderId", ""),
+            elapsed_ms(started_at),
+            extra={"event": "worker.match_saved"},
+        )
         return self.send_json({"ok": True})
 
     def do_GET(self):

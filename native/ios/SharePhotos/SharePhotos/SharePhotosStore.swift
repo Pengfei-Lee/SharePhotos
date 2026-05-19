@@ -213,6 +213,10 @@ final class SharePhotosStore: ObservableObject {
             showOperation(title: "头像已更新", message: response.warning ?? "后台会自动识别头像并匹配你的照片", progress: 1)
             hideOperation(after: 1.0)
             await loadAlbums()
+            let tokenSnapshot = authToken
+            Task { @MainActor in
+                await pollAvatarRecognition(tokenSnapshot: tokenSnapshot)
+            }
             return true
         } catch {
             let message = handleError(error)
@@ -837,12 +841,43 @@ final class SharePhotosStore: ObservableObject {
         authToken == tokenSnapshot || (tokenSnapshot != nil && authToken != nil)
     }
 
+    private func pollAvatarRecognition(tokenSnapshot: String?) async {
+        for attempt in 0..<24 {
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
+            do {
+                let user = try await api.me()
+                guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
+                currentUser = user
+                uploader = user.nickname
+                if user.hasFaceProfile || user.faceProfileStatus == "ready" {
+                    let loadedAlbums = try await fetchAlbumsWithFallback()
+                    guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
+                    albums = loadedAlbums
+                    reconcileSelectedAlbum()
+                    statusText = "头像识别完成，已更新你的照片推荐"
+                    return
+                }
+                if user.faceProfileStatus == "failed" {
+                    statusText = "头像未识别人脸，可以换一张更清晰的正脸头像"
+                    return
+                }
+                let delaySeconds: UInt64 = attempt < 4 ? 1 : 2
+                try await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+            } catch {
+                guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
+                return
+            }
+        }
+        guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
+        statusText = "头像识别仍在后台进行，稍后刷新即可看到结果"
+    }
+
     private func pollRecognition(albumId: String, tokenSnapshot: String?) async {
         for attempt in 0..<30 {
-            guard authToken == tokenSnapshot else { return }
+            guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             do {
                 let album = try await api.fetchAlbum(id: albumId)
-                guard authToken == tokenSnapshot else { return }
+                guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
                 upsert(album)
                 let active = album.photos.filter { $0.isProcessing }.count
                 let ready = album.photos.filter { $0.status == "ready" }.count
@@ -864,7 +899,7 @@ final class SharePhotosStore: ObservableObject {
                 )
                 try await Task.sleep(nanoseconds: 1_500_000_000)
             } catch {
-                guard authToken == tokenSnapshot else { return }
+                guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
                 if case APIError.unauthorized = error {
                     showOperation(title: "后台继续整理", message: "照片识别仍在后台进行，稍后刷新即可看到结果", progress: nil)
                     hideOperation(after: 1.5)
