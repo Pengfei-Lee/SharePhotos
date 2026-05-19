@@ -180,7 +180,7 @@ class StoreLock:
 
 LOCK = StoreLock()
 JOB_QUEUE = queue.Queue()
-QUEUED_PHOTOS = set()
+QUEUED_FACE_JOBS = set()
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis").strip() or "redis"
 REDIS_PORT = os.environ.get("REDIS_PORT", "6379").strip() or "6379"
 REDIS_DB = os.environ.get("REDIS_DB", "0").strip() or "0"
@@ -190,6 +190,9 @@ if not REDIS_URL and REDIS_PASSWORD:
     REDIS_URL = "redis://:%s@%s:%s/%s" % (REDIS_PASSWORD, REDIS_HOST, REDIS_PORT, REDIS_DB)
 FACE_QUEUE_NAME = os.environ.get("FACE_QUEUE_NAME", "sharephotos:face:jobs").strip() or "sharephotos:face:jobs"
 FACE_QUEUE_SET_NAME = os.environ.get("FACE_QUEUE_SET_NAME", "%s:queued" % FACE_QUEUE_NAME).strip() or "%s:queued" % FACE_QUEUE_NAME
+FACE_JOB_PHOTO_ANALYZE = "photo_analyze"
+FACE_JOB_AVATAR_ANALYZE = "avatar_analyze"
+FACE_JOB_ALBUM_MATCH = "album_match"
 FACE_WORKER_MODE = os.environ.get("FACE_WORKER_MODE", "inline").strip().lower()
 WORKER_API_URL = os.environ.get("WORKER_API_URL", "").strip().rstrip("/")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "").strip()
@@ -1128,6 +1131,7 @@ def public_user(user, origin=""):
         "nickname": user.get("nickname", ""),
         "avatarUrl": avatar_url,
         "hasFaceProfile": bool(user.get("hasFaceProfile")),
+        "faceProfileStatus": user.get("faceProfileStatus") or ("ready" if user.get("hasFaceProfile") else "missing"),
     }
 
 
@@ -1183,6 +1187,18 @@ def user_album_ids(user_id):
             ).fetchall()
             return {row["album_id"] for row in rows}
     return set()
+
+
+def album_member_user_ids(album_id):
+    if not album_id or not sqlite_enabled():
+        return []
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM album_members WHERE album_id = ? AND status = 'active'",
+            (album_id,),
+        ).fetchall()
+        return [row["user_id"] for row in rows]
 
 
 def add_album_member(album_id, user_id, role="member", approved_by=""):
@@ -1640,6 +1656,36 @@ def materialize_photo_source(album_id, photo):
     return target, lambda: target.unlink(missing_ok=True)
 
 
+def materialize_avatar_source(user):
+    avatar_object_key = (user or {}).get("avatarObjectKey") or (user or {}).get("avatar_object_key") or ""
+    if avatar_object_key and oss_enabled():
+        tmp = tempfile.NamedTemporaryFile(prefix="picme-avatar-source-", suffix=".jpg", delete=False)
+        tmp.close()
+        target = Path(tmp.name)
+        try:
+            OSS_SERVICE.downloadFile(avatar_object_key, target)
+        except Exception as error:
+            LOGGER.warning(
+                "user_id=%s object_key=%s error=%s",
+                (user or {}).get("id", ""),
+                avatar_object_key,
+                error,
+                extra={"event": "avatar.source_download_failed"},
+            )
+            target.unlink(missing_ok=True)
+            return None, lambda: None
+        return target, lambda: target.unlink(missing_ok=True)
+    avatar_url = (user or {}).get("avatarUrl") or (user or {}).get("avatar_url") or ""
+    if avatar_url and not re.match(r"^https?://", avatar_url):
+        source = DATA / avatar_url.lstrip("/")
+        if source.exists():
+            return source, lambda: None
+    local = AVATARS / ("%s.jpg" % ((user or {}).get("id") or ""))
+    if local.exists():
+        return local, lambda: None
+    return None, lambda: None
+
+
 def readable_source_for_path(source):
     source = Path(source)
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
@@ -1954,7 +2000,7 @@ def public_album(album, current_user=None):
 
 
 def apply_my_photo_recommendation(visible, album, current_user):
-    match = resolve_user_album_match(album, current_user)
+    match = resolve_user_album_match(album, current_user, allow_compute=False)
     if not match or not match.get("matched") or not match.get("folderId"):
         visible["myPhotoIds"] = []
         visible["myPhotoCount"] = 0
@@ -2095,8 +2141,11 @@ def stored_user_album_match(album, current_user):
     return match
 
 
-def resolve_user_album_match(album, current_user):
-    return stored_user_album_match(album, current_user) or compute_user_album_match(album, current_user)
+def resolve_user_album_match(album, current_user, allow_compute=True):
+    stored = stored_user_album_match(album, current_user)
+    if stored or not allow_compute:
+        return stored
+    return compute_user_album_match(album, current_user)
 
 
 def ensure_user_album_match(db, album, current_user):
@@ -2162,6 +2211,57 @@ def save_avatar_profile(user, source_path):
             user["avatarObjectKey"] = ""
             user["avatarUrl"] = ""
             warning = warning or "OSS 未配置，头像不会保存，但已用于本地人脸推荐"
+        return warning
+    finally:
+        cleanup_readable()
+        if "avatar_path" in locals() and avatar_path:
+            avatar_path.unlink(missing_ok=True)
+
+
+def save_avatar_image(user, source_path):
+    readable, cleanup_readable = readable_source_for_path(source_path)
+    if not readable:
+        return "头像无法读取，暂不能推荐我的照片"
+    warning = ""
+    try:
+        avatar_target = tempfile.NamedTemporaryFile(prefix="picme-avatar-", suffix=".jpg", delete=False)
+        avatar_target.close()
+        avatar_path = Path(avatar_target.name)
+        image = cv2.imread(str(readable), cv2.IMREAD_COLOR)
+        if image is None:
+            user["faceProfileStatus"] = "failed"
+            user["hasFaceProfile"] = False
+            user["avatarAlbumMatches"] = {}
+            return "头像无法生成预览，暂不能展示头像"
+        height, width = image.shape[:2]
+        side = min(width, height)
+        left = max(0, (width - side) // 2)
+        top = max(0, (height - side) // 2)
+        crop = cv2.resize(image[top:top + side, left:left + side], (420, 420), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if not ok:
+            user["faceProfileStatus"] = "failed"
+            user["hasFaceProfile"] = False
+            user["avatarAlbumMatches"] = {}
+            return "头像无法生成预览，暂不能展示头像"
+        avatar_path.write_bytes(encoded.tobytes())
+        if oss_enabled():
+            key = OSS_SERVICE.generateObjectKey("avatars", user_id=user["id"])
+            metadata = OSS_SERVICE.uploadFile(avatar_path, key, "image/jpeg", "avatars")
+            if metadata:
+                user["avatarObjectKey"] = metadata.get("object_key", "")
+                user["avatarUrl"] = oss_signed_or_empty(user["avatarObjectKey"]) or metadata.get("oss_url", "")
+        else:
+            AVATARS.mkdir(parents=True, exist_ok=True)
+            local_avatar = AVATARS / ("%s.jpg" % user["id"])
+            shutil.copyfile(avatar_path, local_avatar)
+            user["avatarObjectKey"] = ""
+            user["avatarUrl"] = "/avatars/%s.jpg" % user["id"]
+            warning = "OSS 未配置，头像已保存到本地并进入人脸推荐队列"
+        user["hasFaceProfile"] = False
+        user["faceProfileStatus"] = "queued"
+        user["avatarProfileUpdatedAt"] = int(time.time())
+        user["avatarAlbumMatches"] = {}
         return warning
     finally:
         cleanup_readable()
@@ -2817,14 +2917,31 @@ def use_remote_worker():
     return FACE_WORKER_MODE == "remote"
 
 
+def face_job_key(job):
+    if isinstance(job, tuple):
+        return "%s:%s:%s" % (FACE_JOB_PHOTO_ANALYZE, job[0], job[1])
+    job_type = job.get("type") or job.get("taskType") or FACE_JOB_PHOTO_ANALYZE
+    if job_type == FACE_JOB_PHOTO_ANALYZE:
+        return "%s:%s:%s" % (job_type, job.get("albumId", ""), job.get("photoId", ""))
+    if job_type == FACE_JOB_AVATAR_ANALYZE:
+        return "%s:%s" % (job_type, job.get("userId", ""))
+    if job_type == FACE_JOB_ALBUM_MATCH:
+        return "%s:%s:%s" % (job_type, job.get("albumId", ""), job.get("userId", ""))
+    return "%s:%s" % (job_type, job.get("taskId") or uuid.uuid4().hex)
+
+
 def push_face_job(album_id, photo_id):
-    payload = json.dumps({"albumId": album_id, "photoId": photo_id}, ensure_ascii=False)
+    push_face_task({"type": FACE_JOB_PHOTO_ANALYZE, "albumId": album_id, "photoId": photo_id})
+
+
+def push_face_task(job):
+    payload = json.dumps(job, ensure_ascii=False)
     if use_redis_queue():
         REDIS_CLIENT.lpush(FACE_QUEUE_NAME, payload)
-        LOGGER.info("album_id=%s photo_id=%s queue=%s", album_id, photo_id, FACE_QUEUE_NAME, extra={"event": "redis.enqueue"})
+        LOGGER.info("job=%s queue=%s", face_job_key(job), FACE_QUEUE_NAME, extra={"event": "redis.enqueue"})
     else:
-        JOB_QUEUE.put((album_id, photo_id))
-        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.enqueue"})
+        JOB_QUEUE.put(job)
+        LOGGER.info("job=%s", face_job_key(job), extra={"event": "queue.enqueue"})
 
 
 def pop_face_job(timeout=3):
@@ -2841,13 +2958,15 @@ def pop_face_job(timeout=3):
                 FACE_QUEUE_NAME,
                 extra={"event": "redis.dequeue"},
             )
-            return payload.get("albumId"), payload.get("photoId")
+            if "type" not in payload and "taskType" not in payload:
+                payload["type"] = FACE_JOB_PHOTO_ANALYZE
+            return payload
         except Exception as error:
             LOGGER.warning("error=%s", error, extra={"event": "redis.dequeue_invalid"})
             return None
     try:
         job = JOB_QUEUE.get(timeout=max(float(timeout), 0.1))
-        LOGGER.info("album_id=%s photo_id=%s", job[0], job[1], extra={"event": "queue.dequeue"})
+        LOGGER.info("job=%s", face_job_key(job), extra={"event": "queue.dequeue"})
         return job
     except queue.Empty:
         return None
@@ -2856,19 +2975,43 @@ def pop_face_job(timeout=3):
 def enqueue_photo_job(album_id, photo_id):
     if use_remote_worker():
         return
-    key = (album_id, photo_id)
+    enqueue_face_task({"type": FACE_JOB_PHOTO_ANALYZE, "albumId": album_id, "photoId": photo_id})
+
+
+def enqueue_face_task(job):
+    if use_remote_worker():
+        return
+    key = face_job_key(job)
     if use_redis_queue():
-        added = REDIS_CLIENT.sadd(FACE_QUEUE_SET_NAME, "%s:%s" % key)
+        added = REDIS_CLIENT.sadd(FACE_QUEUE_SET_NAME, key)
         if not added:
-            LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.duplicate"})
+            LOGGER.info("job=%s", key, extra={"event": "queue.duplicate"})
             return
     else:
         with LOCK:
-            if key in QUEUED_PHOTOS:
-                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.duplicate"})
+            if key in QUEUED_FACE_JOBS:
+                LOGGER.info("job=%s", key, extra={"event": "queue.duplicate"})
                 return
-            QUEUED_PHOTOS.add(key)
-    push_face_job(album_id, photo_id)
+            QUEUED_FACE_JOBS.add(key)
+    push_face_task(job)
+
+
+def enqueue_avatar_job(user_id):
+    enqueue_face_task({"type": FACE_JOB_AVATAR_ANALYZE, "userId": user_id})
+
+
+def enqueue_album_match_job(album_id, user_id):
+    enqueue_face_task({"type": FACE_JOB_ALBUM_MATCH, "albumId": album_id, "userId": user_id})
+
+
+def enqueue_album_match_jobs_for_album(album_id):
+    for user_id in album_member_user_ids(album_id):
+        enqueue_album_match_job(album_id, user_id)
+
+
+def enqueue_album_match_jobs_for_user(user_id):
+    for album_id in user_album_ids(user_id):
+        enqueue_album_match_job(album_id, user_id)
 
 
 def enqueue_pending_jobs():
@@ -2976,6 +3119,108 @@ def process_photo_job(album_id, photo_id):
         save_db(db)
     cleanup_source()
     LOGGER.info("album_id=%s photo_id=%s status=%s", album_id, photo_id, analysis.get("status"), extra={"event": "worker.process_complete"})
+    enqueue_album_match_jobs_for_album(album_id)
+
+
+def process_avatar_job(user_id):
+    LOGGER.info("user_id=%s", user_id, extra={"event": "worker.avatar_start"})
+    with LOCK:
+        db = load_db()
+        user = find_user_by_id(db, user_id)
+        if not user:
+            LOGGER.warning("user_id=%s", user_id, extra={"event": "worker.avatar_user_missing"})
+            return
+        user["faceProfileStatus"] = "processing"
+        upsert_user(db, user)
+        save_db(db)
+    source, cleanup_source = materialize_avatar_source(user)
+    try:
+        if not source:
+            result = {"status": "failed", "note": "头像源文件不存在"}
+        else:
+            readable, cleanup_readable = readable_source_for_path(source)
+            try:
+                if not readable:
+                    result = {"status": "failed", "note": "头像无法读取"}
+                else:
+                    embedding, note, meta = extract_face_embedding(readable)
+                    result = {
+                        "status": "ready" if embedding else "failed",
+                        "embedding": embedding,
+                        "engine": meta.get("engine") if meta else "",
+                        "note": note or "",
+                    }
+            finally:
+                cleanup_readable()
+    finally:
+        cleanup_source()
+    complete_avatar_analysis(user_id, result)
+    LOGGER.info("user_id=%s status=%s engine=%s", user_id, result.get("status"), result.get("engine", ""), extra={"event": "worker.avatar_complete"})
+
+
+def complete_avatar_analysis(user_id, result):
+    now = int(time.time())
+    with LOCK:
+        db = load_db()
+        user = find_user_by_id(db, user_id)
+        if not user:
+            return False
+        embedding = result.get("embedding")
+        if result.get("status") == "ready" and embedding:
+            user["avatarEmbedding"] = embedding
+            user["avatarEmbeddingEngine"] = result.get("engine") or "opencv"
+            user["avatarProfileUpdatedAt"] = now
+            user["avatarAlbumMatches"] = {}
+            user["hasFaceProfile"] = True
+            user["faceProfileStatus"] = "ready"
+            user.pop("faceProfileError", None)
+        else:
+            user["hasFaceProfile"] = False
+            user["avatarProfileUpdatedAt"] = now
+            user["avatarAlbumMatches"] = {}
+            user["faceProfileStatus"] = "failed"
+            user["faceProfileError"] = result.get("note") or "头像未识别人脸，暂不能推荐我的照片"
+        upsert_user(db, user)
+        save_db(db)
+    enqueue_album_match_jobs_for_user(user_id)
+    return True
+
+
+def process_album_match_job(album_id, user_id):
+    LOGGER.info("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_start"})
+    with LOCK:
+        db = load_db()
+        album = find_album(db, album_id)
+        user = find_user_by_id(db, user_id)
+        if not album or not user:
+            LOGGER.warning("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_missing"})
+            return
+        match = compute_user_album_match(album, user)
+        matches = user.setdefault("avatarAlbumMatches", {})
+        matches[album_id] = match
+        upsert_user(db, user)
+        save_db(db)
+    LOGGER.info(
+        "album_id=%s user_id=%s matched=%s folder_id=%s",
+        album_id,
+        user_id,
+        match.get("matched"),
+        match.get("folderId", ""),
+        extra={"event": "worker.match_complete"},
+    )
+
+
+def process_face_task(job):
+    if isinstance(job, tuple):
+        job = {"type": FACE_JOB_PHOTO_ANALYZE, "albumId": job[0], "photoId": job[1]}
+    job_type = job.get("type") or job.get("taskType") or FACE_JOB_PHOTO_ANALYZE
+    if job_type == FACE_JOB_PHOTO_ANALYZE:
+        return process_photo_job(job.get("albumId"), job.get("photoId"))
+    if job_type == FACE_JOB_AVATAR_ANALYZE:
+        return process_avatar_job(job.get("userId"))
+    if job_type == FACE_JOB_ALBUM_MATCH:
+        return process_album_match_job(job.get("albumId"), job.get("userId"))
+    LOGGER.warning("job=%s", job, extra={"event": "worker.unknown_job"})
 
 
 def photo_worker():
@@ -2983,20 +3228,18 @@ def photo_worker():
         job = pop_face_job(timeout=3)
         if not job:
             continue
-        album_id, photo_id = job
-        if not album_id or not photo_id:
-            continue
+        key = face_job_key(job)
         try:
-            process_photo_job(album_id, photo_id)
+            process_face_task(job)
         finally:
             if use_redis_queue():
-                REDIS_CLIENT.srem(FACE_QUEUE_SET_NAME, "%s:%s" % (album_id, photo_id))
-                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "redis.complete"})
+                REDIS_CLIENT.srem(FACE_QUEUE_SET_NAME, key)
+                LOGGER.info("job=%s", key, extra={"event": "redis.complete"})
             else:
                 with LOCK:
-                    QUEUED_PHOTOS.discard((album_id, photo_id))
+                    QUEUED_FACE_JOBS.discard(key)
                 JOB_QUEUE.task_done()
-                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "queue.complete"})
+                LOGGER.info("job=%s", key, extra={"event": "queue.complete"})
 
 
 def assign_face_folder(album, embedding, engine):
@@ -3225,6 +3468,65 @@ class AppHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def worker_avatar_job(self, user_id):
+        if not self.worker_authorized():
+            return
+        with LOCK:
+            db = load_db()
+            user = find_user_by_id(db, user_id)
+            if not user:
+                return self.send_error_json("User not found", 404)
+            user["faceProfileStatus"] = "processing"
+            upsert_user(db, user)
+            save_db(db)
+            source_url = public_user(user, self.request_origin()).get("avatarUrl") or ""
+        if not source_url:
+            return self.send_error_json("Avatar source not found", 404)
+        return self.send_json({"job": {"type": FACE_JOB_AVATAR_ANALYZE, "userId": user_id, "sourceUrl": source_url}})
+
+    def complete_avatar_job(self, user_id):
+        if not self.worker_authorized():
+            return
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        result = payload.get("analysis") or payload.get("result") or payload
+        if not complete_avatar_analysis(user_id, result):
+            return self.send_error_json("User not found", 404)
+        return self.send_json({"ok": True})
+
+    def worker_match_job(self, album_id, user_id):
+        if not self.worker_authorized():
+            return
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            user = find_user_by_id(db, user_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            if not user:
+                return self.send_error_json("User not found", 404)
+        return self.send_json({"job": {"type": FACE_JOB_ALBUM_MATCH, "albumId": album_id, "userId": user_id, "album": album, "user": user}})
+
+    def complete_match_job(self, album_id, user_id):
+        if not self.worker_authorized():
+            return
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        match = payload.get("match") or payload.get("result") or payload
+        with LOCK:
+            db = load_db()
+            user = find_user_by_id(db, user_id)
+            if not user:
+                return self.send_error_json("User not found", 404)
+            matches = user.setdefault("avatarAlbumMatches", {})
+            matches[album_id] = match
+            upsert_user(db, user)
+            save_db(db)
+        LOGGER.info("album_id=%s user_id=%s matched=%s", album_id, user_id, match.get("matched"), extra={"event": "worker.match_saved"})
+        return self.send_json({"ok": True})
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -3264,13 +3566,11 @@ class AppHandler(BaseHTTPRequestHandler):
             with LOCK:
                 db = load_db()
                 allowed_ids = user_album_ids(current_user.get("id"))
-                changed = False
                 for album in db["albums"]:
                     if album.get("id") not in allowed_ids:
                         continue
-                    changed = ensure_user_album_match(db, album, current_user) or changed
-                if changed:
-                    save_db(db)
+                    if not stored_user_album_match(album, current_user):
+                        enqueue_album_match_job(album.get("id"), current_user.get("id"))
             return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"] if album.get("id") in allowed_ids]})
         match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/qr\.svg$", path)
         if match:
@@ -3283,6 +3583,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)$", path)
         if match:
             return self.get_worker_job(match.group(1), match.group(2))
+        match = re.match(r"^/api/worker/avatar-jobs/([^/]+)$", path)
+        if match:
+            return self.worker_avatar_job(match.group(1))
+        match = re.match(r"^/api/worker/match-jobs/([^/]+)/([^/]+)$", path)
+        if match:
+            return self.worker_match_job(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)$", path)
         if match:
             current_user = self.require_album_member(match.group(1))
@@ -3291,8 +3597,8 @@ class AppHandler(BaseHTTPRequestHandler):
             with LOCK:
                 db = load_db()
                 album = find_album(db, match.group(1))
-                if album and ensure_user_album_match(db, album, current_user):
-                    save_db(db)
+                if album and not stored_user_album_match(album, current_user):
+                    enqueue_album_match_job(album.get("id"), current_user.get("id"))
             if not album:
                 return self.send_error_json("Album not found", 404)
             return self.send_json({"album": public_album(album, current_user)})
@@ -3334,6 +3640,12 @@ class AppHandler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/worker/jobs/([^/]+)/([^/]+)/complete$", path)
         if match:
             return self.complete_worker_job(match.group(1), match.group(2))
+        match = re.match(r"^/api/worker/avatar-jobs/([^/]+)/complete$", path)
+        if match:
+            return self.complete_avatar_job(match.group(1))
+        match = re.match(r"^/api/worker/match-jobs/([^/]+)/([^/]+)/complete$", path)
+        if match:
+            return self.complete_match_job(match.group(1), match.group(2))
         match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/request$", path)
         if match:
             current_user = self.require_user()
@@ -3515,11 +3827,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 try:
                     with avatar_source.open("wb") as out:
                         shutil.copyfileobj(avatar_item.file, out)
-                    warning = save_avatar_profile(user, avatar_source)
+                    warning = save_avatar_image(user, avatar_source)
                 finally:
                     avatar_source.unlink(missing_ok=True)
             upsert_user(db, user)
             save_db(db)
+        if avatar_item is not None and getattr(avatar_item, "filename", None):
+            enqueue_avatar_job(user["id"])
         token = create_auth_token(user["id"])
         LOGGER.info("user_id=%s username=%s face=%s", user["id"], username, user.get("hasFaceProfile"), extra={"event": "auth.register"})
         payload = {"user": public_user(user, self.request_origin()), "token": token}
@@ -3574,10 +3888,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 user = find_user_by_id(db, current_user.get("id"))
                 if not user:
                     return self.send_error_json("请先登录", 401)
-                warning = save_avatar_profile(user, avatar_source)
+                warning = save_avatar_image(user, avatar_source)
                 upsert_user(db, user)
                 save_db(db)
             self._current_user = user
+            enqueue_avatar_job(user["id"])
         finally:
             avatar_source.unlink(missing_ok=True)
 
@@ -4078,6 +4393,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 )
         if action == "approve":
             add_album_member(album_id, request["user_id"], "member", current_user["id"])
+            enqueue_album_match_job(album_id, request["user_id"])
         LOGGER.info(
             "album_id=%s request_id=%s action=%s reviewer=%s",
             album_id,
@@ -4194,17 +4510,26 @@ class AppHandler(BaseHTTPRequestHandler):
                     cleanup_source()
             prune_empty_folders(album)
             save_db(db)
+        enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.complete_saved"})
         return self.send_json({"album": public_album(album, self.current_user())})
 
     def reanalyze_album_request(self, album_id):
+        queued = []
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
             if not album:
                 return self.send_error_json("Album not found", 404)
-            reanalyze_album(album)
+            album["folders"] = []
+            pending_folder = get_pending_folder(album)
+            for photo in album.get("photos", []):
+                photo["status"] = "queued"
+                apply_photo_folders(photo, [pending_folder], "等待后台重新识别")
+                queued.append(photo.get("id"))
             save_db(db)
+        for photo_id in queued:
+            enqueue_photo_job(album_id, photo_id)
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.reanalyze"})
         return self.send_json({"album": public_album(album, self.current_user())})
 
@@ -4225,6 +4550,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
+        enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info(
             "album_id=%s source_folder_id=%s target_folder_id=%s",
             album_id,
@@ -4247,6 +4573,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if rename_error:
                 return self.send_error_json(rename_error)
             save_db(db)
+        enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.rename"})
         return self.send_json({"album": public_album(album, self.current_user())})
 
@@ -4279,6 +4606,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
+        enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s source_folder_id=%s", album_id, source_folder_id, extra={"event": "folder.mark_no_face"})
         return self.send_json({"album": public_album(album, self.current_user())})
 
@@ -4299,6 +4627,7 @@ class AppHandler(BaseHTTPRequestHandler):
             if move_error:
                 return self.send_error_json(move_error)
             save_db(db)
+        enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info(
             "album_id=%s photo_id=%s target_folder_id=%s",
             album_id,
@@ -4314,10 +4643,13 @@ class AppHandler(BaseHTTPRequestHandler):
             album = find_album(db, album_id)
             if not album:
                 return self.send_error_json("Album not found", 404)
-            _, reclassify_error = reclassify_photo(album, photo_id)
-            if reclassify_error:
-                return self.send_error_json(reclassify_error)
+            photo = next((item for item in album.get("photos", []) if item["id"] == photo_id), None)
+            if not photo:
+                return self.send_error_json("照片不存在", 404)
+            photo["status"] = "queued"
+            apply_photo_folders(photo, [get_pending_folder(album)], "等待后台重新识别")
             save_db(db)
+        enqueue_photo_job(album_id, photo_id)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.reclassify"})
         return self.send_json({"album": public_album(album, self.current_user())})
 

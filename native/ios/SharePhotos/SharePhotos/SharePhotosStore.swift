@@ -101,8 +101,8 @@ final class SharePhotosStore: ObservableObject {
         do {
             let response = try await api.login(username: normalizedUsername, password: password)
             setAuthenticated(user: response.user, token: response.token, warning: nil)
-            statusText = "欢迎回来，\(response.user.nickname)"
             await loadAlbums()
+            statusText = "欢迎回来，\(response.user.nickname)"
             return true
         } catch {
             let message = handleError(error)
@@ -155,12 +155,16 @@ final class SharePhotosStore: ObservableObject {
     }
 
     func loadMe() async {
-        guard authToken != nil else { return }
+        guard let tokenSnapshot = authToken else { return }
         isCheckingAuth = true
         defer { isCheckingAuth = false }
         do {
-            currentUser = try await api.me()
+            let user = try await api.me()
+            guard authToken == tokenSnapshot else { return }
+            currentUser = user
+            uploader = user.nickname
         } catch {
+            guard authToken == tokenSnapshot else { return }
             if case APIError.unauthorized = error {
                 clearAuth()
             } else {
@@ -185,7 +189,7 @@ final class SharePhotosStore: ObservableObject {
         guard currentUser != nil else { return false }
         let oldAvatarURL = imageURL(currentUser?.avatarUrl)
         isBusy = true
-        showOperation(title: "更新头像", message: "正在识别头像并刷新资料", progress: nil)
+        showOperation(title: "更新头像", message: "正在保存头像并提交后台识别", progress: nil)
         defer { isBusy = false }
         do {
             let response = try await api.updateAvatar(avatarData: avatarData)
@@ -198,8 +202,8 @@ final class SharePhotosStore: ObservableObject {
             currentUser = response.user
             uploader = response.user.nickname
             authWarning = response.warning
-            statusText = response.warning ?? "头像已更新"
-            showOperation(title: "头像已更新", message: response.warning ?? "你的资料已经刷新", progress: 1)
+            statusText = response.warning ?? "头像已更新，正在后台识别人脸"
+            showOperation(title: "头像已更新", message: response.warning ?? "后台会自动识别头像并匹配你的照片", progress: 1)
             hideOperation(after: 1.0)
             await loadAlbums()
             return true
@@ -212,12 +216,16 @@ final class SharePhotosStore: ObservableObject {
     }
 
     func loadAlbums() async {
+        let tokenSnapshot = authToken
         showOperation(title: "连接服务中", message: "正在读取 \(serverAddress)", progress: nil)
         do {
-            albums = try await fetchAlbumsWithFallback()
+            let loadedAlbums = try await fetchAlbumsWithFallback()
+            guard authToken == tokenSnapshot else { return }
+            albums = loadedAlbums
             reconcileSelectedAlbum()
             hideOperation(after: 0.6)
         } catch {
+            guard authToken == tokenSnapshot else { return }
             let message = handleError(error)
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)

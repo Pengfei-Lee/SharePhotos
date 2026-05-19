@@ -113,6 +113,89 @@ def complete_remote_job(base_url, album_id, photo_id, analysis, resources=None):
     )
 
 
+def analyze_avatar_image(image_path):
+    readable, cleanup = server.readable_source_for_path(image_path)
+    try:
+        if not readable:
+            return {"status": "failed", "note": "头像无法读取"}
+        embedding, note, meta = server.extract_face_embedding(readable)
+        return {
+            "status": "ready" if embedding else "failed",
+            "embedding": embedding,
+            "engine": meta.get("engine") if meta else "",
+            "note": note or "",
+        }
+    finally:
+        cleanup()
+
+
+def complete_avatar_job(base_url, user_id, analysis):
+    request_json("%s/api/worker/avatar-jobs/%s/complete" % (base_url, user_id), {"analysis": analysis})
+    LOGGER.info("user_id=%s status=%s", user_id, analysis.get("status"), extra={"event": "worker.avatar_complete_posted"})
+
+
+def complete_match_job(base_url, album_id, user_id, match):
+    request_json("%s/api/worker/match-jobs/%s/%s/complete" % (base_url, album_id, user_id), {"match": match})
+    LOGGER.info("album_id=%s user_id=%s matched=%s", album_id, user_id, match.get("matched"), extra={"event": "worker.match_complete_posted"})
+
+
+def process_remote_task(base_url, job):
+    job_type = job.get("type") or job.get("taskType") or server.FACE_JOB_PHOTO_ANALYZE
+    if job_type == server.FACE_JOB_PHOTO_ANALYZE:
+        album_id = job["albumId"]
+        photo_id = job["photoId"]
+        payload = request_json("%s/api/worker/jobs/%s/%s" % (base_url, album_id, photo_id))
+        remote_job = payload.get("job") if payload else None
+        if not remote_job:
+            LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_missing"})
+            return
+        source_url = remote_job.get("sourceUrl") or (remote_job.get("photo") or {}).get("imageUrl")
+        if not source_url:
+            raise ValueError("Worker job missing sourceUrl")
+        with tempfile.TemporaryDirectory(prefix="picme-worker-") as tmp:
+            image_path = download_job_image(source_url, tmp)
+            analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
+        complete_remote_job(base_url, album_id, photo_id, analysis, resources)
+        LOGGER.info(
+            "album_id=%s photo_id=%s status=%s engine=%s face_count=%s note=%s",
+            album_id,
+            photo_id,
+            analysis.get("status"),
+            analysis.get("engine", ""),
+            analysis.get("faceCount", ""),
+            analysis.get("note", ""),
+            extra={"event": "worker.job_complete"},
+        )
+        return
+    if job_type == server.FACE_JOB_AVATAR_ANALYZE:
+        user_id = job["userId"]
+        payload = request_json("%s/api/worker/avatar-jobs/%s" % (base_url, user_id))
+        remote_job = payload.get("job") if payload else None
+        if not remote_job:
+            LOGGER.info("user_id=%s", user_id, extra={"event": "worker.avatar_job_missing"})
+            return
+        source_url = remote_job.get("sourceUrl")
+        if not source_url:
+            raise ValueError("Avatar worker job missing sourceUrl")
+        with tempfile.TemporaryDirectory(prefix="picme-avatar-worker-") as tmp:
+            image_path = download_job_image(source_url, tmp)
+            analysis = analyze_avatar_image(image_path)
+        complete_avatar_job(base_url, user_id, analysis)
+        return
+    if job_type == server.FACE_JOB_ALBUM_MATCH:
+        album_id = job["albumId"]
+        user_id = job["userId"]
+        payload = request_json("%s/api/worker/match-jobs/%s/%s" % (base_url, album_id, user_id))
+        remote_job = payload.get("job") if payload else None
+        if not remote_job:
+            LOGGER.info("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_job_missing"})
+            return
+        match = server.compute_user_album_match(remote_job.get("album") or {}, remote_job.get("user") or {})
+        complete_match_job(base_url, album_id, user_id, match)
+        return
+    LOGGER.warning("job=%s", job, extra={"event": "worker.unknown_job"})
+
+
 def remote_worker():
     base_url = server.WORKER_API_URL
     server.log_startup_config("face-worker-remote")
@@ -154,44 +237,26 @@ def redis_remote_worker():
         job = server.pop_face_job(timeout=3)
         if not job:
             continue
-        album_id, photo_id = job
-        if not album_id or not photo_id:
+        if isinstance(job, tuple):
+            job = {"type": server.FACE_JOB_PHOTO_ANALYZE, "albumId": job[0], "photoId": job[1]}
+        if not job:
             continue
-        LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_pulled"})
+        job_key = server.face_job_key(job)
+        LOGGER.info("job=%s", job_key, extra={"event": "worker.job_pulled"})
         try:
-            payload = request_json("%s/api/worker/jobs/%s/%s" % (base_url, album_id, photo_id))
-            remote_job = payload.get("job") if payload else None
-            if not remote_job:
-                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.job_missing"})
-                continue
-            source_url = remote_job.get("sourceUrl") or (remote_job.get("photo") or {}).get("imageUrl")
-            if not source_url:
-                raise ValueError("Worker job missing sourceUrl")
-            with tempfile.TemporaryDirectory(prefix="picme-worker-") as tmp:
-                image_path = download_job_image(source_url, tmp)
-                analysis, resources = analyze_and_upload_resources(album_id, photo_id, image_path)
-            complete_remote_job(base_url, album_id, photo_id, analysis, resources)
-            LOGGER.info(
-                "album_id=%s photo_id=%s status=%s engine=%s face_count=%s note=%s",
-                album_id,
-                photo_id,
-                analysis.get("status"),
-                analysis.get("engine", ""),
-                analysis.get("faceCount", ""),
-                analysis.get("note", ""),
-                extra={"event": "worker.job_complete"},
-            )
+            process_remote_task(base_url, job)
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-            LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, error, extra={"event": "worker.error"})
-            try:
-                complete_remote_job(base_url, album_id, photo_id, {"status": "failed", "note": str(error)}, {})
-            except Exception as complete_error:
-                LOGGER.warning("album_id=%s photo_id=%s error=%s", album_id, photo_id, complete_error, extra={"event": "worker.complete_failed"})
-                time.sleep(5)
+            LOGGER.warning("job=%s error=%s", job_key, error, extra={"event": "worker.error"})
+            if job.get("type") == server.FACE_JOB_PHOTO_ANALYZE:
+                try:
+                    complete_remote_job(base_url, job.get("albumId"), job.get("photoId"), {"status": "failed", "note": str(error)}, {})
+                except Exception as complete_error:
+                    LOGGER.warning("job=%s error=%s", job_key, complete_error, extra={"event": "worker.complete_failed"})
+                    time.sleep(5)
         finally:
             if server.REDIS_CLIENT is not None:
-                server.REDIS_CLIENT.srem(server.FACE_QUEUE_SET_NAME, "%s:%s" % (album_id, photo_id))
-                LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "redis.complete"})
+                server.REDIS_CLIENT.srem(server.FACE_QUEUE_SET_NAME, job_key)
+                LOGGER.info("job=%s", job_key, extra={"event": "redis.complete"})
 
 
 def main():
