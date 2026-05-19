@@ -472,11 +472,11 @@ extension Error {
         if let urlError = self as? URLError {
             switch urlError.code {
             case .notConnectedToInternet:
-                return "连接失败：iOS 可能没有允许本地网络访问，或手机和 Mac 不在同一个 Wi-Fi。请到 设置 > 识我 > 本地网络 打开权限后重试。"
+                return "连接失败：请检查网络后重试。"
             case .cannotConnectToHost, .timedOut, .networkConnectionLost:
-                return "连接失败：没有连上 PicMe 服务。请确认服务已启动、手机和 Mac 在同一个 Wi-Fi，并检查服务地址是否正确。"
+                return "连接失败：没有连上 PicMe 服务，请稍后重试。"
             case .cannotFindHost, .unsupportedURL, .badURL:
-                return "连接失败：服务地址不正确，请填写 Mac 的局域网地址，例如 http://192.168.3.25:8000。"
+                return "连接失败：服务地址不可用。"
             default:
                 return urlError.localizedDescription
             }

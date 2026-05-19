@@ -170,8 +170,12 @@ async function api(path, options = {}) {
   }
   const response = await fetch(path, requestOptions);
   if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("登录已过期，请重新登录");
+    if (path === "/api/me") {
+      clearAuthSession();
+      throw new Error("登录已过期，请重新登录");
+    }
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "没有权限执行这个操作，请确认账号权限");
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -201,8 +205,8 @@ function requiresAlbumAuth(url) {
 async function downloadWithAuth(url, fallbackName) {
   const response = await fetch(url, { headers: authHeaders() });
   if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("登录已过期，请重新登录");
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "没有权限下载这个文件");
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -1056,6 +1060,48 @@ function canAdminAlbum(album) {
   return album.canAdmin || ["owner", "admin"].includes(album.currentUserRole || "");
 }
 
+function albumTabCount(album, tab) {
+  if (tab === "mine") return typeof album.myPhotoCount === "number" ? album.myPhotoCount : myPhotos(album).length;
+  if (tab === "all") return album.photos.length;
+  return album.folders.length;
+}
+
+function albumTabsHtml(activeTab, album) {
+  const tabs = [
+    { id: "mine", label: "我的照片" },
+    { id: "folders", label: "人物小相册" },
+    { id: "all", label: "全部照片" },
+  ];
+  return `
+    <div class="album-tabs" role="tablist" aria-label="相册视图">
+      ${tabs
+        .map(
+          (tab) => `
+            <button class="${activeTab === tab.id ? "active" : ""}" type="button" role="tab" aria-selected="${activeTab === tab.id}" data-album-tab="${tab.id}">
+              <strong>${tab.label}</strong>
+              <span>${albumTabCount(album, tab.id)}</span>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function bindAlbumTabs(root) {
+  root.querySelectorAll("[data-album-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      resetPhotoSelection();
+      state.myPhotosOpen = button.dataset.albumTab === "mine";
+      state.allPhotosOpen = button.dataset.albumTab === "all";
+      state.uploadExpanded = false;
+      if (!state.allPhotosOpen) state.allPhotosLimit = 12;
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+}
+
 function renderFolders(album) {
   if (state.myPhotosOpen) {
     uploadForm.classList.add("hidden");
@@ -1086,7 +1132,8 @@ function renderFolders(album) {
   folders.classList.remove("hidden");
   myPhotosPanel.classList.remove("hidden");
   folderDetail.classList.add("hidden");
-  renderMyPhotosCard(album);
+  myPhotosPanel.innerHTML = albumTabsHtml("folders", album);
+  bindAlbumTabs(myPhotosPanel);
   renderAllPhotos(album);
 
   if (!album.folders.length) {
@@ -1269,6 +1316,7 @@ function renderMyPhotosDetail(album) {
   myPhotosPanel.classList.add("hidden");
   if (!photos.length) {
     folderDetail.innerHTML = `
+      ${albumTabsHtml("mine", album)}
       <div class="detail-toolbar all-photos-toolbar">
         <button id="backFromMyPhotos" class="secondary" type="button">返回相册</button>
         <div class="detail-title">
@@ -1283,6 +1331,7 @@ function renderMyPhotosDetail(album) {
         </div>
       </section>
     `;
+    bindAlbumTabs(folderDetail);
     $("#backFromMyPhotos").addEventListener("click", () => {
       resetPhotoSelection();
       state.myPhotosOpen = false;
@@ -1292,6 +1341,7 @@ function renderMyPhotosDetail(album) {
   }
 
   folderDetail.innerHTML = `
+    ${albumTabsHtml("mine", album)}
     <div class="detail-toolbar all-photos-toolbar">
       <button id="backFromMyPhotos" class="secondary" type="button">返回相册</button>
       <div class="detail-title">
@@ -1301,6 +1351,7 @@ function renderMyPhotosDetail(album) {
     </div>
     <div id="myPhotosGridMount"></div>
   `;
+  bindAlbumTabs(folderDetail);
   $("#backFromMyPhotos").addEventListener("click", () => {
     resetPhotoSelection();
     state.myPhotosOpen = false;
@@ -1347,6 +1398,7 @@ function renderAllPhotos(album) {
   const visiblePhotos = sortedPhotos.slice(0, state.allPhotosLimit);
   const hasMore = visiblePhotos.length < sortedPhotos.length;
   allPhotos.innerHTML = `
+    ${albumTabsHtml("all", album)}
     <div class="detail-toolbar all-photos-toolbar">
       <button id="backFromAllPhotos" class="secondary" type="button">返回</button>
       <div class="detail-title">
@@ -1362,6 +1414,7 @@ function renderAllPhotos(album) {
     }
   `;
 
+  bindAlbumTabs(allPhotos);
   $("#backFromAllPhotos").addEventListener("click", () => {
     resetPhotoSelection();
     state.allPhotosOpen = false;

@@ -1224,6 +1224,44 @@ label {
   gap: 12px;
 }
 
+.album-tabs {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.album-tabs button {
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(20, 184, 166, 0.16);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 2px;
+  min-height: 56px;
+  padding: 8px 6px;
+  text-align: center;
+}
+
+.album-tabs button.active {
+  background: linear-gradient(135deg, #14b8c4, #087568);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 12px 22px rgba(13, 148, 136, 0.2);
+}
+
+.album-tabs strong {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.album-tabs span {
+  color: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+  opacity: 0.78;
+}
+
 .album-share-card {
   align-items: center;
   background: rgba(255, 255, 255, 0.86);

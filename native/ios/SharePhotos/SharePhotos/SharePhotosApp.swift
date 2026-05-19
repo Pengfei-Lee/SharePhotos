@@ -10,7 +10,6 @@ struct SharePhotosApp: App {
         #if targetEnvironment(simulator)
         URL(string: "http://localhost:8000")!
         #else
-        // 真机测试时这里要填 Mac 的局域网 IP，不能用 localhost。
         URL(string: "https://picme.me")!
         #endif
     }
