@@ -163,10 +163,11 @@ final class SharePhotosStore: ObservableObject {
             guard authToken == tokenSnapshot else { return }
             currentUser = user
             uploader = user.nickname
+            clearExpiredStatusIfNeeded()
         } catch {
             guard authToken == tokenSnapshot else { return }
             if case APIError.unauthorized = error {
-                clearAuth()
+                expireSession()
             } else {
                 statusText = error.sharePhotosNetworkMessage
             }
@@ -223,10 +224,11 @@ final class SharePhotosStore: ObservableObject {
             guard authToken == tokenSnapshot else { return }
             albums = loadedAlbums
             reconcileSelectedAlbum()
+            clearExpiredStatusIfNeeded()
             hideOperation(after: 0.6)
         } catch {
             guard authToken == tokenSnapshot else { return }
-            let message = handleError(error)
+            let message = handleError(error, unauthorizedMessage: "相册刷新失败，请稍后重试")
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)
         }
@@ -506,7 +508,7 @@ final class SharePhotosStore: ObservableObject {
             uploadProgressText = "已收到 \(response.queued) 张，忽略 \(response.ignored) 个非照片文件"
             uploadProgressFraction = 1
             await refreshAlbum(id: album.id)
-            await pollRecognition(albumId: album.id)
+            await pollRecognition(albumId: album.id, tokenSnapshot: authToken)
         } catch {
             let message = handleError(error)
             statusText = message
@@ -795,17 +797,31 @@ final class SharePhotosStore: ObservableObject {
         return nil
     }
 
-    private func handleError(_ error: Error) -> String {
+    private func handleError(_ error: Error, unauthorizedMessage: String = APIError.unauthorized.localizedDescription) -> String {
         if case APIError.unauthorized = error {
-            return APIError.unauthorized.localizedDescription
+            return unauthorizedMessage
         }
         return error.sharePhotosNetworkMessage
     }
 
-    private func pollRecognition(albumId: String) async {
+    private func expireSession() {
+        clearAuth()
+        albums = []
+        selectedAlbumId = nil
+        statusText = APIError.unauthorized.localizedDescription
+    }
+
+    private func clearExpiredStatusIfNeeded() {
+        guard statusText == APIError.unauthorized.localizedDescription else { return }
+        statusText = albums.isEmpty ? "已登录，还没有相册" : "已同步 \(albums.count) 个相册"
+    }
+
+    private func pollRecognition(albumId: String, tokenSnapshot: String?) async {
         for attempt in 0..<30 {
+            guard authToken == tokenSnapshot else { return }
             do {
                 let album = try await api.fetchAlbum(id: albumId)
+                guard authToken == tokenSnapshot else { return }
                 upsert(album)
                 let active = album.photos.filter { $0.isProcessing }.count
                 let ready = album.photos.filter { $0.status == "ready" }.count
@@ -827,6 +843,12 @@ final class SharePhotosStore: ObservableObject {
                 )
                 try await Task.sleep(nanoseconds: 1_500_000_000)
             } catch {
+                guard authToken == tokenSnapshot else { return }
+                if case APIError.unauthorized = error {
+                    showOperation(title: "后台继续整理", message: "照片识别仍在后台进行，稍后刷新即可看到结果", progress: nil)
+                    hideOperation(after: 1.5)
+                    return
+                }
                 let message = handleError(error)
                 statusText = message
                 showOperation(title: "识别进度刷新失败", message: message, progress: nil)
