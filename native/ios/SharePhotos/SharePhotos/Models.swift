@@ -101,7 +101,16 @@ struct AlbumResponse: Codable {
 struct AuthResponse: Codable {
     let user: User
     let token: String
+    let accessToken: String?
+    let refreshToken: String?
+    let expiresIn: Int?
+    let refreshExpiresIn: Int?
+    let sessionId: String?
     let warning: String?
+
+    var effectiveAccessToken: String {
+        accessToken ?? token
+    }
 }
 
 struct MeResponse: Codable {

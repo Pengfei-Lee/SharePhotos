@@ -33,16 +33,21 @@ struct DownloadManifest: Codable, Hashable {
 final class SharePhotosAPI {
     let baseURL: URL
     var authToken: String?
+    var refreshToken: String?
+    var onAuthTokensChanged: ((AuthResponse) -> Void)?
     private let photoCache: PhotoDiskCache
 
-    init(baseURL: URL, authToken: String? = nil, photoCache: PhotoDiskCache = .shared) {
+    init(baseURL: URL, authToken: String? = nil, refreshToken: String? = nil, photoCache: PhotoDiskCache = .shared) {
         self.baseURL = baseURL
         self.authToken = authToken
+        self.refreshToken = refreshToken
         self.photoCache = photoCache
     }
 
     func withBaseURL(_ baseURL: URL) -> SharePhotosAPI {
-        SharePhotosAPI(baseURL: baseURL, authToken: authToken, photoCache: photoCache)
+        let api = SharePhotosAPI(baseURL: baseURL, authToken: authToken, refreshToken: refreshToken, photoCache: photoCache)
+        api.onAuthTokensChanged = onAuthTokensChanged
+        return api
     }
 
     func login(username: String, password: String) async throws -> AuthResponse {
@@ -83,17 +88,20 @@ final class SharePhotosAPI {
     }
 
     func updateAvatar(avatarData: Data) async throws -> ProfileResponse {
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var request = authorizedRequest(path: "/api/me/avatar")
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let data = try await authorizedData {
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = authorizedRequest(path: "/api/me/avatar")
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        var body = Data()
-        appendFile(data: avatarData, fieldName: "avatar", filename: "avatar.jpg", contentType: "image/jpeg", boundary: boundary, to: &body)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+            var body = Data()
+            appendFile(data: avatarData, fieldName: "avatar", filename: "avatar.jpg", contentType: "image/jpeg", boundary: boundary, to: &body)
+            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
-        try validate(response: response, data: data)
+            let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+            try validate(response: response, data: data)
+            return data
+        }
         return try JSONDecoder().decode(ProfileResponse.self, from: data)
     }
 
@@ -153,20 +161,23 @@ final class SharePhotosAPI {
     }
 
     func upload(albumId: String, uploader: String, files: [UploadFile]) async throws -> UploadResponse {
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var request = authorizedRequest(path: "/api/albums/\(albumId)/upload")
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let data = try await authorizedData {
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = authorizedRequest(path: "/api/albums/\(albumId)/upload")
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        var body = Data()
-        appendField(name: "uploader", value: uploader.isEmpty ? "访客" : uploader, boundary: boundary, to: &body)
-        for file in files {
-            try appendFile(file, fieldName: "photos", boundary: boundary, to: &body)
+            var body = Data()
+            appendField(name: "uploader", value: uploader.isEmpty ? "访客" : uploader, boundary: boundary, to: &body)
+            for file in files {
+                try appendFile(file, fieldName: "photos", boundary: boundary, to: &body)
+            }
+            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+            let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+            try validate(response: response, data: data)
+            return data
         }
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
-        try validate(response: response, data: data)
         return try JSONDecoder().decode(UploadResponse.self, from: data)
     }
 
@@ -247,21 +258,55 @@ final class SharePhotosAPI {
     }
 
     private func request(path: String, method: String) async throws -> Data {
-        var request = authorizedRequest(path: path)
-        request.httpMethod = method
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
-        return data
+        try await authorizedData {
+            var request = authorizedRequest(path: path)
+            request.httpMethod = method
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data)
+            return data
+        }
     }
 
     private func jsonRequest(path: String, method: String, body: [String: Any], treatsUnauthorizedAsServerError: Bool = false) async throws -> Data {
-        var request = authorizedRequest(path: path)
-        request.httpMethod = method
+        try await authorizedData(allowsRefresh: !treatsUnauthorizedAsServerError) {
+            var request = authorizedRequest(path: path)
+            request.httpMethod = method
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data, treatsUnauthorizedAsServerError: treatsUnauthorizedAsServerError)
+            return data
+        }
+    }
+
+    private func authorizedData(allowsRefresh: Bool = true, operation: () async throws -> Data) async throws -> Data {
+        do {
+            return try await operation()
+        } catch APIError.unauthorized where allowsRefresh {
+            guard try await refreshAccessTokenIfPossible() else {
+                throw APIError.unauthorized
+            }
+            return try await operation()
+        }
+    }
+
+    private func refreshAccessTokenIfPossible() async throws -> Bool {
+        guard let refreshToken, !refreshToken.isEmpty else { return false }
+        var request = URLRequest(url: absoluteURL(path: "/api/auth/refresh"))
+        request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["refreshToken": refreshToken])
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data, treatsUnauthorizedAsServerError: treatsUnauthorizedAsServerError)
-        return data
+        do {
+            try validate(response: response, data: data, treatsUnauthorizedAsServerError: false)
+        } catch APIError.unauthorized {
+            return false
+        }
+        let auth = try JSONDecoder().decode(AuthResponse.self, from: data)
+        authToken = auth.effectiveAccessToken
+        self.refreshToken = auth.refreshToken ?? refreshToken
+        onAuthTokensChanged?(auth)
+        return true
     }
 
     private func downloadManifestFile(_ file: DownloadFileManifest, cachePrefix: String, photoId: String) async throws -> URL {

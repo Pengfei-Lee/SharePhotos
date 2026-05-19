@@ -697,6 +697,39 @@ def sqlite_init_store():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                device_id TEXT,
+                device_name TEXT,
+                user_agent TEXT,
+                created_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                revoked_reason TEXT,
+                data_json TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+                ON auth_sessions(user_id, revoked_at, expires_at);
+
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                token_hash TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                replaced_by_token_hash TEXT,
+                FOREIGN KEY (session_id) REFERENCES auth_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session
+                ON refresh_tokens(session_id, revoked_at, expires_at);
+
             CREATE TABLE IF NOT EXISTS album_members (
                 album_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
@@ -750,6 +783,9 @@ def sqlite_init_store():
                 ON album_join_requests(user_id, status, created_at);
             """
         )
+        auth_columns = {row["name"] for row in conn.execute("PRAGMA table_info(auth_tokens)").fetchall()}
+        if "session_id" not in auth_columns:
+            conn.execute("ALTER TABLE auth_tokens ADD COLUMN session_id TEXT")
         conn.execute(
             "INSERT OR REPLACE INTO store_meta(key, value) VALUES(?, ?)",
             ("schema_version", "3"),
@@ -1109,7 +1145,9 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 PASSWORD_RE = re.compile(r"^[\x21-\x7E]{6,20}$")
 PASSWORD_MIN_LENGTH = 6
 PASSWORD_MAX_LENGTH = 20
-AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 30)))
+ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("ACCESS_TOKEN_TTL_SECONDS", str(60 * 30)))
+REFRESH_TOKEN_TTL_SECONDS = int(os.environ.get("REFRESH_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 90)))
+AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_TOKEN_TTL_SECONDS", str(ACCESS_TOKEN_TTL_SECONDS)))
 
 
 def normalize_username(value):
@@ -1340,11 +1378,15 @@ def latest_join_request(album_id, user_id):
         ).fetchone()
 
 
-def create_auth_token(user_id):
-    token = uuid.uuid4().hex + uuid.uuid4().hex
+def new_token():
+    return secrets.token_urlsafe(48)
+
+
+def create_auth_token(user_id, session_id=None):
+    token = new_token()
     token_hash = hash_auth_token(token)
     now = int(time.time())
-    expires_at = now + AUTH_TOKEN_TTL_SECONDS
+    expires_at = now + ACCESS_TOKEN_TTL_SECONDS
     if sqlite_enabled():
         sqlite_init_store()
         with sqlite_connect() as conn:
@@ -1354,8 +1396,8 @@ def create_auth_token(user_id):
                     (now,),
                 )
                 conn.execute(
-                    "INSERT INTO auth_tokens(token_hash, user_id, created_at, expires_at) VALUES(?, ?, ?, ?)",
-                    (token_hash, user_id, now, expires_at),
+                    "INSERT INTO auth_tokens(token_hash, user_id, created_at, expires_at, session_id) VALUES(?, ?, ?, ?, ?)",
+                    (token_hash, user_id, now, expires_at, session_id),
                 )
     else:
         db = load_db()
@@ -1363,9 +1405,110 @@ def create_auth_token(user_id):
             item for item in db.get("authTokens", [])
             if int(item.get("expiresAt") or 0) >= now
         ]
-        db["authTokens"].append({"tokenHash": token_hash, "userId": user_id, "createdAt": now, "expiresAt": expires_at})
+        db["authTokens"].append({"tokenHash": token_hash, "userId": user_id, "sessionId": session_id, "createdAt": now, "expiresAt": expires_at})
         write_db(db)
     return token
+
+
+def create_refresh_token(conn, session_id, user_id, now):
+    token = new_token()
+    token_hash = hash_auth_token(token)
+    conn.execute(
+        """
+        INSERT INTO refresh_tokens(token_hash, session_id, user_id, created_at, expires_at, revoked_at, replaced_by_token_hash)
+        VALUES(?, ?, ?, ?, ?, NULL, NULL)
+        """,
+        (token_hash, session_id, user_id, now, now + REFRESH_TOKEN_TTL_SECONDS),
+    )
+    return token
+
+
+def auth_payload(user, request_handler=None, session_id=None):
+    now = int(time.time())
+    session_id = session_id or uuid.uuid4().hex
+    device_id = request_handler.headers.get("X-Device-Id", "").strip()[:120] if request_handler else ""
+    device_name = request_handler.headers.get("X-Device-Name", "").strip()[:120] if request_handler else ""
+    user_agent = request_handler.headers.get("User-Agent", "").strip()[:240] if request_handler else ""
+    access_token = create_auth_token(user["id"], session_id=session_id)
+    refresh_token = ""
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO auth_sessions(
+                        id, user_id, device_id, device_name, user_agent,
+                        created_at, last_seen_at, expires_at, revoked_at, revoked_reason, data_json
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+                    """,
+                    (
+                        session_id,
+                        user["id"],
+                        device_id,
+                        device_name,
+                        user_agent,
+                        now,
+                        now,
+                        now + REFRESH_TOKEN_TTL_SECONDS,
+                        json.dumps({"deviceId": device_id, "deviceName": device_name, "userAgent": user_agent}, ensure_ascii=False),
+                    ),
+                )
+                refresh_token = create_refresh_token(conn, session_id, user["id"], now)
+    payload = {
+        "token": access_token,
+        "accessToken": access_token,
+        "refreshToken": refresh_token,
+        "expiresIn": ACCESS_TOKEN_TTL_SECONDS,
+        "refreshExpiresIn": REFRESH_TOKEN_TTL_SECONDS,
+        "sessionId": session_id,
+    }
+    return payload
+
+
+def refresh_auth_tokens(refresh_token):
+    if not refresh_token or not sqlite_enabled():
+        return None
+    refresh_hash = hash_auth_token(refresh_token)
+    now = int(time.time())
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT rt.token_hash, rt.session_id, rt.user_id, rt.expires_at, rt.revoked_at,
+                   s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at
+            FROM refresh_tokens rt
+            JOIN auth_sessions s ON s.id = rt.session_id
+            WHERE rt.token_hash = ?
+            """,
+            (refresh_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        if row["revoked_at"] or row["session_revoked_at"] or int(row["expires_at"]) < now or int(row["session_expires_at"]) < now:
+            return None
+        user_row = conn.execute("SELECT data_json FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+        if not user_row:
+            return None
+        user = json.loads(user_row["data_json"])
+        new_access = create_auth_token(row["user_id"], session_id=row["session_id"])
+        with conn:
+            new_refresh = create_refresh_token(conn, row["session_id"], row["user_id"], now)
+            conn.execute(
+                "UPDATE refresh_tokens SET revoked_at = ?, replaced_by_token_hash = ? WHERE token_hash = ?",
+                (now, hash_auth_token(new_refresh), refresh_hash),
+            )
+            conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?", (now, row["session_id"]))
+        return {
+            "user": user,
+            "token": new_access,
+            "accessToken": new_access,
+            "refreshToken": new_refresh,
+            "expiresIn": ACCESS_TOKEN_TTL_SECONDS,
+            "refreshExpiresIn": REFRESH_TOKEN_TTL_SECONDS,
+            "sessionId": row["session_id"],
+        }
 
 
 def delete_auth_token(token):
@@ -1381,6 +1524,28 @@ def delete_auth_token(token):
         write_db(db)
 
 
+def revoke_session_for_access_token(token):
+    token_hash = hash_auth_token(token)
+    now = int(time.time())
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            row = conn.execute("SELECT session_id FROM auth_tokens WHERE token_hash = ?", (token_hash,)).fetchone()
+            with conn:
+                conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
+                if row and row["session_id"]:
+                    conn.execute(
+                        "UPDATE auth_sessions SET revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked_at IS NULL",
+                        (now, "logout", row["session_id"]),
+                    )
+                    conn.execute(
+                        "UPDATE refresh_tokens SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL",
+                        (now, row["session_id"]),
+                    )
+        return
+    delete_auth_token(token)
+
+
 def user_for_token(token):
     if not token:
         return None
@@ -1390,7 +1555,13 @@ def user_for_token(token):
         sqlite_init_store()
         with sqlite_connect() as conn:
             row = conn.execute(
-                "SELECT user_id, expires_at FROM auth_tokens WHERE token_hash = ?",
+                """
+                SELECT at.user_id, at.expires_at, at.session_id,
+                       s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at
+                FROM auth_tokens at
+                LEFT JOIN auth_sessions s ON s.id = at.session_id
+                WHERE at.token_hash = ?
+                """,
                 (token_hash,),
             ).fetchone()
             if not row:
@@ -1399,6 +1570,13 @@ def user_for_token(token):
                 with conn:
                     conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
                 return None
+            if row["session_id"] and (row["session_revoked_at"] or int(row["session_expires_at"] or 0) < now):
+                with conn:
+                    conn.execute("DELETE FROM auth_tokens WHERE token_hash = ?", (token_hash,))
+                return None
+            if row["session_id"]:
+                with conn:
+                    conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?", (now, row["session_id"]))
             user_row = conn.execute("SELECT data_json FROM users WHERE id = ?", (row["user_id"],)).fetchone()
             return json.loads(user_row["data_json"]) if user_row else None
     db = load_db()
@@ -3660,6 +3838,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.register_user_request()
         if path == "/api/auth/login":
             return self.login_user_request()
+        if path == "/api/auth/refresh":
+            return self.refresh_auth_request()
         if path == "/api/auth/logout":
             return self.logout_user_request()
         if path == "/api/worker/jobs/claim":
@@ -3861,9 +4041,9 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         if avatar_item is not None and getattr(avatar_item, "filename", None):
             enqueue_avatar_job(user["id"])
-        token = create_auth_token(user["id"])
+        auth = auth_payload(user, self)
         LOGGER.info("user_id=%s username=%s face=%s", user["id"], username, user.get("hasFaceProfile"), extra={"event": "auth.register"})
-        payload = {"user": public_user(user, self.request_origin()), "token": token}
+        payload = {"user": public_user(user, self.request_origin()), **auth}
         if warning:
             payload["warning"] = warning
         return self.send_json(payload, 201)
@@ -3879,14 +4059,25 @@ class AppHandler(BaseHTTPRequestHandler):
             user = find_user_by_username(db, username)
         if not user or not verify_password(password, user.get("passwordHash")):
             return self.send_error_json("登录账号或密码不正确", 401)
-        token = create_auth_token(user["id"])
+        auth = auth_payload(user, self)
         LOGGER.info("user_id=%s username=%s", user["id"], username, extra={"event": "auth.login"})
-        return self.send_json({"user": public_user(user, self.request_origin()), "token": token})
+        return self.send_json({"user": public_user(user, self.request_origin()), **auth})
+
+    def refresh_auth_request(self):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        refreshed = refresh_auth_tokens(payload.get("refreshToken") or payload.get("refresh_token") or "")
+        if not refreshed:
+            return self.send_error_json("登录已失效，请重新登录", 401)
+        user = refreshed.pop("user")
+        LOGGER.info("user_id=%s session_id=%s", user.get("id"), refreshed.get("sessionId"), extra={"event": "auth.refresh"})
+        return self.send_json({"user": public_user(user, self.request_origin()), **refreshed})
 
     def logout_user_request(self):
         token = self.bearer_token()
         if token:
-            delete_auth_token(token)
+            revoke_session_for_access_token(token)
         return self.send_json({"ok": True})
 
     def update_avatar_request(self, current_user):
