@@ -9,3 +9,6 @@ data/
 **/xcuserdata/
 **/*.xcodeproj/project.pbxproj
 project.pbxproj
+
+remote-sharephotos/
+*.sh

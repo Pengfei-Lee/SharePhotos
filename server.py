@@ -910,26 +910,53 @@ def sqlite_write_db(db):
                 if not username:
                     continue
                 user["username"] = username
-                conn.execute(
+                user_row = (
+                    user_id,
+                    username,
+                    user.get("nickname") or username,
+                    user.get("passwordHash") or user.get("password_hash") or "",
+                    user.get("avatarUrl") or user.get("avatar_url") or "",
+                    user.get("avatarObjectKey") or user.get("avatar_object_key") or "",
+                    1 if user.get("hasFaceProfile") else 0,
+                    json.dumps(user, ensure_ascii=False, separators=(",", ":")),
+                    int(user.get("createdAt") or 0),
+                )
+                updated = conn.execute(
                     """
-                    INSERT OR REPLACE INTO users(
-                        id, username, nickname, password_hash, avatar_url,
-                        avatar_object_key, has_face_profile, data_json, created_at
-                    )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    UPDATE users
+                    SET username = ?,
+                        nickname = ?,
+                        password_hash = ?,
+                        avatar_url = ?,
+                        avatar_object_key = ?,
+                        has_face_profile = ?,
+                        data_json = ?,
+                        created_at = ?
+                    WHERE id = ?
                     """,
                     (
-                        user_id,
-                        username,
-                        user.get("nickname") or username,
-                        user.get("passwordHash") or user.get("password_hash") or "",
-                        user.get("avatarUrl") or user.get("avatar_url") or "",
-                        user.get("avatarObjectKey") or user.get("avatar_object_key") or "",
-                        1 if user.get("hasFaceProfile") else 0,
-                        json.dumps(user, ensure_ascii=False, separators=(",", ":")),
-                        int(user.get("createdAt") or 0),
+                        user_row[1],
+                        user_row[2],
+                        user_row[3],
+                        user_row[4],
+                        user_row[5],
+                        user_row[6],
+                        user_row[7],
+                        user_row[8],
+                        user_row[0],
                     ),
                 )
+                if updated.rowcount == 0:
+                    conn.execute(
+                        """
+                        INSERT INTO users(
+                            id, username, nickname, password_hash, avatar_url,
+                            avatar_object_key, has_face_profile, data_json, created_at
+                        )
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        user_row,
+                    )
             current_album_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM albums").fetchall()
             }
