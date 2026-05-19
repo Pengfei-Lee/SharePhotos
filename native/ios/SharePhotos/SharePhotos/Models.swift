@@ -24,6 +24,7 @@ struct User: Identifiable, Codable, Hashable {
     let nickname: String
     let avatarUrl: String?
     let hasFaceProfile: Bool
+    let faceProfileStatus: String?
 }
 
 struct PhotoFolder: Identifiable, Codable, Hashable {

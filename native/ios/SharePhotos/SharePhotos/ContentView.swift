@@ -880,7 +880,7 @@ private struct AlbumMyPhotosTab: View {
                     EmptyContentState(
                         systemImage: "person.crop.circle.badge.questionmark",
                         title: "暂时没有匹配到你的照片",
-                        message: store.currentUser?.hasFaceProfile == true ? "可以稍后刷新，或在个人资料换一张更清晰的正脸头像。" : "你还没有可用于识别的人脸头像，所以暂时不能推荐。"
+                        message: myPhotosEmptyMessage
                     )
                 } else {
                     PhotoLibraryGrid(
@@ -906,6 +906,20 @@ private struct AlbumMyPhotosTab: View {
             }
         }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+    }
+
+    private var myPhotosEmptyMessage: String {
+        if store.currentUser?.hasFaceProfile == true {
+            return "后台会在照片分类完成后自动匹配，稍后刷新就能看到。"
+        }
+        switch store.currentUser?.faceProfileStatus {
+        case "queued", "processing":
+            return "头像正在后台识别，完成后会自动匹配你参与的相册。"
+        case "failed":
+            return "头像未识别人脸，可以在个人资料换一张更清晰的正脸头像。"
+        default:
+            return "你还没有可用于识别的人脸头像，所以暂时不能推荐。"
+        }
     }
 }
 
@@ -2969,6 +2983,20 @@ private struct ProfileSheet: View {
         avatarData != nil && !store.isBusy
     }
 
+    private var faceProfileStatusText: String {
+        if store.currentUser?.hasFaceProfile == true {
+            return "已启用人脸推荐"
+        }
+        switch store.currentUser?.faceProfileStatus {
+        case "queued", "processing":
+            return "头像正在后台识别"
+        case "failed":
+            return "头像未识别人脸，暂不能推荐"
+        default:
+            return "还没有可用于识别的人脸头像"
+        }
+    }
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -3011,7 +3039,7 @@ private struct ProfileSheet: View {
                         ProfileInfoRow(
                             icon: store.currentUser?.hasFaceProfile == true ? "checkmark.seal" : "exclamationmark.triangle",
                             title: "我的照片推荐",
-                            value: store.currentUser?.hasFaceProfile == true ? "已启用人脸推荐" : "头像未识别人脸，暂不能推荐"
+                            value: faceProfileStatusText
                         )
                     }
 
