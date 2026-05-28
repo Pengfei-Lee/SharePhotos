@@ -521,7 +521,7 @@ extension Error {
             case .cannotConnectToHost, .timedOut, .networkConnectionLost:
                 return "连接失败：没有连上 PicMe 服务，请稍后重试。"
             case .cannotFindHost, .unsupportedURL, .badURL:
-                return "连接失败：服务地址不可用。"
+                return "连接失败：服务暂不可用。"
             default:
                 return urlError.localizedDescription
             }

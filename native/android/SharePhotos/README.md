@@ -11,7 +11,7 @@ Android 没有 iPhone Live Photo 的统一系统语义，不同厂商的“动�
 ## 运行方式
 
 1. 用 Android Studio 打开 `native/android/SharePhotos`。
-2. 将 `SharePhotosApi.baseUrl` 改成电脑或服务器地址，例如 `http://192.168.0.175:8000`。
+2. 客户端默认连接 PicMe 生产服务，不提供用户可见的服务地址切换入口。
 3. 真机运行，使用“选择照片”上传。
 
 ## 当前后端接口

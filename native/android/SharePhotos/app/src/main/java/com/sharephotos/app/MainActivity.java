@@ -24,8 +24,8 @@ import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_FILES = 1001;
+    private static final String PRODUCTION_BASE_URL = "https://picme.me";
 
-    private EditText baseUrlInput;
     private EditText albumIdInput;
     private EditText uploaderInput;
     private TextView statusText;
@@ -50,10 +50,8 @@ public class MainActivity extends Activity {
         subtitle.setTextSize(16);
         root.addView(subtitle);
 
-        baseUrlInput = input("服务地址，例如 http://192.168.0.175:8000", "http://localhost:8000");
         albumIdInput = input("相册 ID", "");
         uploaderInput = input("上传者，不填则访客", "访客");
-        root.addView(baseUrlInput);
         root.addView(albumIdInput);
         root.addView(uploaderInput);
 
@@ -137,13 +135,12 @@ public class MainActivity extends Activity {
     }
 
     private void upload(List<Uri> uris) throws Exception {
-        String baseUrl = baseUrlInput.getText().toString().trim();
         String albumId = albumIdInput.getText().toString().trim();
         String uploader = uploaderInput.getText().toString().trim();
         if (uploader.isEmpty()) uploader = "访客";
 
         String boundary = "Boundary-" + UUID.randomUUID();
-        URL url = new URL(baseUrl + "/api/albums/" + albumId + "/upload");
+        URL url = new URL(PRODUCTION_BASE_URL + "/api/albums/" + albumId + "/upload");
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);

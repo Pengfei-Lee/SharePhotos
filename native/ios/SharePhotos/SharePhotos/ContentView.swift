@@ -886,6 +886,7 @@ private struct AlbumMyPhotosTab: View {
                     PhotoLibraryGrid(
                         album: album,
                         photos: photos,
+                        contentHorizontalInset: 18,
                         columnCount: $gridColumnCount,
                         zoomScale: gridZoomScale,
                         selectedPhoto: $selectedPhoto,
@@ -953,6 +954,7 @@ private struct AlbumAllPhotosTab: View {
                     PhotoLibraryGrid(
                         album: album,
                         photos: photos,
+                        contentHorizontalInset: 18,
                         columnCount: $gridColumnCount,
                         zoomScale: gridZoomScale,
                         selectedPhoto: $selectedPhoto,
@@ -1033,6 +1035,7 @@ private struct FolderDetailView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: photos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -1163,6 +1166,7 @@ private struct AllPhotosView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: visiblePhotos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -1288,6 +1292,7 @@ private struct MyPhotosView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: photos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -2016,6 +2021,7 @@ private struct FolderSwitcher: View {
 private struct PhotoLibraryGrid: View {
     let album: Album
     let photos: [Photo]
+    let contentHorizontalInset: CGFloat
     @Binding var columnCount: Int
     let zoomScale: CGFloat
     @Binding var selectedPhoto: Photo?
@@ -2028,7 +2034,7 @@ private struct PhotoLibraryGrid: View {
 
     private var metrics: PhotoGridMetrics {
         PhotoGridMetrics(
-            width: UIScreen.main.bounds.width,
+            width: max(0, UIScreen.main.bounds.width - contentHorizontalInset * 2),
             photoCount: photos.count,
             baseColumnCount: columnCount,
             zoomScale: zoomScale,

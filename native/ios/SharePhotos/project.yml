@@ -19,12 +19,8 @@ targets:
         UILaunchScreen:
           UIColorName: ""
         CFBundleDisplayName: "识我"
-        NSLocalNetworkUsageDescription: "需要访问同一 Wi-Fi 下的 PicMe 服务，用于上传和下载共享相册照片。"
         NSPhotoLibraryUsageDescription: "需要读取你的照片和实况照片，用于上传到共享相册。"
         NSPhotoLibraryAddUsageDescription: "需要写入系统相册，用于保存下载后的照片和实况照片。"
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-          NSAllowsLocalNetworking: true
     dependencies:
       - package: ZIPFoundation
     settings:

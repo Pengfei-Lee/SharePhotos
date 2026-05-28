@@ -18,7 +18,7 @@ data class PickedUploadFile(
 )
 
 class SharePhotosApi(
-    private val baseUrl: String = "http://localhost:8000",
+    private val baseUrl: String = "https://picme.me",
     private val client: OkHttpClient = OkHttpClient()
 ) {
     suspend fun upload(

@@ -20,15 +20,6 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>需要访问同一 Wi-Fi 下的 PicMe 服务，用于上传和下载共享相册照片。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>需要写入系统相册，用于保存下载后的照片和实况照片。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
