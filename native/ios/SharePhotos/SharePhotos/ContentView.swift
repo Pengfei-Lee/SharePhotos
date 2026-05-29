@@ -469,11 +469,16 @@ struct ContentView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @State private var createAlbumPresented = false
     @State private var joinAlbumPresented = false
+    @State private var qrScannerPresented = false
 
     var body: some View {
         ZStack(alignment: .top) {
             NavigationView {
-                HomeView(createAlbumPresented: $createAlbumPresented, joinAlbumPresented: $joinAlbumPresented)
+                HomeView(
+                    createAlbumPresented: $createAlbumPresented,
+                    joinAlbumPresented: $joinAlbumPresented,
+                    qrScannerPresented: $qrScannerPresented
+                )
                     .navigationBarHidden(true)
             }
             .navigationViewStyle(.stack)
@@ -496,6 +501,22 @@ struct ContentView: View {
         .sheet(isPresented: $joinAlbumPresented) {
             JoinAlbumSheet(initialCode: "")
         }
+        .sheet(isPresented: $qrScannerPresented) {
+            QRCodeScannerSheet(
+                onCode: { value in
+                    qrScannerPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        _ = store.handleScannedInvite(value)
+                    }
+                },
+                onManualEntry: {
+                    qrScannerPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        joinAlbumPresented = true
+                    }
+                }
+            )
+        }
         .sheet(item: $store.pendingDeepLink) { deepLink in
             JoinAlbumSheet(initialCode: deepLink.code)
         }
@@ -511,6 +532,7 @@ private struct HomeView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Binding var createAlbumPresented: Bool
     @Binding var joinAlbumPresented: Bool
+    @Binding var qrScannerPresented: Bool
     @State private var deletingAlbum: Album?
     @State private var renamingAlbum: Album?
 
@@ -584,7 +606,7 @@ private struct HomeView: View {
             .padding(.bottom, 22)
 
             Button {
-                joinAlbumPresented = true
+                qrScannerPresented = true
             } label: {
                 Image(systemName: "qrcode.viewfinder")
                     .font(.headline.weight(.bold))
@@ -886,6 +908,7 @@ private struct AlbumMyPhotosTab: View {
                     PhotoLibraryGrid(
                         album: album,
                         photos: photos,
+                        contentHorizontalInset: 18,
                         columnCount: $gridColumnCount,
                         zoomScale: gridZoomScale,
                         selectedPhoto: $selectedPhoto,
@@ -953,6 +976,7 @@ private struct AlbumAllPhotosTab: View {
                     PhotoLibraryGrid(
                         album: album,
                         photos: photos,
+                        contentHorizontalInset: 18,
                         columnCount: $gridColumnCount,
                         zoomScale: gridZoomScale,
                         selectedPhoto: $selectedPhoto,
@@ -1033,6 +1057,7 @@ private struct FolderDetailView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: photos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -1163,6 +1188,7 @@ private struct AllPhotosView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: visiblePhotos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -1288,6 +1314,7 @@ private struct MyPhotosView: View {
                             PhotoLibraryGrid(
                                 album: album,
                                 photos: photos,
+                                contentHorizontalInset: 0,
                                 columnCount: $gridColumnCount,
                                 zoomScale: gridZoomScale,
                                 selectedPhoto: $selectedPhoto,
@@ -1446,6 +1473,198 @@ private struct JoinAlbumSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct QRCodeScannerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onCode: (String) -> Void
+    let onManualEntry: () -> Void
+    @State private var cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                AppBackground()
+                    .ignoresSafeArea()
+
+                switch cameraStatus {
+                case .authorized:
+                    QRCodeScannerPreview { value in
+                        onCode(value)
+                    }
+                    .ignoresSafeArea()
+                    ScannerOverlay()
+                case .notDetermined:
+                    VStack(spacing: 18) {
+                        ProgressView()
+                            .tint(.teal)
+                        Text("正在请求相机权限")
+                            .font(.headline.weight(.bold))
+                            .foregroundColor(.primaryText)
+                    }
+                    .task {
+                        let granted = await AVCaptureDevice.requestAccess(for: .video)
+                        cameraStatus = granted ? .authorized : .denied
+                    }
+                default:
+                    VStack(spacing: 18) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 46, weight: .bold))
+                            .foregroundColor(.teal)
+                        Text("需要相机权限才能扫码")
+                            .font(.title3.weight(.black))
+                            .foregroundColor(.primaryText)
+                        Text("你也可以手动输入相册码加入共享相册。")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.secondaryText)
+                            .multilineTextAlignment(.center)
+                        Button {
+                            onManualEntry()
+                        } label: {
+                            Label("输入相册码", systemImage: "keyboard")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 15)
+                                .background(primaryGradient, in: Capsule())
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(24)
+                    .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .padding(24)
+                }
+            }
+            .navigationTitle("扫码加入相册")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("输入相册码") {
+                        onManualEntry()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ScannerOverlay: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(.white, lineWidth: 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(.black.opacity(0.08))
+                )
+                .frame(width: 246, height: 246)
+                .overlay {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 48, weight: .bold))
+                        .foregroundColor(.white.opacity(0.86))
+                }
+            VStack(spacing: 6) {
+                Text("扫描 PicMe 相册二维码")
+                    .font(.headline.weight(.black))
+                Text("支持分享链接和纯相册码")
+                    .font(.subheadline.weight(.semibold))
+                    .opacity(0.82)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
+            .background(.black.opacity(0.52), in: Capsule())
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+    }
+}
+
+private struct QRCodeScannerPreview: UIViewRepresentable {
+    let onCode: (String) -> Void
+
+    func makeUIView(context: Context) -> QRScannerPreviewView {
+        let view = QRScannerPreviewView()
+        view.videoPreviewLayer.videoGravity = .resizeAspectFill
+
+        let session = AVCaptureSession()
+        context.coordinator.session = session
+
+        guard
+            let device = AVCaptureDevice.default(for: .video),
+            let input = try? AVCaptureDeviceInput(device: device),
+            session.canAddInput(input)
+        else {
+            return view
+        }
+        session.addInput(input)
+
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else {
+            return view
+        }
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(context.coordinator, queue: .main)
+        output.metadataObjectTypes = [.qr]
+
+        view.videoPreviewLayer.session = session
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: QRScannerPreviewView, context: Context) {}
+
+    func dismantleUIView(_ uiView: QRScannerPreviewView, coordinator: Coordinator) {
+        coordinator.session?.stopRunning()
+        coordinator.session = nil
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCode: onCode)
+    }
+
+    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+        var session: AVCaptureSession?
+        private let onCode: (String) -> Void
+        private var didScan = false
+
+        init(onCode: @escaping (String) -> Void) {
+            self.onCode = onCode
+        }
+
+        func metadataOutput(
+            _ output: AVCaptureMetadataOutput,
+            didOutput metadataObjects: [AVMetadataObject],
+            from connection: AVCaptureConnection
+        ) {
+            guard
+                !didScan,
+                let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+                object.type == .qr,
+                let value = object.stringValue
+            else { return }
+            didScan = true
+            session?.stopRunning()
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            onCode(value)
+        }
+    }
+}
+
+private final class QRScannerPreviewView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        layer as! AVCaptureVideoPreviewLayer
     }
 }
 
@@ -2016,6 +2235,7 @@ private struct FolderSwitcher: View {
 private struct PhotoLibraryGrid: View {
     let album: Album
     let photos: [Photo]
+    let contentHorizontalInset: CGFloat
     @Binding var columnCount: Int
     let zoomScale: CGFloat
     @Binding var selectedPhoto: Photo?
@@ -2028,7 +2248,7 @@ private struct PhotoLibraryGrid: View {
 
     private var metrics: PhotoGridMetrics {
         PhotoGridMetrics(
-            width: UIScreen.main.bounds.width,
+            width: max(0, UIScreen.main.bounds.width - contentHorizontalInset * 2),
             photoCount: photos.count,
             baseColumnCount: columnCount,
             zoomScale: zoomScale,
@@ -3334,11 +3554,23 @@ private final class ShareInviteActivityItem: NSObject, UIActivityItemSource {
         metadata.originalURL = url
         metadata.url = url
         if let logo = UIImage(named: "PicMeLogo") {
-            let provider = NSItemProvider(object: logo)
+            let provider = Self.metadataImageProvider(from: logo)
             metadata.iconProvider = provider
             metadata.imageProvider = provider
         }
         return metadata
+    }
+
+    private static func metadataImageProvider(from image: UIImage) -> NSItemProvider {
+        let targetSize = CGSize(width: 180, height: 180)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let thumbnail = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        if let data = thumbnail.pngData() {
+            return NSItemProvider(item: data as NSData, typeIdentifier: "public.png")
+        }
+        return NSItemProvider(object: image)
     }
 }
 

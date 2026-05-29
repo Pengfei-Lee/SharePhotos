@@ -7,11 +7,7 @@ struct SharePhotosApp: App {
     )
 
     private static var defaultServerURL: URL {
-        #if targetEnvironment(simulator)
-        URL(string: "http://localhost:8000")!
-        #else
         URL(string: "https://picme.me")!
-        #endif
     }
 
     var body: some Scene {

@@ -21,7 +21,6 @@ final class SharePhotosStore: ObservableObject {
     @Published var operationMessage = ""
     @Published var operationProgress: Double?
     @Published var showsOperation = false
-    @Published var serverAddress: String
     @Published var currentUser: User?
     @Published var authToken: String?
     @Published var authWarning: String?
@@ -34,9 +33,7 @@ final class SharePhotosStore: ObservableObject {
     private let tokenStore = KeychainTokenStore()
 
     init(api: SharePhotosAPI) {
-        let apiAddress = api.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.serverAddress = apiAddress
-        self.api = api.withBaseURL(URL(string: apiAddress) ?? api.baseURL)
+        self.api = api.withBaseURL(api.baseURL)
         self.authToken = tokenStore.readToken()
         self.api.authToken = authToken
         self.api.refreshToken = tokenStore.readRefreshToken()
@@ -228,9 +225,8 @@ final class SharePhotosStore: ObservableObject {
 
     func loadAlbums() async {
         let tokenSnapshot = authToken
-        showOperation(title: "连接服务中", message: "正在读取 \(serverAddress)", progress: nil)
         do {
-            let loadedAlbums = try await fetchAlbumsWithFallback()
+            let loadedAlbums = try await api.fetchAlbums()
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             albums = loadedAlbums
             reconcileSelectedAlbum()
@@ -242,73 +238,6 @@ final class SharePhotosStore: ObservableObject {
             statusText = message
             showOperation(title: "连接失败", message: message, progress: nil)
         }
-    }
-
-    func updateServerAddress(_ address: String) async -> Bool {
-        let normalized = normalizeServerAddress(address)
-        guard let url = URL(string: normalized), url.scheme != nil, url.host != nil else {
-            let message = "服务地址格式不对"
-            statusText = message
-            showOperation(title: "地址不可用", message: message, progress: nil)
-            return false
-        }
-
-        showOperation(title: "连接服务中", message: "正在读取 \(normalized)", progress: nil)
-        do {
-            let candidateAPI = api.withBaseURL(url)
-            candidateAPI.authToken = authToken
-            candidateAPI.refreshToken = tokenStore.readRefreshToken()
-            albums = try await candidateAPI.fetchAlbums()
-            api = candidateAPI
-            serverAddress = normalized
-            reconcileSelectedAlbum()
-            statusText = albums.isEmpty ? "已连接服务，还没有相册" : "已连接服务，读取到 \(albums.count) 个相册"
-            hideOperation(after: 0.6)
-            return true
-        } catch {
-            let message = handleError(error)
-            statusText = message
-            showOperation(title: "连接失败", message: message, progress: nil)
-            return false
-        }
-    }
-
-    private func fetchAlbumsWithFallback() async throws -> [Album] {
-        var seen = Set<String>()
-        let addresses = [serverAddress]
-            .map(normalizeServerAddress)
-            .filter { address in
-                guard !seen.contains(address) else { return false }
-                seen.insert(address)
-                return true
-            }
-        var lastError: Error?
-
-        for address in addresses {
-            guard let url = URL(string: address) else { continue }
-            do {
-                let candidateAPI = api.withBaseURL(url)
-                candidateAPI.authToken = authToken
-                candidateAPI.refreshToken = tokenStore.readRefreshToken()
-                let albums = try await candidateAPI.fetchAlbums()
-                api = candidateAPI
-                serverAddress = address
-                return albums
-            } catch {
-                if case APIError.unauthorized = error {
-                    throw error
-                }
-                lastError = error
-            }
-        }
-
-        throw lastError ?? URLError(.cannotConnectToHost)
-    }
-
-    private func normalizeServerAddress(_ address: String) -> String {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
-        return withScheme.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     func selectAlbum(id: String) {
@@ -350,8 +279,19 @@ final class SharePhotosStore: ObservableObject {
 
     func handleIncomingURL(_ url: URL) {
         guard let code = Self.inviteCode(from: url) else { return }
-        pendingDeepLink = PendingDeepLink(code: code)
-        statusText = isAuthenticated ? "准备申请加入相册 \(code)" : "请先登录，再加入相册 \(code)"
+        prepareInviteJoin(code: code)
+    }
+
+    @discardableResult
+    func handleScannedInvite(_ value: String) -> Bool {
+        guard let code = Self.inviteCode(from: value) else {
+            statusText = "没有识别到有效相册码"
+            showOperation(title: "扫码失败", message: "请扫描 PicMe 分享二维码，或手动输入相册码。", progress: nil)
+            hideOperation(after: 1.4)
+            return false
+        }
+        prepareInviteJoin(code: code)
+        return true
     }
 
     func clearPendingDeepLink() {
@@ -818,6 +758,27 @@ final class SharePhotosStore: ObservableObject {
         return nil
     }
 
+    private static func inviteCode(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let url = URL(string: trimmed), let code = inviteCode(from: url) {
+            return code
+        }
+
+        let candidate = trimmed.uppercased()
+        if candidate.range(of: #"^[A-Z0-9]{6,16}$"#, options: .regularExpression) != nil {
+            return candidate
+        }
+
+        return nil
+    }
+
+    private func prepareInviteJoin(code: String) {
+        pendingDeepLink = PendingDeepLink(code: code)
+        statusText = isAuthenticated ? "准备申请加入相册 \(code)" : "请先登录，再加入相册 \(code)"
+    }
+
     private func handleError(_ error: Error, unauthorizedMessage: String = APIError.unauthorized.localizedDescription) -> String {
         if case APIError.unauthorized = error {
             return unauthorizedMessage
@@ -850,7 +811,7 @@ final class SharePhotosStore: ObservableObject {
                 currentUser = user
                 uploader = user.nickname
                 if user.hasFaceProfile || user.faceProfileStatus == "ready" {
-                    let loadedAlbums = try await fetchAlbumsWithFallback()
+                    let loadedAlbums = try await api.fetchAlbums()
                     guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
                     albums = loadedAlbums
                     reconcileSelectedAlbum()
