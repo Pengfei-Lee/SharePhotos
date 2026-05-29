@@ -12,7 +12,7 @@ struct AuthGateView: View {
 
     var body: some View {
         ZStack {
-            if store.isAuthenticated {
+            if store.canShowAuthenticatedShell {
                 ContentView()
             } else if store.isCheckingAuth {
                 AppBackground()
@@ -41,7 +41,7 @@ struct AuthGateView: View {
         }
         .task {
             await store.loadMe()
-            if store.isAuthenticated {
+            if store.canShowAuthenticatedShell {
                 await store.loadAlbums()
             }
         }
