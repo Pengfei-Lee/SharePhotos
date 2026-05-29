@@ -75,6 +75,15 @@ LEGACY_ALBUM_OWNER_USERNAME = os.environ.get("LEGACY_ALBUM_OWNER_USERNAME", "lpf
 APP_ASSOCIATED_DOMAIN = os.environ.get("APP_ASSOCIATED_DOMAIN", "picme.me").strip() or "picme.me"
 IOS_BUNDLE_IDENTIFIER = os.environ.get("IOS_BUNDLE_IDENTIFIER", "com.sharephotos.app").strip() or "com.sharephotos.app"
 APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "").strip()
+ANDROID_APP_PACKAGE = os.environ.get("ANDROID_APP_PACKAGE", "com.sharephotos.app").strip() or "com.sharephotos.app"
+ANDROID_CERT_SHA256 = [
+    item.strip().upper()
+    for item in os.environ.get(
+        "ANDROID_CERT_SHA256",
+        "5C:59:9E:E6:03:D3:99:A1:7D:FD:D2:41:EA:5B:23:8E:70:4F:0F:3C:17:B6:FD:5E:A7:84:97:71:95:59:EF:F4",
+    ).split(",")
+    if item.strip()
+]
 SHARE_IMAGE_PATH = "/assets/share-logo.png?v=share-logo-1"
 
 
@@ -3851,6 +3860,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.serve_file(PUBLIC / "index.html")
         if path == "/.well-known/apple-app-site-association":
             return self.serve_apple_app_site_association()
+        if path == "/.well-known/assetlinks.json":
+            return self.serve_android_assetlinks()
         match = re.match(r"^/join/([A-Za-z0-9_-]+)$", path)
         if match:
             return self.serve_join_landing(match.group(1))
@@ -3972,6 +3983,8 @@ class AppHandler(BaseHTTPRequestHandler):
         current_user = self.require_user()
         if not current_user:
             return
+        if path == "/api/me/profile":
+            return self.update_profile_request(current_user)
         if path == "/api/me/avatar":
             return self.update_avatar_request(current_user)
         if path == "/api/albums":
@@ -4189,6 +4202,25 @@ class AppHandler(BaseHTTPRequestHandler):
         if token:
             revoke_session_for_access_token(token)
         return self.send_json({"ok": True})
+
+    def update_profile_request(self, current_user):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        nickname = (payload.get("nickname") or "").strip()[:40]
+        if not nickname:
+            return self.send_error_json("昵称不能为空")
+        with LOCK:
+            db = load_db()
+            user = find_user_by_id(db, current_user.get("id"))
+            if not user:
+                return self.send_error_json("请先登录", 401)
+            user["nickname"] = nickname
+            upsert_user(db, user)
+            save_db(db)
+        self._current_user = user
+        LOGGER.info("user_id=%s nickname=%s", user.get("id"), nickname, extra={"event": "user.profile_update"})
+        return self.send_json({"user": public_user(user, self.request_origin())})
 
     def update_avatar_request(self, current_user):
         form = cgi.FieldStorage(
@@ -5149,6 +5181,19 @@ class AppHandler(BaseHTTPRequestHandler):
         }
         return self.send_bytes(json.dumps(payload, separators=(",", ":")), "application/json")
 
+    def serve_android_assetlinks(self):
+        payload = [
+            {
+                "relation": ["delegate_permission/common.handle_all_urls"],
+                "target": {
+                    "namespace": "android_app",
+                    "package_name": ANDROID_APP_PACKAGE,
+                    "sha256_cert_fingerprints": ANDROID_CERT_SHA256,
+                },
+            }
+        ]
+        return self.send_bytes(json.dumps(payload, separators=(",", ":")), "application/json")
+
     def serve_join_landing(self, code):
         clean_code = re.sub(r"[^A-Za-z0-9_-]", "", code).upper()
         row = invite_by_code(clean_code)
@@ -5161,6 +5206,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 album_name = album.get("name") or album_name
                 photo_count = "%d 张照片" % len(album.get("photos", []))
         share_url = urljoin(self.request_origin(), "/join/%s" % quote(clean_code))
+        fallback_url = urljoin(self.request_origin(), "/?invite=%s" % quote(clean_code))
+        intent_url = "intent://%s/join/%s#Intent;scheme=https;package=%s;S.browser_fallback_url=%s;end" % (
+            APP_ASSOCIATED_DOMAIN,
+            quote(clean_code),
+            ANDROID_APP_PACKAGE,
+            quote(fallback_url, safe=""),
+        )
         logo_url = urljoin(self.request_origin(), SHARE_IMAGE_PATH)
         page_title = "加入 PicMe 相册：%s" % album_name
         page_description = photo_count or "好友邀请你加入 PicMe 旅行共享相册"
@@ -5198,7 +5250,7 @@ class AppHandler(BaseHTTPRequestHandler):
       <p>%s</p>
       <strong class="join-code">%s</strong>
       <div class="join-actions">
-        <a class="join-primary" href="%s">打开识我 App</a>
+        <a class="join-primary" data-universal-link="%s" data-android-intent="%s" href="%s">打开识我 App</a>
         <a class="join-secondary" href="/?invite=%s">网页登录并申请加入</a>
         <a class="join-secondary" href="%s">%s</a>
       </div>
@@ -5206,6 +5258,15 @@ class AppHandler(BaseHTTPRequestHandler):
     </section>
   </main>
   <script>
+    (function () {
+      var link = document.querySelector(".join-primary");
+      if (!link) return;
+      if (/Android/i.test(navigator.userAgent)) {
+        link.href = link.dataset.androidIntent || link.href;
+      } else {
+        link.href = link.dataset.universalLink || link.href;
+      }
+    })();
     window.setTimeout(function () {
       if (!document.hidden) return;
     }, 1200);
@@ -5226,6 +5287,8 @@ class AppHandler(BaseHTTPRequestHandler):
             html.escape(album_name),
             html.escape(photo_count or "好友邀请你加入这个旅行相册"),
             html.escape(clean_code),
+            html.escape(share_url),
+            html.escape(intent_url),
             html.escape(share_url),
             quote(clean_code),
             html.escape(download_url),
