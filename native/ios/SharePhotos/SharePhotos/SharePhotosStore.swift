@@ -25,18 +25,33 @@ final class SharePhotosStore: ObservableObject {
     @Published var authToken: String?
     @Published var authWarning: String?
     @Published var isCheckingAuth = false
+    @Published private(set) var hasLocalSession = false
     @Published var pendingDeepLink: PendingDeepLink?
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
     private let saver = LivePhotoSaveService()
     private let tokenStore = KeychainTokenStore()
+    private let homeSnapshotCache = HomeSnapshotCache()
 
     init(api: SharePhotosAPI) {
         self.api = api.withBaseURL(api.baseURL)
         self.authToken = tokenStore.readToken()
+        let refreshToken = tokenStore.readRefreshToken()
         self.api.authToken = authToken
-        self.api.refreshToken = tokenStore.readRefreshToken()
+        self.api.refreshToken = refreshToken
+        self.hasLocalSession = authToken != nil || refreshToken != nil
+        if hasLocalSession, let snapshot = homeSnapshotCache.load() {
+            self.currentUser = snapshot.user
+            self.albums = snapshot.albums
+            self.selectedAlbumId = snapshot.selectedAlbumId
+            if let user = snapshot.user {
+                self.uploader = user.nickname
+            }
+            if !snapshot.albums.isEmpty {
+                self.statusText = "已加载上次同步的相册"
+            }
+        }
         self.api.onAuthTokensChanged = { [weak self] response in
             Task { @MainActor in
                 self?.updateTokens(from: response)
@@ -46,6 +61,10 @@ final class SharePhotosStore: ObservableObject {
 
     var isAuthenticated: Bool {
         authToken != nil && currentUser != nil
+    }
+
+    var canShowAuthenticatedShell: Bool {
+        isAuthenticated || hasLocalSession
     }
 
     var selectedAlbum: Album? {
@@ -158,7 +177,8 @@ final class SharePhotosStore: ObservableObject {
     }
 
     func loadMe() async {
-        guard let tokenSnapshot = authToken else { return }
+        guard hasLocalSession else { return }
+        let tokenSnapshot = authToken
         isCheckingAuth = true
         defer { isCheckingAuth = false }
         do {
@@ -166,6 +186,7 @@ final class SharePhotosStore: ObservableObject {
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             currentUser = user
             uploader = user.nickname
+            persistHomeSnapshot()
             clearExpiredStatusIfNeeded()
         } catch {
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
@@ -206,6 +227,7 @@ final class SharePhotosStore: ObservableObject {
             currentUser = response.user
             uploader = response.user.nickname
             authWarning = response.warning
+            persistHomeSnapshot()
             statusText = response.warning ?? "头像已更新，正在后台识别人脸"
             showOperation(title: "头像已更新", message: response.warning ?? "后台会自动识别头像并匹配你的照片", progress: 1)
             hideOperation(after: 1.0)
@@ -230,6 +252,7 @@ final class SharePhotosStore: ObservableObject {
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             albums = loadedAlbums
             reconcileSelectedAlbum()
+            persistHomeSnapshot()
             clearExpiredStatusIfNeeded()
             hideOperation(after: 0.6)
         } catch {
@@ -266,6 +289,7 @@ final class SharePhotosStore: ObservableObject {
             let album = try await api.createAlbum(name: trimmed)
             albums.insert(album, at: 0)
             selectedAlbumId = album.id
+            persistHomeSnapshot()
             statusText = "已创建 \(album.name)"
             hideOperation(after: 0.8)
             return album
@@ -374,6 +398,7 @@ final class SharePhotosStore: ObservableObject {
             if selectedAlbumId == album.id {
                 selectedAlbumId = nil
             }
+            persistHomeSnapshot()
             statusText = "已删除 \(album.name)"
             hideOperation(after: 0.8)
         } catch {
@@ -697,6 +722,7 @@ final class SharePhotosStore: ObservableObject {
             albums.insert(album, at: 0)
         }
         selectedAlbumId = album.id
+        persistHomeSnapshot()
     }
 
     private func reconcileSelectedAlbum() {
@@ -710,15 +736,18 @@ final class SharePhotosStore: ObservableObject {
     private func setAuthenticated(response: AuthResponse, warning: String?) {
         currentUser = response.user
         authToken = response.effectiveAccessToken
+        hasLocalSession = true
         authWarning = warning
         tokenStore.save(accessToken: response.effectiveAccessToken, refreshToken: response.refreshToken)
         api.authToken = response.effectiveAccessToken
         api.refreshToken = response.refreshToken
         uploader = response.user.nickname
+        persistHomeSnapshot()
     }
 
     private func updateTokens(from response: AuthResponse) {
         authToken = response.effectiveAccessToken
+        hasLocalSession = true
         tokenStore.save(accessToken: response.effectiveAccessToken, refreshToken: response.refreshToken)
         api.authToken = response.effectiveAccessToken
         api.refreshToken = response.refreshToken
@@ -727,11 +756,13 @@ final class SharePhotosStore: ObservableObject {
     private func clearAuth() {
         currentUser = nil
         authToken = nil
+        hasLocalSession = false
         authWarning = nil
         tokenStore.deleteToken()
         api.authToken = nil
         api.refreshToken = nil
         showsOperation = false
+        homeSnapshotCache.clear()
     }
 
     private func isValidUsername(_ username: String) -> Bool {
@@ -799,7 +830,55 @@ final class SharePhotosStore: ObservableObject {
     }
 
     private func tokenStillRepresentsCurrentSession(_ tokenSnapshot: String?) -> Bool {
-        authToken == tokenSnapshot || (tokenSnapshot != nil && authToken != nil)
+        if tokenSnapshot == nil {
+            return hasLocalSession
+        }
+        return authToken == tokenSnapshot || (tokenSnapshot != nil && authToken != nil)
+    }
+
+    private func persistHomeSnapshot(prewarmImages: Bool = true) {
+        guard hasLocalSession else { return }
+        let snapshot = HomeSnapshot(
+            savedAt: Date(),
+            user: currentUser,
+            albums: albums,
+            selectedAlbumId: selectedAlbumId
+        )
+        homeSnapshotCache.save(snapshot)
+        guard prewarmImages else { return }
+        let urls = homeImageURLs()
+        guard !urls.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for url in urls {
+                _ = try? await PhotoDiskCache.shared.dataImage(for: url)
+            }
+        }
+    }
+
+    private func homeImageURLs() -> [URL] {
+        var seen = Set<String>()
+        var urls: [URL] = []
+
+        func append(_ path: String?) {
+            guard let url = imageURL(path) else { return }
+            let key = url.absoluteString
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            urls.append(url)
+        }
+
+        append(currentUser?.avatarUrl)
+        for album in albums {
+            append(album.myCoverUrl)
+            for folder in album.folders.prefix(6) {
+                append(folder.coverUrl)
+                if folder.coverUrl == nil,
+                   let photo = photos(in: album, folder: folder).first {
+                    append(photo.faceUrl ?? photo.coverUrl ?? photo.thumbnailUrl ?? photo.previewUrl ?? photo.imageUrl)
+                }
+            }
+        }
+        return urls
     }
 
     private func pollAvatarRecognition(tokenSnapshot: String?) async {
@@ -815,6 +894,7 @@ final class SharePhotosStore: ObservableObject {
                     guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
                     albums = loadedAlbums
                     reconcileSelectedAlbum()
+                    persistHomeSnapshot()
                     statusText = "头像识别完成，已更新你的照片推荐"
                     return
                 }
@@ -895,6 +975,59 @@ final class SharePhotosStore: ObservableObject {
                 continuation.resume(returning: status)
             }
         }
+    }
+}
+
+private struct HomeSnapshot: Codable {
+    let version: Int
+    let savedAt: Date
+    let user: User?
+    let albums: [Album]
+    let selectedAlbumId: String?
+
+    init(savedAt: Date, user: User?, albums: [Album], selectedAlbumId: String?) {
+        self.version = 1
+        self.savedAt = savedAt
+        self.user = user
+        self.albums = albums
+        self.selectedAlbumId = selectedAlbumId
+    }
+}
+
+private final class HomeSnapshotCache {
+    private let fileURL: URL
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init() {
+        let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let directoryURL = cachesURL.appendingPathComponent("PicMeHomeCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        self.fileURL = directoryURL.appendingPathComponent("home-snapshot.json")
+        markExcludedFromBackup(directoryURL)
+    }
+
+    func load() -> HomeSnapshot? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return try? decoder.decode(HomeSnapshot.self, from: data)
+    }
+
+    func save(_ snapshot: HomeSnapshot) {
+        guard let data = try? encoder.encode(snapshot) else { return }
+        try? data.write(to: fileURL, options: [.atomic])
+        markExcludedFromBackup(fileURL)
+    }
+
+    func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func markExcludedFromBackup(_ url: URL) {
+        var mutableURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? mutableURL.setResourceValues(values)
     }
 }
 

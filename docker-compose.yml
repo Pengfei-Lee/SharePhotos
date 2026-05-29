@@ -28,6 +28,8 @@ services:
       - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
       - OSS_UPLOAD_URL_EXPIRES=${OSS_UPLOAD_URL_EXPIRES:-900}
       - OSS_AUTO_MIGRATE=${OSS_AUTO_MIGRATE:-0}
+      - ANDROID_APP_PACKAGE=${ANDROID_APP_PACKAGE:-com.sharephotos.app}
+      - ANDROID_CERT_SHA256=${ANDROID_CERT_SHA256:-}
     volumes:
       - ./data:/app/data
       - ./models:/home/app/.insightface
@@ -61,6 +63,8 @@ services:
       - OSS_SIGNED_URL_EXPIRES=${OSS_SIGNED_URL_EXPIRES:-3600}
       - OSS_UPLOAD_URL_EXPIRES=${OSS_UPLOAD_URL_EXPIRES:-900}
       - OSS_AUTO_MIGRATE=${OSS_AUTO_MIGRATE:-0}
+      - ANDROID_APP_PACKAGE=${ANDROID_APP_PACKAGE:-com.sharephotos.app}
+      - ANDROID_CERT_SHA256=${ANDROID_CERT_SHA256:-}
     volumes:
       - ./data:/app/data
       - ./models:/home/app/.insightface
