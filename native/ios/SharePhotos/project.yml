@@ -21,6 +21,7 @@ targets:
         CFBundleDisplayName: "识我"
         NSPhotoLibraryUsageDescription: "需要读取你的照片和实况照片，用于上传到共享相册。"
         NSPhotoLibraryAddUsageDescription: "需要写入系统相册，用于保存下载后的照片和实况照片。"
+        NSCameraUsageDescription: "需要使用相机扫描相册二维码，用于加入共享相册。"
     dependencies:
       - package: ZIPFoundation
     settings:

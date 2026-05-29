@@ -279,8 +279,19 @@ final class SharePhotosStore: ObservableObject {
 
     func handleIncomingURL(_ url: URL) {
         guard let code = Self.inviteCode(from: url) else { return }
-        pendingDeepLink = PendingDeepLink(code: code)
-        statusText = isAuthenticated ? "准备申请加入相册 \(code)" : "请先登录，再加入相册 \(code)"
+        prepareInviteJoin(code: code)
+    }
+
+    @discardableResult
+    func handleScannedInvite(_ value: String) -> Bool {
+        guard let code = Self.inviteCode(from: value) else {
+            statusText = "没有识别到有效相册码"
+            showOperation(title: "扫码失败", message: "请扫描 PicMe 分享二维码，或手动输入相册码。", progress: nil)
+            hideOperation(after: 1.4)
+            return false
+        }
+        prepareInviteJoin(code: code)
+        return true
     }
 
     func clearPendingDeepLink() {
@@ -745,6 +756,27 @@ final class SharePhotosStore: ObservableObject {
             return code.uppercased()
         }
         return nil
+    }
+
+    private static func inviteCode(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let url = URL(string: trimmed), let code = inviteCode(from: url) {
+            return code
+        }
+
+        let candidate = trimmed.uppercased()
+        if candidate.range(of: #"^[A-Z0-9]{6,16}$"#, options: .regularExpression) != nil {
+            return candidate
+        }
+
+        return nil
+    }
+
+    private func prepareInviteJoin(code: String) {
+        pendingDeepLink = PendingDeepLink(code: code)
+        statusText = isAuthenticated ? "准备申请加入相册 \(code)" : "请先登录，再加入相册 \(code)"
     }
 
     private func handleError(_ error: Error, unauthorizedMessage: String = APIError.unauthorized.localizedDescription) -> String {

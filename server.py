@@ -75,6 +75,7 @@ LEGACY_ALBUM_OWNER_USERNAME = os.environ.get("LEGACY_ALBUM_OWNER_USERNAME", "lpf
 APP_ASSOCIATED_DOMAIN = os.environ.get("APP_ASSOCIATED_DOMAIN", "picme.me").strip() or "picme.me"
 IOS_BUNDLE_IDENTIFIER = os.environ.get("IOS_BUNDLE_IDENTIFIER", "com.sharephotos.app").strip() or "com.sharephotos.app"
 APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "").strip()
+SHARE_IMAGE_PATH = "/assets/share-logo.png?v=share-logo-1"
 
 
 class DailyLogFileHandler(logging.Handler):
@@ -5160,7 +5161,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 album_name = album.get("name") or album_name
                 photo_count = "%d 张照片" % len(album.get("photos", []))
         share_url = urljoin(self.request_origin(), "/join/%s" % quote(clean_code))
-        logo_url = urljoin(self.request_origin(), "/assets/logo.png?v=transparent-1")
+        logo_url = urljoin(self.request_origin(), SHARE_IMAGE_PATH)
         page_title = "加入 PicMe 相册：%s" % album_name
         page_description = photo_count or "好友邀请你加入 PicMe 旅行共享相册"
         download_url = APP_DOWNLOAD_URL or "#"
@@ -5177,13 +5178,14 @@ class AppHandler(BaseHTTPRequestHandler):
   <meta property="og:description" content="%s" />
   <meta property="og:url" content="%s" />
   <meta property="og:image" content="%s" />
-  <meta property="og:image:width" content="1298" />
-  <meta property="og:image:height" content="1298" />
+  <meta property="og:image:width" content="512" />
+  <meta property="og:image:height" content="512" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="%s" />
   <meta name="twitter:description" content="%s" />
   <meta name="twitter:image" content="%s" />
   <link rel="apple-touch-icon" href="%s" />
+  <link rel="preload" as="image" href="%s" />
   <link rel="icon" href="/assets/logo.png?v=transparent-1" type="image/png" />
   <link rel="stylesheet" href="/assets/styles.css?v=share-invite-1" />
 </head>
@@ -5220,6 +5222,7 @@ class AppHandler(BaseHTTPRequestHandler):
             html.escape(page_description),
             html.escape(logo_url),
             html.escape(logo_url),
+            html.escape(SHARE_IMAGE_PATH),
             html.escape(album_name),
             html.escape(photo_count or "好友邀请你加入这个旅行相册"),
             html.escape(clean_code),
@@ -5295,8 +5298,22 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("Not found", 404)
         content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         body = path.read_bytes()
+        public_root = PUBLIC.resolve()
+        is_public_asset = str(path).startswith(str(public_root)) and path.name != "index.html"
+        stat = path.stat()
+        etag = '"%s-%s"' % (int(stat.st_mtime), stat.st_size)
+        if is_public_asset and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if is_public_asset:
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("ETag", etag)
+            self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
