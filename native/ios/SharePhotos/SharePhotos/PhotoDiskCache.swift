@@ -83,11 +83,14 @@ actor PhotoDiskCache {
 
     func removeCachedFile(for remoteURL: URL, preferredExtension: String? = nil) async {
         let identifier = stableIdentifier(for: remoteURL)
+        let key = cacheKey(for: identifier)
+        inFlight[key]?.cancel()
+        inFlight[key] = nil
         if let preferredExtension {
             try? FileManager.default.removeItem(at: fileURL(for: identifier, preferredExtension: preferredExtension))
             return
         }
-        let prefix = cacheKey(for: identifier) + "."
+        let prefix = key + "."
         guard let files = try? FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil) else {
             return
         }
@@ -193,7 +196,9 @@ actor PhotoDiskCache {
     }
 
     private static func download(_ remoteURL: URL) async throws -> URL {
-        let (tempURL, response) = try await URLSession.shared.download(from: remoteURL)
+        var request = URLRequest(url: remoteURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (tempURL, response) = try await URLSession.shared.download(for: request)
         guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
             throw PhotoDiskCacheError.badResponse
         }
