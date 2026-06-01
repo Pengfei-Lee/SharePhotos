@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import cgi
+import base64
 import hashlib
 import hmac
 import html
@@ -40,6 +41,19 @@ try:
     import qrcode.image.svg
 except Exception:
     qrcode = None
+
+try:
+    import httpx
+except Exception:
+    httpx = None
+
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+except Exception:
+    hashes = None
+    serialization = None
+    ec = None
 
 try:
     import fcntl
@@ -84,6 +98,12 @@ ANDROID_CERT_SHA256 = [
     ).split(",")
     if item.strip()
 ]
+APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "").strip()
+APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "").strip()
+APNS_AUTH_KEY_PATH = os.environ.get("APNS_AUTH_KEY_PATH", "").strip()
+APNS_AUTH_KEY = os.environ.get("APNS_AUTH_KEY", "").strip()
+APNS_TOPIC = os.environ.get("APNS_TOPIC", IOS_BUNDLE_IDENTIFIER).strip() or IOS_BUNDLE_IDENTIFIER
+APNS_ENVIRONMENT = os.environ.get("APNS_ENVIRONMENT", "production").strip().lower() or "production"
 SHARE_IMAGE_PATH = "/assets/share-logo.png?v=share-logo-1"
 
 
@@ -840,6 +860,21 @@ def sqlite_init_store():
 
             CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
                 ON notifications(user_id, read_at, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS apns_devices (
+                device_token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                environment TEXT NOT NULL DEFAULT 'production',
+                device_id TEXT,
+                device_name TEXT,
+                last_seen_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                data_json TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_apns_devices_user
+                ON apns_devices(user_id, last_seen_at DESC);
             """
         )
         auth_columns = {row["name"] for row in conn.execute("PRAGMA table_info(auth_tokens)").fetchall()}
@@ -1537,6 +1572,211 @@ def public_notification(notification):
     return data
 
 
+APNS_TOKEN_LOCK = threading.Lock()
+APNS_TOKEN_CACHE = {"token": "", "issued_at": 0}
+
+
+def apns_enabled():
+    return bool(APNS_TEAM_ID and APNS_KEY_ID and (APNS_AUTH_KEY or APNS_AUTH_KEY_PATH) and httpx and serialization and ec)
+
+
+def normalize_apns_device_token(token):
+    return re.sub(r"[^0-9a-fA-F]", "", token or "").lower()
+
+
+def apns_private_key_text():
+    if APNS_AUTH_KEY:
+        return APNS_AUTH_KEY.replace("\\n", "\n")
+    if APNS_AUTH_KEY_PATH:
+        try:
+            return Path(APNS_AUTH_KEY_PATH).read_text(encoding="utf-8")
+        except Exception as exc:
+            LOGGER.warning("path=%s error=%s", APNS_AUTH_KEY_PATH, exc, extra={"event": "apns.key_read_failed"})
+    return ""
+
+
+def base64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def apns_auth_token():
+    now = int(time.time())
+    with APNS_TOKEN_LOCK:
+        if APNS_TOKEN_CACHE["token"] and now - int(APNS_TOKEN_CACHE["issued_at"] or 0) < 45 * 60:
+            return APNS_TOKEN_CACHE["token"]
+        key_text = apns_private_key_text()
+        if not key_text:
+            return ""
+        private_key = serialization.load_pem_private_key(key_text.encode("utf-8"), password=None)
+        header = {"alg": "ES256", "kid": APNS_KEY_ID}
+        claims = {"iss": APNS_TEAM_ID, "iat": now}
+        signing_input = ("%s.%s" % (
+            base64url(json.dumps(header, separators=(",", ":")).encode("utf-8")),
+            base64url(json.dumps(claims, separators=(",", ":")).encode("utf-8")),
+        )).encode("ascii")
+        der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+        r, s = decode_ecdsa_der_signature(der_signature)
+        raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+        token = signing_input.decode("ascii") + "." + base64url(raw_signature)
+        APNS_TOKEN_CACHE.update({"token": token, "issued_at": now})
+        return token
+
+
+def decode_ecdsa_der_signature(signature):
+    if len(signature) < 8 or signature[0] != 0x30:
+        raise ValueError("Invalid ECDSA signature")
+    idx = 2
+    if signature[idx] != 0x02:
+        raise ValueError("Invalid ECDSA signature")
+    r_len = signature[idx + 1]
+    idx += 2
+    r = int.from_bytes(signature[idx:idx + r_len], "big")
+    idx += r_len
+    if signature[idx] != 0x02:
+        raise ValueError("Invalid ECDSA signature")
+    s_len = signature[idx + 1]
+    idx += 2
+    s = int.from_bytes(signature[idx:idx + s_len], "big")
+    return r, s
+
+
+def register_apns_device(user_id, device_token, environment="production", device_id="", device_name=""):
+    token = normalize_apns_device_token(device_token)
+    if len(token) < 32:
+        return False
+    env = (environment or APNS_ENVIRONMENT or "production").lower()
+    if env not in {"development", "sandbox", "production"}:
+        env = "production"
+    if env == "sandbox":
+        env = "development"
+    now = int(time.time())
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO apns_devices(device_token, user_id, environment, device_id, device_name, last_seen_at, created_at, data_json)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(device_token) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    environment = excluded.environment,
+                    device_id = excluded.device_id,
+                    device_name = excluded.device_name,
+                    last_seen_at = excluded.last_seen_at,
+                    data_json = excluded.data_json
+                """,
+                (
+                    token,
+                    user_id,
+                    env,
+                    device_id or "",
+                    device_name or "",
+                    now,
+                    now,
+                    json.dumps({"deviceId": device_id or "", "deviceName": device_name or ""}, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+    LOGGER.info("user_id=%s environment=%s", user_id, env, extra={"event": "apns.device_registered"})
+    return True
+
+
+def user_apns_devices(user_id):
+    if not sqlite_enabled():
+        return []
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT device_token, environment FROM apns_devices WHERE user_id = ? ORDER BY last_seen_at DESC",
+                (user_id,),
+            ).fetchall()
+        ]
+
+
+def apns_payload_for_notification(notification):
+    public = public_notification(notification)
+    payload = {
+        "aps": {
+            "alert": {
+                "title": public.get("title") or "PicMe",
+                "body": public.get("body") or "",
+            },
+            "sound": "default",
+        },
+        "notificationId": public.get("id") or "",
+        "type": public.get("type") or "",
+        "albumId": public.get("albumId") or "",
+        "photoId": public.get("photoId") or "",
+        "activityId": public.get("activityId") or "",
+    }
+    data = public.get("data") if isinstance(public.get("data"), dict) else {}
+    payload.update({
+        "requestId": data.get("requestId") or "",
+        "folderId": data.get("folderId") or "",
+        "destination": notification_destination(public.get("type") or ""),
+    })
+    return payload
+
+
+def notification_destination(notification_type):
+    if notification_type == "album.join_request":
+        return "join_requests"
+    if notification_type in {"face.my_photos_matched", "album.join_approved"}:
+        return "my_photos"
+    return "messages"
+
+
+def dispatch_push_notification(notification):
+    if not sqlite_enabled():
+        return
+    devices = user_apns_devices(notification.get("userId") or notification.get("user_id"))
+    if not devices:
+        return
+    thread = threading.Thread(target=send_push_notification_to_devices, args=(notification, devices), daemon=True)
+    thread.start()
+
+
+def send_push_notification_to_devices(notification, devices):
+    if not apns_enabled():
+        LOGGER.info("devices=%d reason=apns_not_configured", len(devices), extra={"event": "apns.skip"})
+        return
+    payload = apns_payload_for_notification(notification)
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        token = apns_auth_token()
+    except Exception as exc:
+        LOGGER.warning("error=%s", exc, extra={"event": "apns.token_failed"})
+        return
+    if not token:
+        return
+    for device in devices:
+        env = device.get("environment") or APNS_ENVIRONMENT
+        host = "https://api.sandbox.push.apple.com" if env == "development" else "https://api.push.apple.com"
+        url = "%s/3/device/%s" % (host, device["device_token"])
+        headers = {
+            "authorization": "bearer %s" % token,
+            "apns-topic": APNS_TOPIC,
+            "apns-push-type": "alert",
+            "apns-priority": "10",
+        }
+        try:
+            with httpx.Client(http2=True, timeout=8) as client:
+                response = client.post(url, headers=headers, content=body)
+            if response.status_code == 200:
+                LOGGER.info("notification_id=%s environment=%s", notification.get("id"), env, extra={"event": "apns.sent"})
+            else:
+                LOGGER.warning(
+                    "notification_id=%s status=%s body=%s",
+                    notification.get("id"),
+                    response.status_code,
+                    response.text[:200],
+                    extra={"event": "apns.failed"},
+                )
+        except Exception as exc:
+            LOGGER.warning("notification_id=%s error=%s", notification.get("id"), exc, extra={"event": "apns.failed"})
+
+
 def create_notification(user_id, notification_type, title, body="", album_id="", photo_id="", activity_id="", actor=None, data=None, db=None):
     if not user_id or not notification_type or not title:
         return None
@@ -1590,6 +1830,7 @@ def create_notification(user_id, notification_type, title, body="", album_id="",
             notification["photoId"],
             extra={"event": "notification.create"},
         )
+        dispatch_push_notification(notification)
         return notification
 
     target_db = db
@@ -1607,6 +1848,7 @@ def create_notification(user_id, notification_type, title, body="", album_id="",
         notification["photoId"],
         extra={"event": "notification.create"},
     )
+    dispatch_push_notification(notification)
     return notification
 
 
@@ -4447,6 +4689,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.update_profile_request(current_user)
         if path == "/api/me/avatar":
             return self.update_avatar_request(current_user)
+        if path == "/api/devices/apns":
+            return self.register_apns_device_request(current_user)
         if path == "/api/notifications/read":
             return self.mark_notifications_read_request(current_user)
         match = re.match(r"^/api/notifications/([^/]+)/read$", path)
@@ -5166,6 +5410,24 @@ class AppHandler(BaseHTTPRequestHandler):
     def unread_message_count_request(self, current_user):
         _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
         return self.send_json({"unreadCount": unread_count})
+
+    def register_apns_device_request(self, current_user):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        token = normalize_apns_device_token(payload.get("deviceToken") or payload.get("token") or "")
+        if not token:
+            return self.send_error_json("Missing device token")
+        ok = register_apns_device(
+            current_user["id"],
+            token,
+            payload.get("environment") or APNS_ENVIRONMENT,
+            payload.get("deviceId") or "",
+            payload.get("deviceName") or "",
+        )
+        if not ok:
+            return self.send_error_json("Invalid device token")
+        return self.send_json({"ok": True, "pushEnabled": apns_enabled()})
 
     def mark_notifications_read_request(self, current_user):
         payload, error = self.read_json_body()

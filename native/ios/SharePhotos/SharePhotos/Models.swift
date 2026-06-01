@@ -168,6 +168,88 @@ struct ReviewJoinRequestResponse: Codable {
     let album: Album?
 }
 
+struct AlbumCollaborationRecord: Identifiable, Codable, Hashable {
+    let id: String
+    let albumId: String?
+    let type: String?
+    let title: String?
+    let message: String?
+    let actor: User?
+    let createdAt: Int?
+
+    var displayTitle: String {
+        let value = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "协作动态" : value
+    }
+
+    var displayMessage: String {
+        let value = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "相册成员有新的协作操作" : value
+    }
+}
+
+struct AlbumCollaborationRecordsResponse: Codable {
+    let records: [AlbumCollaborationRecord]
+}
+
+struct InboxMessage: Identifiable, Codable, Hashable {
+    let id: String
+    let type: String?
+    let title: String
+    let body: String?
+    let albumId: String?
+    let albumName: String?
+    let isRead: Bool
+    let createdAt: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case title
+        case body
+        case albumId
+        case albumName
+        case isRead
+        case read
+        case createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "站内消息"
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+        albumId = try container.decodeIfPresent(String.self, forKey: .albumId)
+        albumName = try container.decodeIfPresent(String.self, forKey: .albumName)
+        isRead = try container.decodeIfPresent(Bool.self, forKey: .isRead)
+            ?? container.decodeIfPresent(Bool.self, forKey: .read)
+            ?? false
+        createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(type, forKey: .type)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(body, forKey: .body)
+        try container.encodeIfPresent(albumId, forKey: .albumId)
+        try container.encodeIfPresent(albumName, forKey: .albumName)
+        try container.encode(isRead, forKey: .isRead)
+        try container.encodeIfPresent(createdAt, forKey: .createdAt)
+    }
+}
+
+struct InboxMessagesResponse: Codable {
+    let messages: [InboxMessage]
+    let unreadCount: Int?
+}
+
+struct UnreadCountResponse: Codable {
+    let unreadCount: Int
+}
+
 struct UploadResponse: Codable {
     let album: Album
     let queued: Int
@@ -210,4 +292,11 @@ struct ShareableFile: Identifiable {
 struct PendingDeepLink: Identifiable, Hashable {
     let id = UUID()
     let code: String
+}
+
+struct PushNavigationRoute: Identifiable, Hashable {
+    let id = UUID()
+    let destination: String
+    let albumId: String?
+    let notificationId: String?
 }
