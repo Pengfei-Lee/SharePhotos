@@ -592,7 +592,7 @@ def sqlite_connect():
 
 
 def sqlite_ensure_legacy_album_members(conn):
-    album_rows = conn.execute("SELECT id FROM albums").fetchall()
+    album_rows = conn.execute("SELECT id, data_json FROM albums").fetchall()
     if not album_rows:
         return
     owner_row = conn.execute(
@@ -620,17 +620,32 @@ def sqlite_ensure_legacy_album_members(conn):
         ).fetchone()["count"]
         if int(member_count or 0) > 0:
             continue
+        album_owner_row = None
+        try:
+            album_data = json.loads(album_row["data_json"] or "{}")
+        except Exception:
+            album_data = {}
+        album_owner_id = album_data.get("ownerUserId") or album_data.get("createdByUserId")
+        album_owner_username = normalize_username(album_data.get("ownerUsername") or album_data.get("createdByUsername") or "")
+        if album_owner_id:
+            album_owner_row = conn.execute("SELECT id, username FROM users WHERE id = ?", (album_owner_id,)).fetchone()
+        if not album_owner_row and album_owner_username:
+            album_owner_row = conn.execute(
+                "SELECT id, username FROM users WHERE lower(username) = ?",
+                (album_owner_username,),
+            ).fetchone()
+        target_owner = album_owner_row or owner_row
         conn.execute(
             """
             INSERT OR REPLACE INTO album_members(album_id, user_id, role, status, created_at, joined_at, approved_by)
             VALUES(?, ?, 'owner', 'active', ?, ?, ?)
             """,
-            (album_row["id"], owner_row["id"], now, now, owner_row["id"]),
+            (album_row["id"], target_owner["id"], now, now, target_owner["id"]),
         )
         migrated += 1
     if migrated:
         LOGGER.info(
-            "owner_username=%s owner_id=%s albums=%d",
+            "fallback_owner_username=%s fallback_owner_id=%s albums=%d",
             owner_row["username"],
             owner_row["id"],
             migrated,
@@ -4454,6 +4469,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "id": uuid.uuid4().hex[:10],
                 "name": name,
                 "createdAt": int(time.time()),
+                "ownerUserId": current_user["id"],
+                "ownerUsername": current_user.get("username", ""),
                 "folders": [],
                 "photos": [],
                 "contributors": [],
