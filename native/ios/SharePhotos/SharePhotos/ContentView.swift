@@ -470,6 +470,7 @@ struct ContentView: View {
     @State private var createAlbumPresented = false
     @State private var joinAlbumPresented = false
     @State private var qrScannerPresented = false
+    @State private var messagesPresented = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -477,7 +478,8 @@ struct ContentView: View {
                 HomeView(
                     createAlbumPresented: $createAlbumPresented,
                     joinAlbumPresented: $joinAlbumPresented,
-                    qrScannerPresented: $qrScannerPresented
+                    qrScannerPresented: $qrScannerPresented,
+                    messagesPresented: $messagesPresented
                 )
                     .navigationBarHidden(true)
             }
@@ -494,6 +496,7 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: store.showsOperation)
         .task {
             await store.loadAlbums()
+            await store.loadUnreadMessageCount()
         }
         .sheet(isPresented: $createAlbumPresented) {
             CreateAlbumSheet()
@@ -517,8 +520,16 @@ struct ContentView: View {
                 }
             )
         }
+        .sheet(isPresented: $messagesPresented) {
+            MessageCenterSheet()
+        }
         .sheet(item: $store.pendingDeepLink) { deepLink in
             JoinAlbumSheet(initialCode: deepLink.code)
+        }
+        .sheet(item: $store.pendingPushRoute, onDismiss: {
+            store.clearPendingPushRoute()
+        }) { route in
+            PushRouteSheet(route: route)
         }
         .sheet(item: $store.shareableFile) { file in
             ActivityView(items: [file.url])
@@ -528,11 +539,56 @@ struct ContentView: View {
     }
 }
 
+private struct PushRouteSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let route: PushNavigationRoute
+
+    var body: some View {
+        Group {
+            switch route.destination {
+            case "join_requests":
+                if let album = routedAlbum, album.isAdmin {
+                    JoinRequestsSheet(album: album)
+                } else {
+                    loadingView("正在打开审批")
+                }
+            case "my_photos":
+                if let albumId = route.albumId {
+                    AlbumDetailView(albumId: albumId, initialTab: .mine)
+                } else {
+                    MessageCenterSheet()
+                }
+            default:
+                MessageCenterSheet()
+            }
+        }
+        .task {
+            guard let albumId = route.albumId else { return }
+            await store.refreshAlbum(id: albumId)
+        }
+    }
+
+    private var routedAlbum: Album? {
+        guard let albumId = route.albumId else { return nil }
+        return store.album(id: albumId)
+    }
+
+    private func loadingView(_ title: String) -> some View {
+        ZStack {
+            AppBackground()
+            ProgressView(title)
+                .font(.headline.weight(.semibold))
+                .tint(.teal)
+        }
+    }
+}
+
 private struct HomeView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Binding var createAlbumPresented: Bool
     @Binding var joinAlbumPresented: Bool
     @Binding var qrScannerPresented: Bool
+    @Binding var messagesPresented: Bool
     @State private var deletingAlbum: Album?
     @State private var renamingAlbum: Album?
 
@@ -543,6 +599,9 @@ private struct HomeView: View {
                     HStack(alignment: .top) {
                         BrandHeader()
                         Spacer()
+                        MessageBellButton {
+                            messagesPresented = true
+                        }
                         AccountMenu()
                     }
                     .padding(.top, 24)
@@ -695,6 +754,61 @@ private struct AlbumDetailTabBar: View {
     }
 }
 
+private struct AlbumUploadButton: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let onStartUpload: () -> Void
+    let onCancelUpload: () -> Void
+
+    var body: some View {
+        Button {
+            if store.isUploading(to: album) {
+                onCancelUpload()
+            } else {
+                onStartUpload()
+            }
+        } label: {
+            if store.isUploading(to: album) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label("正在上传照片", systemImage: "arrow.up.circle.fill")
+                            .font(.headline.weight(.bold))
+                        Spacer()
+                        Text(progressText)
+                            .font(.headline.weight(.black))
+                    }
+                    ProgressView(value: store.uploadProgressFraction ?? 0)
+                        .tint(.white)
+                    Text(store.uploadProgressText.isEmpty ? "点击可取消本次上传" : "\(store.uploadProgressText)，点击可取消")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .foregroundColor(.white)
+            } else {
+                Label("上传照片", systemImage: "photo.badge.plus")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .foregroundColor(.white)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(store.isBusy && !store.isUploading(to: album))
+        .opacity(store.isBusy && !store.isUploading(to: album) ? 0.55 : 1)
+    }
+
+    private var progressText: String {
+        guard let progress = store.uploadProgressFraction else { return "--" }
+        return "\(Int((progress * 100).rounded()))%"
+    }
+}
+
 private struct AlbumDetailView: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Environment(\.dismiss) private var dismiss
@@ -704,7 +818,14 @@ private struct AlbumDetailView: View {
     @State private var renamingFolder: PhotoFolder?
     @State private var shareInvite: AlbumInvite?
     @State private var approvalPresented = false
-    @State private var activeTab: AlbumDetailTab = .folders
+    @State private var collaborationPresented = false
+    @State private var cancelUploadConfirmationPresented = false
+    @State private var activeTab: AlbumDetailTab
+
+    init(albumId: String, initialTab: AlbumDetailTab = .folders) {
+        self.albumId = albumId
+        _activeTab = State(initialValue: initialTab)
+    }
 
     var album: Album? { store.album(id: albumId) }
 
@@ -717,6 +838,12 @@ private struct AlbumDetailView: View {
                     AlbumHero(album: album)
 
                     AlbumDetailTabBar(selection: $activeTab, album: album)
+
+                    if store.isUploading(to: album) {
+                        Text("上传进行中。你可以离开当前页面，点击下方进度条可取消本次上传。")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.secondaryText)
+                    }
 
                     if activeTab == .mine {
                         AlbumMyPhotosTab(album: album)
@@ -776,19 +903,16 @@ private struct AlbumDetailView: View {
                         }
                     }
 
-                    Button {
-                        store.selectAlbum(id: album.id)
-                        uploadPresented = true
-                    } label: {
-                        Label("上传照片", systemImage: "photo.badge.plus")
-                            .font(.headline.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 18)
-                            .background(primaryGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .foregroundColor(.white)
-                    }
-                    .disabled(store.isBusy)
-                    .opacity(store.isBusy ? 0.55 : 1)
+                    AlbumUploadButton(
+                        album: album,
+                        onStartUpload: {
+                            store.selectAlbum(id: album.id)
+                            uploadPresented = true
+                        },
+                        onCancelUpload: {
+                            cancelUploadConfirmationPresented = true
+                        }
+                    )
 
                     HStack(spacing: 12) {
                         Button {
@@ -801,6 +925,18 @@ private struct AlbumDetailView: View {
                             }
                         } label: {
                             Label("分享相册", systemImage: "square.and.arrow.up")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            collaborationPresented = true
+                        } label: {
+                            Label("协作记录", systemImage: "clock.arrow.circlepath")
                                 .font(.headline.weight(.bold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
@@ -845,6 +981,14 @@ private struct AlbumDetailView: View {
         .sheet(isPresented: $uploadPresented) {
             UploadSheet(albumId: albumId)
         }
+        .confirmationDialog("取消正在上传的照片？", isPresented: $cancelUploadConfirmationPresented, titleVisibility: .visible) {
+            Button("取消本次上传", role: .destructive) {
+                store.cancelCurrentUpload()
+            }
+            Button("继续上传", role: .cancel) {}
+        } message: {
+            Text("已上传完成的照片会保留，未完成的照片需要之后重新选择上传。")
+        }
         .sheet(item: $shareInvite) { invite in
             ShareAlbumSheet(album: album, invite: invite) { reset in
                 shareInvite = reset
@@ -853,6 +997,11 @@ private struct AlbumDetailView: View {
         .sheet(isPresented: $approvalPresented) {
             if let album {
                 JoinRequestsSheet(album: album)
+            }
+        }
+        .sheet(isPresented: $collaborationPresented) {
+            if let album {
+                CollaborationRecordsSheet(album: album)
             }
         }
         .sheet(item: $renamingFolder) { folder in
@@ -1765,6 +1914,144 @@ private struct JoinRequestsSheet: View {
     }
 }
 
+private struct CollaborationRecordsSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album
+    @State private var records: [AlbumCollaborationRecord] = []
+    @State private var isLoading = true
+
+    var body: some View {
+        NavigationView {
+            List {
+                if isLoading {
+                    ProgressView("正在加载协作记录")
+                } else if records.isEmpty {
+                    Text("暂无协作记录")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(records) { record in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(record.displayTitle)
+                                    .font(.headline.weight(.bold))
+                                Spacer()
+                                if let createdAt = record.createdAt {
+                                    Text(formatDate(createdAt))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Text(record.displayMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.secondaryText)
+                            if let actor = record.actor {
+                                Label(actor.nickname, systemImage: "person.crop.circle")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.teal)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            .navigationTitle("协作记录")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .task {
+                records = await store.loadAlbumCollaborationRecords(album: album)
+                isLoading = false
+            }
+        }
+    }
+}
+
+private struct MessageCenterSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var messages: [InboxMessage] = []
+    @State private var isLoading = true
+
+    var body: some View {
+        NavigationView {
+            List {
+                if isLoading {
+                    ProgressView("正在加载消息")
+                } else if messages.isEmpty {
+                    Text("暂无站内消息")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(messages) { message in
+                        Button {
+                            Task {
+                                await store.openMessage(message)
+                                messages = await store.loadMessages()
+                                if message.albumId?.isEmpty == false {
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                Circle()
+                                    .fill(message.isRead ? Color.secondary.opacity(0.18) : Color.teal)
+                                    .frame(width: 10, height: 10)
+                                    .padding(.top, 6)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(message.title)
+                                            .font(.headline.weight(.bold))
+                                            .foregroundColor(.primaryText)
+                                        Spacer()
+                                        if let createdAt = message.createdAt {
+                                            Text(formatDate(createdAt))
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    if let body = message.body, !body.isEmpty {
+                                        Text(body)
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondaryText)
+                                    }
+                                    if let albumName = message.albumName, !albumName.isEmpty {
+                                        Label(albumName, systemImage: "photo.stack")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.teal)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("消息提醒")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("全部已读") {
+                        Task {
+                            await store.markAllMessagesRead()
+                            messages = await store.loadMessages()
+                        }
+                    }
+                    .disabled(messages.allSatisfy(\.isRead))
+                }
+            }
+            .task {
+                messages = await store.loadMessages()
+                isLoading = false
+            }
+        }
+    }
+}
+
 private enum QRCodeRenderer {
     static func image(from value: String) -> UIImage? {
         let context = CIContext()
@@ -1898,7 +2185,7 @@ private struct UploadSheet: View {
                 Button {
                     pickerPresented = true
                 } label: {
-                    Label("从系统相册选择照片或 Live Photo", systemImage: "photo.on.rectangle.angled")
+                    Label(store.isUploading ? "正在上传，返回相册页可查看进度或取消" : "从系统相册选择照片或 Live Photo", systemImage: "photo.on.rectangle.angled")
                         .font(.headline.weight(.bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
@@ -1921,7 +2208,6 @@ private struct UploadSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("完成") { dismiss() }
-                        .disabled(store.isBusy)
                 }
             }
             .onAppear {
@@ -1929,7 +2215,8 @@ private struct UploadSheet: View {
             }
             .sheet(isPresented: $pickerPresented) {
                 LivePhotoPicker { assets in
-                    Task { await store.uploadAssets(assets) }
+                    store.startUploadAssets(assets)
+                    dismiss()
                 }
             }
         }
@@ -3130,6 +3417,36 @@ private struct BrandHeader: View {
                     .foregroundColor(.secondaryText)
             }
         }
+    }
+}
+
+private struct MessageBellButton: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "bell.fill")
+                    .font(.headline.weight(.bold))
+                    .foregroundColor(.teal)
+                    .frame(width: 46, height: 46)
+                    .background(.white.opacity(0.9), in: Circle())
+                    .overlay(Circle().stroke(.teal.opacity(0.12), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.08), radius: 10, y: 5)
+
+                if store.unreadMessageCount > 0 {
+                    Text(store.unreadMessageCount > 99 ? "99+" : "\(store.unreadMessageCount)")
+                        .font(.caption2.weight(.black))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Color.red, in: Capsule())
+                        .offset(x: 4, y: -3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

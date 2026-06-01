@@ -1,0 +1,14 @@
+.gradle/
+build/
+local.properties
+
+app/build/
+*.iml
+
+.idea/
+!/.idea/runConfigurations/
+
+# Release signing secrets. Keep these local and never commit them.
+*.jks
+*.keystore
+release-signing.properties

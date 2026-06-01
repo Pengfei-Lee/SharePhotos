@@ -160,6 +160,38 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(ReviewJoinRequestResponse.self, from: data)
     }
 
+    func albumCollaborationRecords(albumId: String) async throws -> [AlbumCollaborationRecord] {
+        let data = try await request(path: "/api/albums/\(albumId)/collaboration-records")
+        return try JSONDecoder().decode(AlbumCollaborationRecordsResponse.self, from: data).records
+    }
+
+    func inboxMessages() async throws -> InboxMessagesResponse {
+        let data = try await request(path: "/api/messages")
+        return try JSONDecoder().decode(InboxMessagesResponse.self, from: data)
+    }
+
+    func unreadMessageCount() async throws -> Int {
+        let data = try await request(path: "/api/messages/unread-count")
+        return try JSONDecoder().decode(UnreadCountResponse.self, from: data).unreadCount
+    }
+
+    func markMessageRead(id: String) async throws {
+        _ = try await request(path: "/api/messages/\(id)/read", method: "POST")
+    }
+
+    func markAllMessagesRead() async throws {
+        _ = try await request(path: "/api/messages/mark-read", method: "POST")
+    }
+
+    func registerAPNSDevice(token: String, environment: String, deviceId: String, deviceName: String) async throws {
+        _ = try await jsonRequest(path: "/api/devices/apns", method: "POST", body: [
+            "deviceToken": token,
+            "environment": environment,
+            "deviceId": deviceId,
+            "deviceName": deviceName
+        ])
+    }
+
     func upload(albumId: String, uploader: String, files: [UploadFile]) async throws -> UploadResponse {
         let data = try await authorizedData {
             let boundary = "Boundary-\(UUID().uuidString)"

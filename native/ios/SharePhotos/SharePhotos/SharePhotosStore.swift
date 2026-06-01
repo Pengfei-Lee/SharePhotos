@@ -1,6 +1,8 @@
 import Foundation
 import Photos
 import Security
+import UIKit
+import UserNotifications
 
 @MainActor
 final class SharePhotosStore: ObservableObject {
@@ -16,6 +18,8 @@ final class SharePhotosStore: ObservableObject {
     @Published var uploadIgnoredCount = 0
     @Published var uploadLivePhotoCount = 0
     @Published var uploadProgressFraction: Double?
+    @Published private(set) var isUploading = false
+    @Published private(set) var uploadAlbumId: String?
     @Published var shareableFile: ShareableFile?
     @Published var operationTitle = ""
     @Published var operationMessage = ""
@@ -27,13 +31,16 @@ final class SharePhotosStore: ObservableObject {
     @Published var isCheckingAuth = false
     @Published private(set) var hasLocalSession = false
     @Published var pendingDeepLink: PendingDeepLink?
+    @Published var pendingPushRoute: PushNavigationRoute?
     @Published var avatarImageVersion = 0
+    @Published var unreadMessageCount = 0
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
     private let saver = LivePhotoSaveService()
     private let tokenStore = KeychainTokenStore()
     private let homeSnapshotCache = HomeSnapshotCache()
+    private var activeUploadTask: Task<Void, Never>?
 
     init(api: SharePhotosAPI) {
         self.api = api.withBaseURL(api.baseURL)
@@ -56,6 +63,26 @@ final class SharePhotosStore: ObservableObject {
         self.api.onAuthTokensChanged = { [weak self] response in
             Task { @MainActor in
                 self?.updateTokens(from: response)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .picmeDidRegisterAPNSDeviceToken,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let token = notification.object as? String else { return }
+            Task { @MainActor in
+                await self?.registerAPNSDevice(token: token)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .picmeDidReceivePushRoute,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.object as? [AnyHashable: Any] else { return }
+            Task { @MainActor in
+                await self?.handlePushNotification(userInfo: userInfo)
             }
         }
     }
@@ -189,6 +216,7 @@ final class SharePhotosStore: ObservableObject {
             uploader = user.nickname
             persistHomeSnapshot()
             clearExpiredStatusIfNeeded()
+            await requestPushNotificationsIfPossible()
         } catch {
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
             if case APIError.unauthorized = error {
@@ -390,6 +418,141 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    func loadAlbumCollaborationRecords(album: Album) async -> [AlbumCollaborationRecord] {
+        do {
+            return try await api.albumCollaborationRecords(albumId: album.id)
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func loadUnreadMessageCount() async {
+        do {
+            unreadMessageCount = try await api.unreadMessageCount()
+        } catch {
+            // 新接口未上线前不影响主流程；打开消息中心时会显示具体错误。
+            unreadMessageCount = 0
+        }
+    }
+
+    func loadMessages() async -> [InboxMessage] {
+        do {
+            let response = try await api.inboxMessages()
+            unreadMessageCount = response.unreadCount ?? response.messages.filter { !$0.isRead }.count
+            return response.messages
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func markMessageRead(_ message: InboxMessage) async {
+        guard !message.isRead else { return }
+        do {
+            try await api.markMessageRead(id: message.id)
+            unreadMessageCount = max(0, unreadMessageCount - 1)
+        } catch {
+            statusText = handleError(error)
+        }
+    }
+
+    func markAllMessagesRead() async {
+        do {
+            try await api.markAllMessagesRead()
+            unreadMessageCount = 0
+        } catch {
+            statusText = handleError(error)
+        }
+    }
+
+    func openMessage(_ message: InboxMessage) async {
+        await markMessageRead(message)
+        routeNotification(destination: destination(for: message.type), albumId: message.albumId, notificationId: message.id)
+    }
+
+    func clearPendingPushRoute() {
+        pendingPushRoute = nil
+    }
+
+    private func requestPushNotificationsIfPossible() async {
+        guard hasLocalSession, authToken != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        do {
+            let settings = await center.notificationSettings()
+            let granted: Bool
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                granted = true
+            case .notDetermined:
+                granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+            default:
+                granted = false
+            }
+            guard granted else { return }
+            await MainActor.run {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+        } catch {
+            statusText = "通知权限未开启，仍可在消息中心查看提醒"
+        }
+    }
+
+    private func registerAPNSDevice(token: String) async {
+        guard hasLocalSession, authToken != nil else { return }
+        do {
+            try await api.registerAPNSDevice(
+                token: token,
+                environment: Self.apnsEnvironment,
+                deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "",
+                deviceName: UIDevice.current.name
+            )
+        } catch {
+            // 设备 token 上报失败不影响主流程；下次登录或启动还会重试。
+        }
+    }
+
+    private func handlePushNotification(userInfo: [AnyHashable: Any]) async {
+        let destination = stringValue(userInfo["destination"]) ?? destination(for: stringValue(userInfo["type"]))
+        let albumId = stringValue(userInfo["albumId"])
+        let notificationId = stringValue(userInfo["notificationId"])
+        if let notificationId, !notificationId.isEmpty {
+            try? await api.markMessageRead(id: notificationId)
+            unreadMessageCount = max(0, unreadMessageCount - 1)
+        }
+        routeNotification(destination: destination, albumId: albumId, notificationId: notificationId)
+    }
+
+    private func routeNotification(destination: String, albumId: String?, notificationId: String?) {
+        guard let albumId, !albumId.isEmpty else {
+            pendingPushRoute = PushNavigationRoute(destination: "messages", albumId: nil, notificationId: notificationId)
+            return
+        }
+        selectedAlbumId = albumId
+        pendingPushRoute = PushNavigationRoute(destination: destination, albumId: albumId, notificationId: notificationId)
+    }
+
+    private func destination(for type: String?) -> String {
+        switch type {
+        case "album.join_request":
+            return "join_requests"
+        case "face.my_photos_matched", "album.join_approved":
+            return "my_photos"
+        default:
+            return "messages"
+        }
+    }
+
+    private func stringValue(_ value: Any?) -> String? {
+        if let value = value as? String {
+            return value
+        }
+        if let value {
+            return String(describing: value)
+        }
+        return nil
+    }
+
     func deleteAlbum(_ album: Album) async {
         isBusy = true
         showOperation(title: "删除相册", message: "正在删除 \(album.name)", progress: nil)
@@ -431,6 +594,27 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    func isUploading(to album: Album) -> Bool {
+        isUploading && uploadAlbumId == album.id
+    }
+
+    func startUploadAssets(_ assets: [PHAsset]) {
+        guard !isUploading else {
+            statusText = "已有照片正在上传，点上传进度可以取消"
+            return
+        }
+        activeUploadTask = Task { [weak self] in
+            await self?.uploadAssets(assets)
+        }
+    }
+
+    func cancelCurrentUpload() {
+        guard isUploading else { return }
+        statusText = "正在取消上传..."
+        uploadProgressText = "正在取消上传，已完成的照片会保留"
+        activeUploadTask?.cancel()
+    }
+
     func uploadAssets(_ assets: [PHAsset]) async {
         guard let album = selectedAlbum else {
             statusText = "请先选择一个相册"
@@ -449,7 +633,21 @@ final class SharePhotosStore: ObservableObject {
         }
 
         isBusy = true
-        defer { isBusy = false }
+        isUploading = true
+        uploadAlbumId = album.id
+        defer {
+            isBusy = false
+            isUploading = false
+            uploadAlbumId = nil
+            activeUploadTask = nil
+        }
+        let backgroundTask = UploadBackgroundTask(name: "PicMe.upload.\(album.id)") { [weak self] in
+            Task { @MainActor in
+                self?.statusText = "系统后台时间即将用完，当前上传会尽量收尾"
+                self?.uploadProgressText = "请回到 PicMe，继续等待上传完成"
+            }
+        }
+        defer { backgroundTask.end() }
 
         do {
             statusText = "正在读取系统相册原始文件..."
@@ -463,10 +661,12 @@ final class SharePhotosStore: ObservableObject {
             var files: [UploadFile] = []
             var liveCount = 0
             for (index, asset) in assets.enumerated() {
+                try Task.checkCancellation()
                 uploadPreparedCount = index
                 uploadProgressFraction = Double(index) / Double(max(assets.count, 1)) * 0.45
                 uploadProgressText = "正在准备第 \(index + 1)/\(assets.count) 张，Live Photo 会保留动态效果"
                 let pair = try await exporter.export(asset: asset)
+                try Task.checkCancellation()
                 files.append(contentsOf: pair.files)
                 if pair.video != nil {
                     liveCount += 1
@@ -479,7 +679,9 @@ final class SharePhotosStore: ObservableObject {
             statusText = "正在上传 \(assets.count) 张照片..."
             uploadProgressText = "正在上传 \(assets.count) 张朋友视角"
             uploadProgressFraction = 0.65
+            try Task.checkCancellation()
             let response = try await api.upload(albumId: album.id, uploader: uploader, files: files)
+            try Task.checkCancellation()
             upsert(response.album)
             statusText = "上传完成：\(assets.count) 张，其中 \(liveCount) 张 Live Photo，后台开始整理"
             uploadUploadedCount = response.queued
@@ -487,7 +689,16 @@ final class SharePhotosStore: ObservableObject {
             uploadProgressText = "已收到 \(response.queued) 张，忽略 \(response.ignored) 个非照片文件"
             uploadProgressFraction = 1
             await refreshAlbum(id: album.id)
+            try Task.checkCancellation()
             await pollRecognition(albumId: album.id, tokenSnapshot: authToken)
+        } catch is CancellationError {
+            statusText = "上传已取消"
+            uploadProgressText = "上传已取消，可以重新选择照片上传"
+            uploadProgressFraction = nil
+        } catch let error as URLError where error.code == .cancelled {
+            statusText = "上传已取消"
+            uploadProgressText = "上传已取消，可以重新选择照片上传"
+            uploadProgressFraction = nil
         } catch {
             let message = handleError(error)
             statusText = message
@@ -745,6 +956,9 @@ final class SharePhotosStore: ObservableObject {
         api.refreshToken = response.refreshToken
         uploader = response.user.nickname
         persistHomeSnapshot()
+        Task { @MainActor in
+            await requestPushNotificationsIfPossible()
+        }
     }
 
     private func updateTokens(from response: AuthResponse) {
@@ -775,6 +989,14 @@ final class SharePhotosStore: ObservableObject {
     private func isValidPasswordFormat(_ password: String) -> Bool {
         guard (6...20).contains(password.count) else { return false }
         return password.unicodeScalars.allSatisfy { (0x21...0x7E).contains($0.value) }
+    }
+
+    private static var apnsEnvironment: String {
+        #if DEBUG
+        return "development"
+        #else
+        return "production"
+        #endif
     }
 
     private static func inviteCode(from url: URL) -> String? {
@@ -977,6 +1199,26 @@ final class SharePhotosStore: ObservableObject {
                 continuation.resume(returning: status)
             }
         }
+    }
+}
+
+@MainActor
+private final class UploadBackgroundTask {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+
+    init(name: String, expirationHandler: @escaping () -> Void) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            Task { @MainActor in
+                expirationHandler()
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
     }
 }
 

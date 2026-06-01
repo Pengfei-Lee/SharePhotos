@@ -12,22 +12,37 @@ Android 没有 iPhone Live Photo 的统一系统语义，不同厂商的“动�
 ## 运行方式
 
 1. 用 Android Studio 打开 `native/android/SharePhotos`。
-2. 客户端默认连接 PicMe 生产服务，不提供用户可见的服务地址切换入口。
-3. 真机运行，先登录，再读取已加入相册、选择照片上传或输入相册码申请加入。
+2. 当前工程已配置使用本机 Android SDK API 33；首次打开时按提示等待 Gradle Sync 完成。
+3. 客户端默认连接 PicMe 生产服务，不提供用户可见的服务地址切换入口。
+4. 手机打开“开发者选项”和“USB 调试”，用 USB 连接 Mac 后在 Android Studio 顶部设备列表选择真机。
+5. 点击 Run，先登录，再读取已加入相册、选择照片上传或输入相册码申请加入。
+
+## 推荐编辑工具配置
+
+- Android Studio：推荐使用稳定版，自带 JDK，可直接同步当前 Gradle 工程。
+- Project SDK：使用 Android Studio 自带 JBR/JDK 17 或本机 JDK 11+ 均可。
+- Gradle：当前工程使用 Android Gradle Plugin `7.4.2`，兼容 Gradle 7.x；如 Android Studio 提示下载 Gradle，允许即可。
+- Android SDK：当前可直接使用 API 33；后续正式上架前建议再升级到目标 API 35。
+- ADB：安装 Android Studio 的 Platform Tools 后会自带；终端可通过 `~/Library/Android/sdk/platform-tools/adb devices` 查看真机是否已授权。
 
 ## 已对齐的生产能力
 
 - 生产地址固定为 `https://picme.me`，界面不提供地址切换。
 - 登录态按 iOS/H5 的双 token 思路保存到 `SharedPreferences`：`accessToken` 用于普通请求，`refreshToken` 用于 401 后无感刷新并重试一次。
-- `GET /api/albums` 只展示当前用户已加入的相册，第一本相册会自动填入上传区域，方便低成本验证。
+- `GET /api/albums` 只展示当前用户已加入的相册，首页会先展示本地缓存，再静默同步线上数据。
+- 首页、登录页、相册详情、资料页和照片浏览页按 iOS 端视觉方向做了原生轻量对齐。
+- 点击首页头像进入资料页，可更换头像、修改昵称、退出登录。
 - 支持输入相册码或 `https://picme.me/join/{code}` 分享链接提交加入申请。
-- Manifest 已接入 `https://picme.me/join/*` App Link；用户从微信/浏览器扫码打开分享链接时，可把相册码带入 Android 客户端。
+- Manifest 已接入 `https://picme.me/join/*` App Link；服务端需要部署 `/.well-known/assetlinks.json` 后，微信/浏览器分享页的“打开识我 App”可唤起 Android 客户端。
 - 上传使用 OSS 直传链路：`/uploads/init` 获取签名 URL，客户端 `PUT` 到 OSS，再调用 `/uploads/complete` 完成入库和后台整理。
+- 照片详情支持左右切换；Live Photo 先显示静态图，点击播放按钮后再加载视频资源播放。
 
 ## 当前后端接口覆盖
 
 - `POST /api/auth/login`
 - `POST /api/auth/refresh`
+- `POST /api/me/profile`
+- `POST /api/me/avatar`
 - `GET /api/albums`
 - `POST /api/albums/{albumId}/uploads/init`
 - `POST /api/albums/{albumId}/uploads/complete`
@@ -39,5 +54,5 @@ Android 没有 iPhone Live Photo 的统一系统语义，不同厂商的“动�
 ## 后续较大功能
 
 - 摄像头内置扫码需要引入 CameraX + ML Kit 或 ZXing，并处理相机权限、弱光、相册二维码识别等细节；当前低风险实现先支持外部扫码后的 App Link 和手动输入相册码。
-- Android UI 仍是原生轻量表单，不是完整 iOS 卡片式相册首页；正式版建议单独做 Material 3 页面、相册详情、照片瀑布流、Live Photo 详情页和审批列表。
+- 正式版建议继续补齐 Material 3 组件、审批列表、通知提醒、保存到系统相册等更完整体验。
 - 目前 token 存在 `SharedPreferences`，能满足最小闭环；正式上架前建议迁移到 AndroidX Security EncryptedSharedPreferences 或系统 Keystore。

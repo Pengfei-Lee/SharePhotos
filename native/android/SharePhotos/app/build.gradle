@@ -1,14 +1,45 @@
 apply plugin: 'com.android.application'
 
+def releaseSigningPropertiesFile = rootProject.file("release-signing.properties")
+def releaseSigningProperties = new Properties()
+if (releaseSigningPropertiesFile.exists()) {
+    releaseSigningPropertiesFile.withInputStream { releaseSigningProperties.load(it) }
+}
+
 android {
-    compileSdkVersion 28
-    buildToolsVersion "28.0.3"
+    namespace "com.sharephotos.app"
+    compileSdkVersion 33
+    buildToolsVersion "33.0.1"
 
     defaultConfig {
         applicationId "com.sharephotos.app"
         minSdkVersion 23
-        targetSdkVersion 28
+        targetSdkVersion 33
         versionCode 1
         versionName "0.1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (!releaseSigningProperties.isEmpty()) {
+                storeFile rootProject.file(releaseSigningProperties["storeFile"])
+                storePassword releaseSigningProperties["storePassword"]
+                keyAlias releaseSigningProperties["keyAlias"]
+                keyPassword releaseSigningProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (!releaseSigningProperties.isEmpty()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 }
