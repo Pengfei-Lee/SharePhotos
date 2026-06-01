@@ -918,17 +918,9 @@ private struct AlbumMyPhotosTab: View {
                 }
             }
 
-            if let photo = selectedPhoto {
-                PhotoViewer(albumId: album.id, photos: photos, initialPhotoId: photo.id) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                        selectedPhoto = nil
-                    }
-                }
-                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
-                .zIndex(10)
-            }
         }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .photoViewerCover(selectedPhoto: $selectedPhoto, albumId: album.id, photos: photos)
     }
 
     private var myPhotosEmptyMessage: String {
@@ -986,17 +978,9 @@ private struct AlbumAllPhotosTab: View {
                 }
             }
 
-            if let photo = selectedPhoto {
-                PhotoViewer(albumId: album.id, photos: photos, initialPhotoId: photo.id) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                        selectedPhoto = nil
-                    }
-                }
-                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
-                .zIndex(10)
-            }
         }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .photoViewerCover(selectedPhoto: $selectedPhoto, albumId: album.id, photos: photos)
     }
 }
 
@@ -1070,15 +1054,6 @@ private struct FolderDetailView: View {
                 }
             }
 
-            if let photo = selectedPhoto {
-                PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                        selectedPhoto = nil
-                    }
-                }
-                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
-                .zIndex(10)
-            }
         }
         .safeAreaInset(edge: .bottom) {
             if isSelecting {
@@ -1100,6 +1075,7 @@ private struct FolderDetailView: View {
         .navigationBarHidden(true)
         .edgeSwipeBack { dismiss() }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .photoViewerCover(selectedPhoto: $selectedPhoto, albumId: albumId, photos: photos)
         .onChange(of: activeFolderId) { _ in
             selectedPhotoIds.removeAll()
             isSelecting = false
@@ -1208,15 +1184,6 @@ private struct AllPhotosView: View {
                 }
             }
 
-            if let photo = selectedPhoto {
-                PhotoViewer(albumId: albumId, photos: visiblePhotos, initialPhotoId: photo.id) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                        selectedPhoto = nil
-                    }
-                }
-                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
-                .zIndex(10)
-            }
         }
         .safeAreaInset(edge: .bottom) {
             if isSelecting {
@@ -1238,6 +1205,7 @@ private struct AllPhotosView: View {
         .navigationBarHidden(true)
         .edgeSwipeBack { dismiss() }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .photoViewerCover(selectedPhoto: $selectedPhoto, albumId: albumId, photos: visiblePhotos)
         .task { await store.refreshAlbum(id: albumId) }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
@@ -1327,15 +1295,6 @@ private struct MyPhotosView: View {
                 }
             }
 
-            if let photo = selectedPhoto {
-                PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                        selectedPhoto = nil
-                    }
-                }
-                .transition(.scale(scale: 0.94, anchor: .center).combined(with: .opacity))
-                .zIndex(10)
-            }
         }
         .safeAreaInset(edge: .bottom) {
             if isSelecting {
@@ -1357,6 +1316,7 @@ private struct MyPhotosView: View {
         .navigationBarHidden(true)
         .edgeSwipeBack { dismiss() }
         .photoGridZoom(columnCount: $gridColumnCount, zoomScale: $gridZoomScale)
+        .photoViewerCover(selectedPhoto: $selectedPhoto, albumId: albumId, photos: photos)
         .task { await store.refreshAlbum(id: albumId) }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
@@ -2579,6 +2539,16 @@ private struct PhotoViewer: View {
     }
 }
 
+private extension View {
+    func photoViewerCover(selectedPhoto: Binding<Photo?>, albumId: String, photos: [Photo]) -> some View {
+        fullScreenCover(item: selectedPhoto) { photo in
+            PhotoViewer(albumId: albumId, photos: photos, initialPhotoId: photo.id) {
+                selectedPhoto.wrappedValue = nil
+            }
+        }
+    }
+}
+
 private struct ViewerMenu: View {
     let album: Album?
     let photo: Photo
@@ -3174,6 +3144,7 @@ private struct AccountMenu: View {
             ZStack {
                 if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
                     RemoteImage(url: url, mode: .fill)
+                        .id(store.avatarImageVersion)
                 } else {
                     Circle()
                         .fill(Color.teal.opacity(0.12))
@@ -3332,6 +3303,7 @@ private struct ProfileSheet: View {
                 .aspectRatio(contentMode: .fill)
         } else if let avatarUrl = store.currentUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
             RemoteImage(url: url, mode: .fill)
+                .id(store.avatarImageVersion)
         } else {
             Circle()
                 .fill(Color.teal.opacity(0.12))

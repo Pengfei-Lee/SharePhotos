@@ -27,6 +27,7 @@ final class SharePhotosStore: ObservableObject {
     @Published var isCheckingAuth = false
     @Published private(set) var hasLocalSession = false
     @Published var pendingDeepLink: PendingDeepLink?
+    @Published var avatarImageVersion = 0
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
@@ -225,6 +226,7 @@ final class SharePhotosStore: ObservableObject {
                 await PhotoDiskCache.shared.removeCachedFile(for: newAvatarURL)
             }
             currentUser = response.user
+            avatarImageVersion += 1
             uploader = response.user.nickname
             authWarning = response.warning
             persistHomeSnapshot()

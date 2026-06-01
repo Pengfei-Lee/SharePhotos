@@ -21,7 +21,7 @@ import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 
 import oss2
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/sharephotos-matplotlib")
@@ -791,6 +791,40 @@ def sqlite_init_store():
 
             CREATE INDEX IF NOT EXISTS idx_join_requests_user
                 ON album_join_requests(user_id, status, created_at);
+
+            CREATE TABLE IF NOT EXISTS album_activities (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                actor_user_id TEXT,
+                actor_name TEXT,
+                target_type TEXT,
+                target_id TEXT,
+                message TEXT,
+                created_at INTEGER NOT NULL,
+                data_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_album_activities_album_created
+                ON album_activities(album_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT,
+                album_id TEXT,
+                photo_id TEXT,
+                activity_id TEXT,
+                actor_user_id TEXT,
+                read_at INTEGER,
+                created_at INTEGER NOT NULL,
+                data_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
+                ON notifications(user_id, read_at, created_at DESC);
             """
         )
         auth_columns = {row["name"] for row in conn.execute("PRAGMA table_info(auth_tokens)").fetchall()}
@@ -798,7 +832,7 @@ def sqlite_init_store():
             conn.execute("ALTER TABLE auth_tokens ADD COLUMN session_id TEXT")
         conn.execute(
             "INSERT OR REPLACE INTO store_meta(key, value) VALUES(?, ?)",
-            ("schema_version", "3"),
+            ("schema_version", "4"),
         )
         sqlite_ensure_legacy_album_members(conn)
 
@@ -1124,6 +1158,8 @@ def load_db():
     db = sqlite_dump_db() if sqlite_enabled() else json_load_db()
     db.setdefault("albums", [])
     db.setdefault("users", [])
+    db.setdefault("albumActivities", [])
+    db.setdefault("notifications", [])
     if not sqlite_enabled():
         db.setdefault("authTokens", [])
     if OSS_AUTO_MIGRATE and migrate_local_resources_to_oss(db):
@@ -1280,6 +1316,21 @@ def album_member_user_ids(album_id):
         return [row["user_id"] for row in rows]
 
 
+def album_admin_user_ids(album_id):
+    if not album_id or not sqlite_enabled():
+        return []
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT user_id FROM album_members
+            WHERE album_id = ? AND status = 'active' AND role IN ('owner', 'admin')
+            """,
+            (album_id,),
+        ).fetchall()
+        return [row["user_id"] for row in rows]
+
+
 def add_album_member(album_id, user_id, role="member", approved_by=""):
     if not album_id or not user_id:
         return
@@ -1300,6 +1351,322 @@ def add_album_member(album_id, user_id, role="member", approved_by=""):
                     """,
                     (album_id, user_id, role, now, now, approved_by or user_id),
                 )
+
+
+def actor_display_name(user, fallback="系统"):
+    if not user:
+        return fallback
+    return (user.get("nickname") or user.get("username") or fallback).strip()[:80]
+
+
+def album_display_name(album, fallback="共享相册"):
+    return ((album or {}).get("name") or fallback).strip()[:120]
+
+
+def photo_display_name(photo, fallback="照片"):
+    return ((photo or {}).get("originalName") or (photo or {}).get("storedName") or fallback).strip()[:160]
+
+
+def public_album_activity(activity):
+    if isinstance(activity, sqlite3.Row):
+        data = json.loads(activity["data_json"] or "{}")
+        data.update({
+            "id": activity["id"],
+            "albumId": activity["album_id"],
+            "type": activity["type"],
+            "actorUserId": activity["actor_user_id"] or "",
+            "actorName": activity["actor_name"] or "",
+            "targetType": activity["target_type"] or "",
+            "targetId": activity["target_id"] or "",
+            "message": activity["message"] or "",
+            "createdAt": activity["created_at"],
+        })
+        if not data.get("title"):
+            data["title"] = {
+                "photo.upload": "上传照片",
+                "photo.delete": "删除照片",
+                "join_request.approved": "批准加入申请",
+                "join_request.rejected": "拒绝加入申请",
+            }.get(data.get("type"), "协作动态")
+        return data
+    data = dict(activity or {})
+    if not data.get("title"):
+        data["title"] = {
+            "photo.upload": "上传照片",
+            "photo.delete": "删除照片",
+            "join_request.approved": "批准加入申请",
+            "join_request.rejected": "拒绝加入申请",
+        }.get(data.get("type"), "协作动态")
+    return data
+
+
+def record_album_activity(album_id, activity_type, actor=None, actor_name="", target_type="", target_id="", message="", data=None, db=None):
+    if not album_id or not activity_type:
+        return None
+    now = int(time.time())
+    activity = {
+        "id": uuid.uuid4().hex,
+        "albumId": album_id,
+        "type": activity_type,
+        "actorUserId": (actor or {}).get("id", ""),
+        "actorName": actor_display_name(actor, actor_name or "系统"),
+        "targetType": target_type or "",
+        "targetId": target_id or "",
+        "message": message or "",
+        "createdAt": now,
+        "data": data or {},
+    }
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO album_activities(
+                        id, album_id, type, actor_user_id, actor_name,
+                        target_type, target_id, message, created_at, data_json
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        activity["id"],
+                        album_id,
+                        activity_type,
+                        activity["actorUserId"],
+                        activity["actorName"],
+                        activity["targetType"],
+                        activity["targetId"],
+                        activity["message"],
+                        now,
+                        json.dumps(activity, ensure_ascii=False, separators=(",", ":")),
+                    ),
+                )
+        LOGGER.info(
+            "album_id=%s activity_id=%s type=%s target=%s/%s",
+            album_id,
+            activity["id"],
+            activity_type,
+            activity["targetType"],
+            activity["targetId"],
+            extra={"event": "album.activity"},
+        )
+        return activity
+
+    target_db = db
+    if target_db is None:
+        target_db = load_db()
+    target_db.setdefault("albumActivities", []).append(activity)
+    if db is None:
+        write_db(target_db)
+    LOGGER.info(
+        "album_id=%s activity_id=%s type=%s target=%s/%s",
+        album_id,
+        activity["id"],
+        activity_type,
+        activity["targetType"],
+        activity["targetId"],
+        extra={"event": "album.activity"},
+    )
+    return activity
+
+
+def list_album_activities(album_id, limit=50, before=0):
+    limit = max(1, min(int(limit or 50), 200))
+    if sqlite_enabled():
+        sqlite_init_store()
+        params = [album_id]
+        where = "album_id = ?"
+        if before:
+            where += " AND created_at < ?"
+            params.append(int(before))
+        params.append(limit)
+        with sqlite_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM album_activities
+                WHERE %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """ % where,
+                params,
+            ).fetchall()
+        return [public_album_activity(row) for row in rows]
+    db = load_db()
+    items = [item for item in db.get("albumActivities", []) if item.get("albumId") == album_id]
+    if before:
+        items = [item for item in items if int(item.get("createdAt") or 0) < int(before)]
+    items.sort(key=lambda item: (int(item.get("createdAt") or 0), item.get("id", "")), reverse=True)
+    return items[:limit]
+
+
+def public_notification(notification):
+    if isinstance(notification, sqlite3.Row):
+        data = json.loads(notification["data_json"] or "{}")
+        data.update({
+            "id": notification["id"],
+            "userId": notification["user_id"],
+            "type": notification["type"],
+            "title": notification["title"],
+            "body": notification["body"] or "",
+            "albumId": notification["album_id"] or "",
+            "photoId": notification["photo_id"] or "",
+            "activityId": notification["activity_id"] or "",
+            "actorUserId": notification["actor_user_id"] or "",
+            "readAt": notification["read_at"] or 0,
+            "createdAt": notification["created_at"],
+        })
+        data["isRead"] = bool(data.get("readAt"))
+        return data
+    data = dict(notification or {})
+    data["isRead"] = bool(data.get("readAt"))
+    return data
+
+
+def create_notification(user_id, notification_type, title, body="", album_id="", photo_id="", activity_id="", actor=None, data=None, db=None):
+    if not user_id or not notification_type or not title:
+        return None
+    now = int(time.time())
+    notification = {
+        "id": uuid.uuid4().hex,
+        "userId": user_id,
+        "type": notification_type,
+        "title": title,
+        "body": body or "",
+        "albumId": album_id or "",
+        "photoId": photo_id or "",
+        "activityId": activity_id or "",
+        "actorUserId": (actor or {}).get("id", ""),
+        "readAt": 0,
+        "createdAt": now,
+        "data": data or {},
+    }
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO notifications(
+                        id, user_id, type, title, body, album_id, photo_id,
+                        activity_id, actor_user_id, read_at, created_at, data_json
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                    """,
+                    (
+                        notification["id"],
+                        user_id,
+                        notification_type,
+                        title,
+                        notification["body"],
+                        notification["albumId"],
+                        notification["photoId"],
+                        notification["activityId"],
+                        notification["actorUserId"],
+                        now,
+                        json.dumps(notification, ensure_ascii=False, separators=(",", ":")),
+                    ),
+                )
+        LOGGER.info(
+            "user_id=%s notification_id=%s type=%s album_id=%s photo_id=%s",
+            user_id,
+            notification["id"],
+            notification_type,
+            notification["albumId"],
+            notification["photoId"],
+            extra={"event": "notification.create"},
+        )
+        return notification
+
+    target_db = db
+    if target_db is None:
+        target_db = load_db()
+    target_db.setdefault("notifications", []).append(notification)
+    if db is None:
+        write_db(target_db)
+    LOGGER.info(
+        "user_id=%s notification_id=%s type=%s album_id=%s photo_id=%s",
+        user_id,
+        notification["id"],
+        notification_type,
+        notification["albumId"],
+        notification["photoId"],
+        extra={"event": "notification.create"},
+    )
+    return notification
+
+
+def list_user_notifications(user_id, unread_only=False, limit=50, before=0):
+    limit = max(1, min(int(limit or 50), 200))
+    if sqlite_enabled():
+        sqlite_init_store()
+        params = [user_id]
+        where = "user_id = ?"
+        if unread_only:
+            where += " AND read_at IS NULL"
+        if before:
+            where += " AND created_at < ?"
+            params.append(int(before))
+        params.append(limit)
+        with sqlite_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM notifications
+                WHERE %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """ % where,
+                params,
+            ).fetchall()
+            unread = conn.execute(
+                "SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL",
+                (user_id,),
+            ).fetchone()
+        return [public_notification(row) for row in rows], int(unread["count"] if unread else 0)
+    db = load_db()
+    items = [item for item in db.get("notifications", []) if item.get("userId") == user_id]
+    unread_count = len([item for item in items if not item.get("readAt")])
+    if unread_only:
+        items = [item for item in items if not item.get("readAt")]
+    if before:
+        items = [item for item in items if int(item.get("createdAt") or 0) < int(before)]
+    items.sort(key=lambda item: (int(item.get("createdAt") or 0), item.get("id", "")), reverse=True)
+    return [public_notification(item) for item in items[:limit]], unread_count
+
+
+def mark_user_notifications_read(user_id, notification_ids=None, mark_all=False):
+    now = int(time.time())
+    ids = [str(item) for item in (notification_ids or []) if item]
+    if sqlite_enabled():
+        sqlite_init_store()
+        with sqlite_connect() as conn:
+            with conn:
+                if mark_all:
+                    updated = conn.execute(
+                        "UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL",
+                        (now, user_id),
+                    ).rowcount
+                elif ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    updated = conn.execute(
+                        "UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL AND id IN (%s)" % placeholders,
+                        [now, user_id, *ids],
+                    ).rowcount
+                else:
+                    updated = 0
+        LOGGER.info("user_id=%s updated=%d all=%s", user_id, updated, mark_all, extra={"event": "notification.read"})
+        return updated
+    db = load_db()
+    updated = 0
+    for item in db.get("notifications", []):
+        if item.get("userId") != user_id or item.get("readAt"):
+            continue
+        if mark_all or item.get("id") in ids:
+            item["readAt"] = now
+            updated += 1
+    if updated:
+        write_db(db)
+    LOGGER.info("user_id=%s updated=%d all=%s", user_id, updated, mark_all, extra={"event": "notification.read"})
+    return updated
 
 
 def generate_invite_code():
@@ -2395,6 +2762,38 @@ def ensure_user_album_match(db, album, current_user):
     return True
 
 
+def notify_user_album_match_if_needed(user, album, previous_match, next_match):
+    if not user or not album or not next_match or not next_match.get("matched"):
+        return
+    previous_match = previous_match if isinstance(previous_match, dict) else {}
+    if previous_match.get("matched") and previous_match.get("folderId") == next_match.get("folderId"):
+        return
+    folder_id = next_match.get("folderId") or ""
+    photo_ids = [
+        photo.get("id") for photo in album.get("photos", [])
+        if folder_id and folder_id in photo_folder_ids(photo)
+    ]
+    photo_ids = [item for item in photo_ids if item]
+    album_name = album_display_name(album)
+    title = "匹配到你的照片"
+    body = "在「%s」中找到了 %d 张可能属于你的照片" % (album_name, len(photo_ids))
+    create_notification(
+        user.get("id"),
+        "face.my_photos_matched",
+        title,
+        body,
+        album_id=album.get("id", ""),
+        data={
+            "albumName": album_name,
+            "folderId": folder_id,
+            "folderName": next_match.get("folderName") or "我的照片",
+            "photoIds": photo_ids,
+            "photoCount": len(photo_ids),
+            "distance": next_match.get("distance"),
+        },
+    )
+
+
 def save_avatar_profile(user, source_path):
     readable, cleanup_readable = readable_source_for_path(source_path)
     if not readable:
@@ -3442,6 +3841,7 @@ def process_avatar_job(user_id):
 def complete_avatar_analysis(user_id, result):
     started_at = time.perf_counter()
     now = int(time.time())
+    status = result.get("status")
     with LOCK:
         db = load_db()
         user = find_user_by_id(db, user_id)
@@ -3464,6 +3864,13 @@ def complete_avatar_analysis(user_id, result):
             user["faceProfileError"] = result.get("note") or "头像未识别人脸，暂不能推荐我的照片"
         upsert_user(db, user)
         save_db(db)
+    create_notification(
+        user_id,
+        "face.avatar_%s" % ("ready" if status == "ready" and result.get("embedding") else "failed"),
+        "头像识别%s" % ("完成" if status == "ready" and result.get("embedding") else "失败"),
+        "头像已可用于查找我的照片" if status == "ready" and result.get("embedding") else user.get("faceProfileError", "头像未识别人脸，暂不能推荐我的照片"),
+        data={"status": user.get("faceProfileStatus"), "hasFaceProfile": bool(user.get("hasFaceProfile"))},
+    )
     LOGGER.info(
         "头像识别结果已入库：user_id=%s status=%s has_face=%s 耗时=%sms",
         user_id,
@@ -3479,6 +3886,10 @@ def complete_avatar_analysis(user_id, result):
 def process_album_match_job(album_id, user_id):
     started_at = time.perf_counter()
     LOGGER.info("album_id=%s user_id=%s", album_id, user_id, extra={"event": "worker.match_start"})
+    previous_match = None
+    match = None
+    album = None
+    user = None
     with LOCK:
         db = load_db()
         album = find_album(db, album_id)
@@ -3488,9 +3899,11 @@ def process_album_match_job(album_id, user_id):
             return
         match = compute_user_album_match(album, user)
         matches = user.setdefault("avatarAlbumMatches", {})
+        previous_match = matches.get(album_id)
         matches[album_id] = match
         upsert_user(db, user)
         save_db(db)
+    notify_user_album_match_if_needed(user, album, previous_match, match)
     LOGGER.info(
         "头像与相册关联匹配完成：album_id=%s user_id=%s matched=%s folder_id=%s 耗时=%sms",
         album_id,
@@ -3831,15 +4244,22 @@ class AppHandler(BaseHTTPRequestHandler):
         if error:
             return self.send_error_json(error)
         match = payload.get("match") or payload.get("result") or payload
+        previous_match = None
+        album = None
         with LOCK:
             db = load_db()
+            album = find_album(db, album_id)
             user = find_user_by_id(db, user_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
             if not user:
                 return self.send_error_json("User not found", 404)
             matches = user.setdefault("avatarAlbumMatches", {})
+            previous_match = matches.get(album_id)
             matches[album_id] = match
             upsert_user(db, user)
             save_db(db)
+        notify_user_album_match_if_needed(user, album, previous_match, match)
         LOGGER.info(
             "Worker相册关联结果已保存：album_id=%s user_id=%s matched=%s folder_id=%s 耗时=%sms",
             album_id,
@@ -3885,6 +4305,21 @@ class AppHandler(BaseHTTPRequestHandler):
             if not user:
                 return
             return self.send_json({"user": public_user(user, self.request_origin())})
+        if path == "/api/notifications":
+            current_user = self.require_user()
+            if not current_user:
+                return
+            return self.list_notifications_request(current_user, parsed.query)
+        if path == "/api/messages":
+            current_user = self.require_user()
+            if not current_user:
+                return
+            return self.list_messages_request(current_user, parsed.query)
+        if path == "/api/messages/unread-count":
+            current_user = self.require_user()
+            if not current_user:
+                return
+            return self.unread_message_count_request(current_user)
         if path == "/api/albums":
             current_user = self.require_user()
             if not current_user:
@@ -3928,6 +4363,16 @@ class AppHandler(BaseHTTPRequestHandler):
             if not album:
                 return self.send_error_json("Album not found", 404)
             return self.send_json({"album": public_album(album, current_user)})
+        match = re.match(r"^/api/albums/([^/]+)/activities$", path)
+        if match:
+            if not self.require_album_member(match.group(1)):
+                return
+            return self.list_album_activities_request(match.group(1), parsed.query)
+        match = re.match(r"^/api/albums/([^/]+)/collaboration-records$", path)
+        if match:
+            if not self.require_album_member(match.group(1)):
+                return
+            return self.list_album_collaboration_records_request(match.group(1), parsed.query)
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)/download$", path)
         if match:
             if not self.require_album_member(match.group(1)):
@@ -3987,6 +4432,16 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.update_profile_request(current_user)
         if path == "/api/me/avatar":
             return self.update_avatar_request(current_user)
+        if path == "/api/notifications/read":
+            return self.mark_notifications_read_request(current_user)
+        match = re.match(r"^/api/notifications/([^/]+)/read$", path)
+        if match:
+            return self.mark_notification_read_request(match.group(1), current_user)
+        if path == "/api/messages/mark-read":
+            return self.mark_all_messages_read_request(current_user)
+        match = re.match(r"^/api/messages/([^/]+)/read$", path)
+        if match:
+            return self.mark_message_read_request(match.group(1), current_user)
         if path == "/api/albums":
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
@@ -4358,6 +4813,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         created = []
         queued = []
+        current_user = self.current_user()
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -4419,6 +4875,17 @@ class AppHandler(BaseHTTPRequestHandler):
                     created.append(photo)
                     queued.append(photo_id)
                     existing_ids.add(photo_id)
+                    record_album_activity(
+                        album_id,
+                        "photo.upload",
+                        actor=current_user,
+                        actor_name=uploader,
+                        target_type="photo",
+                        target_id=photo_id,
+                        message="%s 上传了照片 %s" % (actor_display_name(current_user, uploader), photo_display_name(photo)),
+                        data={"photoId": photo_id, "photoName": photo_display_name(photo), "uploader": uploader},
+                        db=db,
+                    )
                 else:
                     created.append(photo)
                     if photo.get("status") in {"queued", "preparing", "processing"}:
@@ -4455,6 +4922,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("No photos uploaded")
 
         created = []
+        current_user = self.current_user()
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -4589,6 +5057,17 @@ class AppHandler(BaseHTTPRequestHandler):
                 album["photos"].append(photo)
                 created.append(photo)
                 queued.append(photo["id"])
+                record_album_activity(
+                    album_id,
+                    "photo.upload",
+                    actor=current_user,
+                    actor_name=uploader,
+                    target_type="photo",
+                    target_id=photo_id,
+                    message="%s 上传了照片 %s" % (actor_display_name(current_user, uploader), photo_display_name(photo)),
+                    data={"photoId": photo_id, "photoName": photo_display_name(photo), "uploader": uploader},
+                    db=db,
+                )
                 LOGGER.info(
                     "album_id=%s photo_id=%s original=%s mime=%s live=%s",
                     album_id,
@@ -4622,6 +5101,81 @@ class AppHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8") or "{}"), ""
         except json.JSONDecodeError:
             return None, "Invalid JSON"
+
+    def list_album_activities_request(self, album_id, query):
+        params = parse_qs(query or "")
+        limit = params.get("limit", ["50"])[0]
+        before = params.get("before", ["0"])[0]
+        try:
+            activities = list_album_activities(album_id, int(limit or 50), int(before or 0))
+        except ValueError:
+            return self.send_error_json("Invalid pagination")
+        return self.send_json({"activities": activities})
+
+    def list_album_collaboration_records_request(self, album_id, query):
+        params = parse_qs(query or "")
+        limit = params.get("limit", ["50"])[0]
+        before = params.get("before", ["0"])[0]
+        try:
+            records = list_album_activities(album_id, int(limit or 50), int(before or 0))
+        except ValueError:
+            return self.send_error_json("Invalid pagination")
+        return self.send_json({"records": records})
+
+    def list_notifications_request(self, current_user, query):
+        params = parse_qs(query or "")
+        unread_value = (params.get("unread", [""])[0] or params.get("status", [""])[0]).lower()
+        unread_only = unread_value in {"1", "true", "yes", "unread"}
+        limit = params.get("limit", ["50"])[0]
+        before = params.get("before", ["0"])[0]
+        try:
+            notifications, unread_count = list_user_notifications(current_user["id"], unread_only, int(limit or 50), int(before or 0))
+        except ValueError:
+            return self.send_error_json("Invalid pagination")
+        return self.send_json({"notifications": notifications, "unreadCount": unread_count})
+
+    def list_messages_request(self, current_user, query):
+        params = parse_qs(query or "")
+        unread_value = (params.get("unread", [""])[0] or params.get("status", [""])[0]).lower()
+        unread_only = unread_value in {"1", "true", "yes", "unread"}
+        limit = params.get("limit", ["50"])[0]
+        before = params.get("before", ["0"])[0]
+        try:
+            messages, unread_count = list_user_notifications(current_user["id"], unread_only, int(limit or 50), int(before or 0))
+        except ValueError:
+            return self.send_error_json("Invalid pagination")
+        return self.send_json({"messages": messages, "unreadCount": unread_count})
+
+    def unread_message_count_request(self, current_user):
+        _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
+        return self.send_json({"unreadCount": unread_count})
+
+    def mark_notifications_read_request(self, current_user):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        notification_ids = payload.get("ids") or payload.get("notificationIds") or []
+        mark_all = bool(payload.get("all") or payload.get("markAll"))
+        if not mark_all and not notification_ids:
+            return self.send_error_json("Missing notification ids")
+        updated = mark_user_notifications_read(current_user["id"], notification_ids, mark_all)
+        _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
+        return self.send_json({"updated": updated, "unreadCount": unread_count})
+
+    def mark_notification_read_request(self, notification_id, current_user):
+        updated = mark_user_notifications_read(current_user["id"], [notification_id], False)
+        _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
+        return self.send_json({"updated": updated, "unreadCount": unread_count})
+
+    def mark_message_read_request(self, message_id, current_user):
+        updated = mark_user_notifications_read(current_user["id"], [message_id], False)
+        _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
+        return self.send_json({"updated": updated, "unreadCount": unread_count})
+
+    def mark_all_messages_read_request(self, current_user):
+        updated = mark_user_notifications_read(current_user["id"], None, True)
+        _, unread_count = list_user_notifications(current_user["id"], False, 1, 0)
+        return self.send_json({"updated": updated, "unreadCount": unread_count})
 
     def get_or_create_album_invite(self, album_id, current_user):
         with LOCK:
@@ -4693,7 +5247,27 @@ class AppHandler(BaseHTTPRequestHandler):
                     """,
                     (request_id, row["album_id"], row["id"], current_user["id"], now),
                 )
+        with LOCK:
+            db = load_db()
+            album = find_album(db, row["album_id"])
+        album_name = album_display_name(album)
+        applicant_name = actor_display_name(current_user, "新成员")
+        notified = 0
+        for admin_user_id in album_admin_user_ids(row["album_id"]):
+            if admin_user_id == current_user["id"]:
+                continue
+            create_notification(
+                admin_user_id,
+                "album.join_request",
+                "新的加入申请",
+                "%s 申请加入「%s」" % (applicant_name, album_name),
+                album_id=row["album_id"],
+                actor=current_user,
+                data={"requestId": request_id, "applicantUserId": current_user["id"], "albumName": album_name},
+            )
+            notified += 1
         LOGGER.info("album_id=%s user_id=%s request_id=%s", row["album_id"], current_user["id"], request_id, extra={"event": "invite.request"})
+        LOGGER.info("album_id=%s request_id=%s admins=%d", row["album_id"], request_id, notified, extra={"event": "notification.join_request"})
         return self.send_json({"status": "pending", "requestId": request_id, "message": "申请已提交，等待管理员批准"}, 201)
 
     def list_join_requests(self, album_id):
@@ -4764,6 +5338,26 @@ class AppHandler(BaseHTTPRequestHandler):
         )
         with LOCK:
             album = find_album(load_db(), album_id)
+        album_name = album_display_name(album)
+        activity = record_album_activity(
+            album_id,
+            "join_request.%s" % next_status,
+            actor=current_user,
+            target_type="join_request",
+            target_id=request_id,
+            message="%s %s了加入申请" % (actor_display_name(current_user), "批准" if action == "approve" else "拒绝"),
+            data={"requestId": request_id, "requestUserId": request["user_id"], "status": next_status, "albumName": album_name},
+        )
+        create_notification(
+            request["user_id"],
+            "album.join_%s" % next_status,
+            "加入申请已%s" % ("通过" if action == "approve" else "拒绝"),
+            "你加入「%s」的申请已%s" % (album_name, "通过" if action == "approve" else "拒绝"),
+            album_id=album_id,
+            activity_id=(activity or {}).get("id", ""),
+            actor=current_user,
+            data={"requestId": request_id, "status": next_status, "albumName": album_name},
+        )
         return self.send_json({"status": next_status, "album": public_album(album, current_user) if album else None})
 
     def claim_worker_job(self):
@@ -5014,14 +5608,25 @@ class AppHandler(BaseHTTPRequestHandler):
         return self.send_json({"album": public_album(album, self.current_user())})
 
     def delete_photo_request(self, album_id, photo_id):
+        current_user = self.current_user()
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
             if not album:
                 return self.send_error_json("Album not found", 404)
-            _, delete_error = remove_photo(album, photo_id)
+            removed_photo, delete_error = remove_photo(album, photo_id)
             if delete_error:
                 return self.send_error_json(delete_error, 404)
+            record_album_activity(
+                album_id,
+                "photo.delete",
+                actor=current_user,
+                target_type="photo",
+                target_id=photo_id,
+                message="%s 删除了照片 %s" % (actor_display_name(current_user), photo_display_name(removed_photo)),
+                data={"photoId": photo_id, "photoName": photo_display_name(removed_photo)},
+                db=db,
+            )
             save_db(db)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.delete_request"})
         return self.send_json({"album": public_album(album, self.current_user())})
@@ -5035,6 +5640,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("Missing photoIds")
         photo_ids = [str(item) for item in photo_ids if item]
 
+        current_user = self.current_user()
         with LOCK:
             db = load_db()
             album = find_album(db, album_id)
@@ -5043,11 +5649,21 @@ class AppHandler(BaseHTTPRequestHandler):
             deleted = 0
             missing = []
             for photo_id in photo_ids:
-                _, delete_error = remove_photo(album, photo_id)
+                removed_photo, delete_error = remove_photo(album, photo_id)
                 if delete_error:
                     missing.append(photo_id)
                 else:
                     deleted += 1
+                    record_album_activity(
+                        album_id,
+                        "photo.delete",
+                        actor=current_user,
+                        target_type="photo",
+                        target_id=photo_id,
+                        message="%s 删除了照片 %s" % (actor_display_name(current_user), photo_display_name(removed_photo)),
+                        data={"photoId": photo_id, "photoName": photo_display_name(removed_photo)},
+                        db=db,
+                    )
             save_db(db)
         LOGGER.info("album_id=%s deleted=%d missing=%d", album_id, deleted, len(missing), extra={"event": "photo.delete_selected"})
         return self.send_json({"album": public_album(album, self.current_user()), "deleted": deleted, "missing": missing})
@@ -5072,8 +5688,17 @@ class AppHandler(BaseHTTPRequestHandler):
             if not album:
                 return self.send_error_json("Album not found", 404)
             db["albums"] = [item for item in db["albums"] if item["id"] != album_id]
+            if not sqlite_enabled():
+                db["albumActivities"] = [item for item in db.get("albumActivities", []) if item.get("albumId") != album_id]
+                db["notifications"] = [item for item in db.get("notifications", []) if item.get("albumId") != album_id]
             remove_album_files(album_id, album)
             save_db(db)
+        if sqlite_enabled():
+            sqlite_init_store()
+            with sqlite_connect() as conn:
+                with conn:
+                    conn.execute("DELETE FROM album_activities WHERE album_id = ?", (album_id,))
+                    conn.execute("DELETE FROM notifications WHERE album_id = ?", (album_id,))
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.delete"})
         return self.send_json({"deletedAlbumId": album_id})
 
