@@ -254,6 +254,7 @@ struct UploadResponse: Codable {
     let album: Album
     let queued: Int
     let ignored: Int
+    let photoIds: [String]?
 }
 
 struct DeletedAlbumResponse: Codable {
