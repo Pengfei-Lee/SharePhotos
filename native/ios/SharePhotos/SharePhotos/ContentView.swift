@@ -819,6 +819,7 @@ private struct AlbumDetailView: View {
     @State private var shareInvite: AlbumInvite?
     @State private var approvalPresented = false
     @State private var collaborationPresented = false
+    @State private var membersPresented = false
     @State private var cancelUploadConfirmationPresented = false
     @State private var activeTab: AlbumDetailTab
 
@@ -872,15 +873,19 @@ private struct AlbumDetailView: View {
                                     } label: {
                                         Label("重命名小相册", systemImage: "pencil")
                                     }
-                                    Button {
-                                        Task { await store.downloadFolder(album: album, folder: folder) }
-                                    } label: {
-                                        Label("下载照片包", systemImage: "square.and.arrow.down")
+                                    if album.effectivePermissions.download {
+                                        Button {
+                                            Task { await store.downloadFolder(album: album, folder: folder) }
+                                        } label: {
+                                            Label("下载照片包", systemImage: "square.and.arrow.down")
+                                        }
                                     }
-                                    Button(role: .destructive) {
-                                        deletingFolder = folder
-                                    } label: {
-                                        Label("删除小相册", systemImage: "trash")
+                                    if album.effectivePermissions.delete {
+                                        Button(role: .destructive) {
+                                            deletingFolder = folder
+                                        } label: {
+                                            Label("删除小相册", systemImage: "trash")
+                                        }
                                     }
                                 }
                                 .overlay(alignment: .topTrailing) {
@@ -903,28 +908,44 @@ private struct AlbumDetailView: View {
                         }
                     }
 
-                    AlbumUploadButton(
-                        album: album,
-                        onStartUpload: {
-                            store.selectAlbum(id: album.id)
-                            uploadPresented = true
-                        },
-                        onCancelUpload: {
-                            cancelUploadConfirmationPresented = true
-                        }
-                    )
+                    if album.effectivePermissions.upload {
+                        AlbumUploadButton(
+                            album: album,
+                            onStartUpload: {
+                                store.selectAlbum(id: album.id)
+                                uploadPresented = true
+                            },
+                            onCancelUpload: {
+                                cancelUploadConfirmationPresented = true
+                            }
+                        )
+                    }
 
                     HStack(spacing: 12) {
-                        Button {
-                            Task {
-                                do {
-                                    shareInvite = try await store.fetchInvite(album: album)
-                                } catch {
-                                    store.statusText = error.sharePhotosNetworkMessage
+                        if album.effectivePermissions.share {
+                            Button {
+                                Task {
+                                    do {
+                                        shareInvite = try await store.fetchInvite(album: album)
+                                    } catch {
+                                        store.statusText = error.sharePhotosNetworkMessage
+                                    }
                                 }
+                            } label: {
+                                Label("分享相册", systemImage: "square.and.arrow.up")
+                                    .font(.headline.weight(.bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 16)
+                                    .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
                             }
+                            .buttonStyle(.plain)
+                        }
+
+                        Button {
+                            membersPresented = true
                         } label: {
-                            Label("分享相册", systemImage: "square.and.arrow.up")
+                            Label("协作用户", systemImage: "person.2")
                                 .font(.headline.weight(.bold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
@@ -1002,6 +1023,11 @@ private struct AlbumDetailView: View {
         .sheet(isPresented: $collaborationPresented) {
             if let album {
                 CollaborationRecordsSheet(album: album)
+            }
+        }
+        .sheet(isPresented: $membersPresented) {
+            if let album {
+                AlbumMembersSheet(album: album)
             }
         }
         .sheet(item: $renamingFolder) { folder in
@@ -1208,6 +1234,9 @@ private struct FolderDetailView: View {
             if isSelecting {
                 SelectionBottomBar(
                     count: selectedPhotoIds.count,
+                    canDelete: album.map { currentAlbum in
+                        !selectedPhotos.isEmpty && selectedPhotos.allSatisfy { store.canDelete(album: currentAlbum, photo: $0) }
+                    } ?? false,
                     onDelete: {
                         guard let album else { return }
                         Task {
@@ -1237,11 +1266,13 @@ private struct FolderDetailView: View {
         }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
-                Button("保存到系统相册") {
-                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
-                }
-                Button("下载照片包") {
-                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                if album.effectivePermissions.download {
+                    Button("保存到系统相册") {
+                        Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                    }
+                    Button("下载照片包") {
+                        Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                    }
                 }
                 ForEach(album.folders.filter { $0.id != activeFolderId }) { folder in
                     Button("移动到 \(folder.name)") {
@@ -1252,11 +1283,13 @@ private struct FolderDetailView: View {
                         }
                     }
                 }
-                Button("删除所选", role: .destructive) {
-                    Task {
-                        await store.deletePhotos(album: album, photos: selectedPhotos)
-                        selectedPhotoIds.removeAll()
-                        isSelecting = false
+                if !selectedPhotos.isEmpty && selectedPhotos.allSatisfy({ store.canDelete(album: album, photo: $0) }) {
+                    Button("删除所选", role: .destructive) {
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
                     }
                 }
             }
@@ -1338,6 +1371,9 @@ private struct AllPhotosView: View {
             if isSelecting {
                 SelectionBottomBar(
                     count: selectedPhotoIds.count,
+                    canDelete: album.map { currentAlbum in
+                        !selectedPhotos.isEmpty && selectedPhotos.allSatisfy { store.canDelete(album: currentAlbum, photo: $0) }
+                    } ?? false,
                     onDelete: {
                         guard let album else { return }
                         Task {
@@ -1358,17 +1394,21 @@ private struct AllPhotosView: View {
         .task { await store.refreshAlbum(id: albumId) }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
-                Button("保存到系统相册") {
-                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                if album.effectivePermissions.download {
+                    Button("保存到系统相册") {
+                        Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                    }
+                    Button("下载照片包") {
+                        Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                    }
                 }
-                Button("下载照片包") {
-                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
-                }
-                Button("删除所选", role: .destructive) {
-                    Task {
-                        await store.deletePhotos(album: album, photos: selectedPhotos)
-                        selectedPhotoIds.removeAll()
-                        isSelecting = false
+                if !selectedPhotos.isEmpty && selectedPhotos.allSatisfy({ store.canDelete(album: album, photo: $0) }) {
+                    Button("删除所选", role: .destructive) {
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
                     }
                 }
             }
@@ -1449,6 +1489,9 @@ private struct MyPhotosView: View {
             if isSelecting {
                 SelectionBottomBar(
                     count: selectedPhotoIds.count,
+                    canDelete: album.map { currentAlbum in
+                        !selectedPhotos.isEmpty && selectedPhotos.allSatisfy { store.canDelete(album: currentAlbum, photo: $0) }
+                    } ?? false,
                     onDelete: {
                         guard let album else { return }
                         Task {
@@ -1469,17 +1512,21 @@ private struct MyPhotosView: View {
         .task { await store.refreshAlbum(id: albumId) }
         .confirmationDialog("操作所选照片", isPresented: $selectionActionsPresented, titleVisibility: .visible) {
             if let album {
-                Button("保存到系统相册") {
-                    Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                if album.effectivePermissions.download {
+                    Button("保存到系统相册") {
+                        Task { await store.savePhotosToSystemPhotos(selectedPhotos) }
+                    }
+                    Button("下载照片包") {
+                        Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
+                    }
                 }
-                Button("下载照片包") {
-                    Task { await store.downloadSelectedPackage(album: album, photos: selectedPhotos) }
-                }
-                Button("删除所选", role: .destructive) {
-                    Task {
-                        await store.deletePhotos(album: album, photos: selectedPhotos)
-                        selectedPhotoIds.removeAll()
-                        isSelecting = false
+                if !selectedPhotos.isEmpty && selectedPhotos.allSatisfy({ store.canDelete(album: album, photo: $0) }) {
+                    Button("删除所选", role: .destructive) {
+                        Task {
+                            await store.deletePhotos(album: album, photos: selectedPhotos)
+                            selectedPhotoIds.removeAll()
+                            isSelecting = false
+                        }
                     }
                 }
             }
@@ -1496,6 +1543,7 @@ private struct CreateAlbumSheet: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var permissions = AlbumPermissions.allAllowed
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1510,9 +1558,10 @@ private struct CreateAlbumSheet: View {
                     .font(.title3.weight(.semibold))
                     .padding(16)
                     .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                PermissionToggleGroup(title: "相册级权限", permissions: $permissions)
                 Button {
                     Task {
-                        if await store.createAlbum(name: name) != nil {
+                        if await store.createAlbum(name: name, permissions: permissions) != nil {
                             dismiss()
                         }
                     }
@@ -1536,6 +1585,41 @@ private struct CreateAlbumSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct PermissionToggleGroup: View {
+    let title: String
+    @Binding var permissions: AlbumPermissions
+    var isEditable = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline.weight(.bold))
+            PermissionToggleRow(title: "允许上传", systemImage: "photo.badge.plus", isOn: $permissions.upload, isEditable: isEditable)
+            PermissionToggleRow(title: "允许删除", systemImage: "trash", isOn: $permissions.delete, isEditable: isEditable)
+            PermissionToggleRow(title: "允许下载", systemImage: "square.and.arrow.down", isOn: $permissions.download, isEditable: isEditable)
+            PermissionToggleRow(title: "允许分享", systemImage: "square.and.arrow.up", isOn: $permissions.share, isEditable: isEditable)
+        }
+        .padding(16)
+        .background(.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.teal.opacity(0.14)))
+    }
+}
+
+private struct PermissionToggleRow: View {
+    let title: String
+    let systemImage: String
+    @Binding var isOn: Bool
+    var isEditable = true
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+        }
+        .disabled(!isEditable)
     }
 }
 
@@ -1784,6 +1868,14 @@ private struct ShareAlbumSheet: View {
     let invite: AlbumInvite
     let onReset: (AlbumInvite) -> Void
     @State private var activityPresented = false
+    @State private var invitePermissions: AlbumPermissions
+
+    init(album: Album?, invite: AlbumInvite, onReset: @escaping (AlbumInvite) -> Void) {
+        self.album = album
+        self.invite = invite
+        self.onReset = onReset
+        _invitePermissions = State(initialValue: invite.permissions ?? .allAllowed)
+    }
 
     private var shareURL: URL? { URL(string: invite.shareUrl) }
     private var qrImage: UIImage? { QRCodeRenderer.image(from: invite.shareUrl) }
@@ -1811,6 +1903,29 @@ private struct ShareAlbumSheet: View {
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
 
+                    PermissionToggleGroup(title: "通过此链接加入的默认权限", permissions: $invitePermissions)
+
+                    Button {
+                        Task {
+                            guard let album else { return }
+                            do {
+                                let updated = try await store.fetchInvite(album: album, permissions: invitePermissions)
+                                invitePermissions = updated.permissions ?? invitePermissions
+                                onReset(updated)
+                                store.statusText = "已保存链接默认权限"
+                            } catch {
+                                store.statusText = error.sharePhotosNetworkMessage
+                            }
+                        }
+                    } label: {
+                        Label("保存链接权限", systemImage: "checkmark.circle")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.teal.opacity(0.18)))
+                    }
+
                     if let shareURL {
                         Button {
                             activityPresented = true
@@ -1836,7 +1951,8 @@ private struct ShareAlbumSheet: View {
                         Task {
                             guard let album else { return }
                             do {
-                                let reset = try await store.resetInvite(album: album)
+                                let reset = try await store.resetInvite(album: album, permissions: invitePermissions)
+                                invitePermissions = reset.permissions ?? invitePermissions
                                 onReset(reset)
                             } catch {
                                 store.statusText = error.sharePhotosNetworkMessage
@@ -1965,6 +2081,150 @@ private struct CollaborationRecordsSheet: View {
                 records = await store.loadAlbumCollaborationRecords(album: album)
                 isLoading = false
             }
+        }
+    }
+}
+
+private struct AlbumMembersSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let album: Album
+    @State private var members: [AlbumMember] = []
+    @State private var isLoading = true
+    @State private var albumPermissions: AlbumPermissions
+
+    init(album: Album) {
+        self.album = album
+        _albumPermissions = State(initialValue: album.permissions ?? .allAllowed)
+    }
+
+    private var currentAlbum: Album {
+        store.album(id: album.id) ?? album
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    PermissionToggleGroup(
+                        title: "相册级权限",
+                        permissions: $albumPermissions,
+                        isEditable: currentAlbum.canEditMembers
+                    )
+                    if currentAlbum.canEditMembers {
+                        Button {
+                            Task {
+                                if let updated = await store.updateAlbumPermissions(album: currentAlbum, permissions: albumPermissions) {
+                                    albumPermissions = updated.permissions ?? albumPermissions
+                                    members = await store.loadAlbumMembers(album: updated)
+                                }
+                            }
+                        } label: {
+                            Label("保存相册级权限", systemImage: "checkmark.circle")
+                                .font(.headline.weight(.bold))
+                        }
+                    }
+                }
+                Section("协作用户") {
+                    if isLoading {
+                        ProgressView("正在加载协作用户")
+                    } else if members.isEmpty {
+                        Text("暂无协作用户")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(members) { member in
+                            AlbumMemberRow(album: currentAlbum, member: member) {
+                                members = await store.loadAlbumMembers(album: currentAlbum)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("协作用户")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .task {
+                albumPermissions = currentAlbum.permissions ?? .allAllowed
+                members = await store.loadAlbumMembers(album: currentAlbum)
+                isLoading = false
+            }
+        }
+    }
+}
+
+private struct AlbumMemberRow: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let member: AlbumMember
+    let onChanged: () async -> Void
+    @State private var permissions: AlbumPermissions
+    @State private var removeConfirmationPresented = false
+
+    init(album: Album, member: AlbumMember, onChanged: @escaping () async -> Void) {
+        self.album = album
+        self.member = member
+        self.onChanged = onChanged
+        _permissions = State(initialValue: member.permissions)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                RemoteImage(url: store.imageURL(member.user.avatarUrl), mode: .fill)
+                    .frame(width: 42, height: 42)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(member.user.nickname)
+                        .font(.headline.weight(.bold))
+                    Text("@\(member.user.username) · \(roleText)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            PermissionToggleGroup(
+                title: member.isOwner ? "创建人权限" : "用户级权限",
+                permissions: $permissions,
+                isEditable: album.canEditMembers && !member.isOwner
+            )
+            if album.canEditMembers && !member.isOwner {
+                HStack {
+                    Button {
+                        Task {
+                            _ = await store.updateMemberPermissions(album: album, member: member, permissions: permissions)
+                            await onChanged()
+                        }
+                    } label: {
+                        Label("保存权限", systemImage: "checkmark")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("移除", role: .destructive) {
+                        removeConfirmationPresented = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .confirmationDialog("移除这个协作用户？", isPresented: $removeConfirmationPresented, titleVisibility: .visible) {
+            Button("移除 \(member.user.nickname)", role: .destructive) {
+                Task {
+                    _ = await store.removeMember(album: album, member: member)
+                    await onChanged()
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    private var roleText: String {
+        switch member.role {
+        case "owner": return "创建人"
+        case "admin": return "管理员"
+        default: return "成员"
         }
     }
 }
@@ -2690,6 +2950,7 @@ private struct SelectionCheckmark: View {
 
 private struct SelectionBottomBar: View {
     let count: Int
+    let canDelete: Bool
     let onDelete: () -> Void
     let onMore: () -> Void
 
@@ -2699,7 +2960,7 @@ private struct SelectionBottomBar: View {
                 Image(systemName: "trash")
                     .font(.title3.weight(.bold))
             }
-            .disabled(count == 0)
+            .disabled(count == 0 || !canDelete)
 
             Spacer()
 
@@ -2812,7 +3073,7 @@ private struct PhotoViewer: View {
 
             PhotoViewerFilmstrip(photos: photos, selectedPhotoId: $selectedPhotoId)
 
-            if let currentPhoto {
+            if let currentPhoto, album?.effectivePermissions.download == true {
                 SavePhotoButton(photo: currentPhoto)
                     .padding(.horizontal, 20)
                     .padding(.top, 10)
@@ -2844,19 +3105,23 @@ private struct ViewerMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                Task { await store.saveToSystemPhotos(photo) }
-            } label: {
-                Label(photo.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
+            if album?.effectivePermissions.download == true {
+                Button {
+                    Task { await store.saveToSystemPhotos(photo) }
+                } label: {
+                    Label(photo.isLivePhoto ? "保存 Live Photo" : "保存照片", systemImage: "square.and.arrow.down")
+                }
             }
             if let album {
-                Button(role: .destructive) {
-                    Task {
-                        await store.deletePhoto(album: album, photo: photo)
-                        onClose()
+                if store.canDelete(album: album, photo: photo) {
+                    Button(role: .destructive) {
+                        Task {
+                            await store.deletePhoto(album: album, photo: photo)
+                            onClose()
+                        }
+                    } label: {
+                        Label("删除", systemImage: "trash")
                     }
-                } label: {
-                    Label("删除", systemImage: "trash")
                 }
             }
         } label: {
@@ -2954,10 +3219,12 @@ private struct PhotoMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                Task { await store.saveToSystemPhotos(photo) }
-            } label: {
-                Label(photo.isLivePhoto ? "下载 Live Photo" : "下载照片", systemImage: "square.and.arrow.down")
+            if album.effectivePermissions.download {
+                Button {
+                    Task { await store.saveToSystemPhotos(photo) }
+                } label: {
+                    Label(photo.isLivePhoto ? "下载 Live Photo" : "下载照片", systemImage: "square.and.arrow.down")
+                }
             }
             Menu("移动到") {
                 ForEach(album.folders.filter { !$0.photoIds.orEmpty.contains(photo.id) }) { folder in
@@ -2966,10 +3233,12 @@ private struct PhotoMenu: View {
                     }
                 }
             }
-            Button(role: .destructive) {
-                Task { await store.deletePhoto(album: album, photo: photo) }
-            } label: {
-                Label("删除", systemImage: "trash")
+            if store.canDelete(album: album, photo: photo) {
+                Button(role: .destructive) {
+                    Task { await store.deletePhoto(album: album, photo: photo) }
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -3299,15 +3568,19 @@ private struct FolderMenu: View {
             } label: {
                 Label("重命名小相册", systemImage: "pencil")
             }
-            Button {
-                Task { await store.downloadFolder(album: album, folder: folder) }
-            } label: {
-                Label("下载照片包", systemImage: "square.and.arrow.down")
+            if album.effectivePermissions.download {
+                Button {
+                    Task { await store.downloadFolder(album: album, folder: folder) }
+                } label: {
+                    Label("下载照片包", systemImage: "square.and.arrow.down")
+                }
             }
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("删除小相册", systemImage: "trash")
+            if album.effectivePermissions.delete {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("删除小相册", systemImage: "trash")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")

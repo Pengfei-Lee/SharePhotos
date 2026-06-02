@@ -309,7 +309,7 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
-    func createAlbum(name: String) async -> Album? {
+    func createAlbum(name: String, permissions: AlbumPermissions = .allAllowed) async -> Album? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             statusText = "先给这次出游起个名字"
@@ -319,7 +319,7 @@ final class SharePhotosStore: ObservableObject {
         showOperation(title: "创建相册", message: "正在开一个朋友照片局", progress: nil)
         defer { isBusy = false }
         do {
-            let album = try await api.createAlbum(name: trimmed)
+            let album = try await api.createAlbum(name: trimmed, permissions: permissions)
             albums.insert(album, at: 0)
             selectedAlbumId = album.id
             persistHomeSnapshot()
@@ -355,12 +355,74 @@ final class SharePhotosStore: ObservableObject {
         pendingDeepLink = nil
     }
 
-    func fetchInvite(album: Album) async throws -> AlbumInvite {
-        try await api.albumInvite(albumId: album.id)
+    func fetchInvite(album: Album, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        try await api.albumInvite(albumId: album.id, permissions: permissions)
     }
 
-    func resetInvite(album: Album) async throws -> AlbumInvite {
-        try await api.resetAlbumInvite(albumId: album.id)
+    func resetInvite(album: Album, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        try await api.resetAlbumInvite(albumId: album.id, permissions: permissions)
+    }
+
+    func loadAlbumMembers(album: Album) async -> [AlbumMember] {
+        do {
+            return try await api.albumMembers(albumId: album.id)
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func updateAlbumPermissions(album: Album, permissions: AlbumPermissions) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.updateAlbumPermissions(albumId: album.id, permissions: permissions)
+            upsert(updated)
+            statusText = "已更新相册权限"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func updateMemberPermissions(album: Album, member: AlbumMember, permissions: AlbumPermissions) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.updateAlbumMemberPermissions(albumId: album.id, userId: member.userId, permissions: permissions)
+            upsert(updated)
+            statusText = "已更新 \(member.user.nickname) 的权限"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func removeMember(album: Album, member: AlbumMember) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.removeAlbumMember(albumId: album.id, userId: member.userId)
+            upsert(updated)
+            statusText = "已移除 \(member.user.nickname)"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func canDelete(album: Album, photo: Photo) -> Bool {
+        if album.canEditMembers || album.effectivePermissions.delete {
+            return true
+        }
+        guard let currentUser else { return false }
+        if photo.uploaderUserId == currentUser.id {
+            return true
+        }
+        return photo.displayUploader == currentUser.nickname
     }
 
     func submitJoinRequest(code: String) async -> Bool {

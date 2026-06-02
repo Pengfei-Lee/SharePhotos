@@ -1,5 +1,45 @@
 import Foundation
 
+struct AlbumPermissions: Codable, Hashable {
+    var upload: Bool
+    var delete: Bool
+    var download: Bool
+    var share: Bool
+
+    static let allAllowed = AlbumPermissions(upload: true, delete: true, download: true, share: true)
+
+    init(upload: Bool = true, delete: Bool = true, download: Bool = true, share: Bool = true) {
+        self.upload = upload
+        self.delete = delete
+        self.download = download
+        self.share = share
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case upload
+        case delete
+        case download
+        case share
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        upload = try container.decodeIfPresent(Bool.self, forKey: .upload) ?? true
+        delete = try container.decodeIfPresent(Bool.self, forKey: .delete) ?? true
+        download = try container.decodeIfPresent(Bool.self, forKey: .download) ?? true
+        share = try container.decodeIfPresent(Bool.self, forKey: .share) ?? true
+    }
+
+    var dictionary: [String: Bool] {
+        [
+            "upload": upload,
+            "delete": delete,
+            "download": download,
+            "share": share
+        ]
+    }
+}
+
 struct Album: Identifiable, Codable, Hashable {
     let id: String
     let name: String
@@ -12,10 +52,15 @@ struct Album: Identifiable, Codable, Hashable {
     let currentUserRole: String?
     let canManage: Bool?
     let canAdmin: Bool?
+    let isOwner: Bool?
+    let permissions: AlbumPermissions?
+    let currentUserPermissions: AlbumPermissions?
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
     var isAdmin: Bool { canAdmin == true || ["owner", "admin"].contains(currentUserRole ?? "") }
+    var effectivePermissions: AlbumPermissions { currentUserPermissions ?? .allAllowed }
+    var canEditMembers: Bool { isOwner == true || currentUserRole == "owner" }
 }
 
 struct User: Identifiable, Codable, Hashable {
@@ -44,6 +89,7 @@ struct Photo: Identifiable, Codable, Hashable {
     let status: String?
     let originalName: String
     let uploader: String?
+    let uploaderUserId: String?
     let createdAt: Int?
     let folderId: String?
     let folderIds: [String]?
@@ -132,6 +178,7 @@ struct AlbumInvite: Identifiable, Codable, Hashable {
     let albumName: String?
     let photoCount: Int?
     let createdAt: Int?
+    let permissions: AlbumPermissions?
 }
 
 struct InviteResponse: Codable {
@@ -148,6 +195,26 @@ struct JoinRequestResponse: Codable {
 
 struct AlbumInviteResponse: Codable {
     let invite: AlbumInvite
+}
+
+struct AlbumMember: Identifiable, Codable, Hashable {
+    let albumId: String
+    let userId: String
+    let role: String
+    let status: String
+    let createdAt: Int?
+    let joinedAt: Int?
+    let approvedBy: String?
+    let permissions: AlbumPermissions
+    let effectivePermissions: AlbumPermissions
+    let user: User
+
+    var id: String { userId }
+    var isOwner: Bool { role == "owner" }
+}
+
+struct AlbumMembersResponse: Codable {
+    let members: [AlbumMember]
 }
 
 struct JoinRequest: Identifiable, Codable, Hashable {

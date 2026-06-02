@@ -115,8 +115,11 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(AlbumResponse.self, from: data).album
     }
 
-    func createAlbum(name: String) async throws -> Album {
-        let data = try await jsonRequest(path: "/api/albums", method: "POST", body: ["name": name])
+    func createAlbum(name: String, permissions: AlbumPermissions = .allAllowed) async throws -> Album {
+        let data = try await jsonRequest(path: "/api/albums", method: "POST", body: [
+            "name": name,
+            "permissions": permissions.dictionary
+        ])
         return try JSONDecoder().decode(AlbumResponse.self, from: data).album
     }
 
@@ -129,14 +132,46 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(AlbumResponse.self, from: data).album
     }
 
-    func albumInvite(albumId: String) async throws -> AlbumInvite {
-        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite", method: "POST", body: [:])
+    func updateAlbumPermissions(albumId: String, permissions: AlbumPermissions) async throws -> Album {
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/permissions", method: "POST", body: [
+            "permissions": permissions.dictionary
+        ])
+        return try JSONDecoder().decode(AlbumResponse.self, from: data).album
+    }
+
+    func albumInvite(albumId: String, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        var body: [String: Any] = [:]
+        if let permissions {
+            body["permissions"] = permissions.dictionary
+        }
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite", method: "POST", body: body)
         return try JSONDecoder().decode(AlbumInviteResponse.self, from: data).invite
     }
 
-    func resetAlbumInvite(albumId: String) async throws -> AlbumInvite {
-        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite/reset", method: "POST", body: [:])
+    func resetAlbumInvite(albumId: String, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        var body: [String: Any] = [:]
+        if let permissions {
+            body["permissions"] = permissions.dictionary
+        }
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/invite/reset", method: "POST", body: body)
         return try JSONDecoder().decode(AlbumInviteResponse.self, from: data).invite
+    }
+
+    func albumMembers(albumId: String) async throws -> [AlbumMember] {
+        let data = try await request(path: "/api/albums/\(albumId)/members")
+        return try JSONDecoder().decode(AlbumMembersResponse.self, from: data).members
+    }
+
+    func updateAlbumMemberPermissions(albumId: String, userId: String, permissions: AlbumPermissions) async throws -> Album {
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/members/\(userId)/permissions", method: "POST", body: [
+            "permissions": permissions.dictionary
+        ])
+        return try JSONDecoder().decode(AlbumResponse.self, from: data).album
+    }
+
+    func removeAlbumMember(albumId: String, userId: String) async throws -> Album {
+        let data = try await request(path: "/api/albums/\(albumId)/members/\(userId)", method: "DELETE")
+        return try JSONDecoder().decode(AlbumResponse.self, from: data).album
     }
 
     func invite(code: String) async throws -> InviteResponse {
