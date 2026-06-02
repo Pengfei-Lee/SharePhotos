@@ -41,6 +41,9 @@ final class SharePhotosStore: ObservableObject {
     private let tokenStore = KeychainTokenStore()
     private let homeSnapshotCache = HomeSnapshotCache()
     private var activeUploadTask: Task<Void, Never>?
+    private var uploadCancelRequested = false
+    private var uploadBaselinePhotoIds: Set<String> = []
+    private var uploadCreatedPhotoIds: Set<String> = []
 
     init(api: SharePhotosAPI) {
         self.api = api.withBaseURL(api.baseURL)
@@ -306,7 +309,7 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
-    func createAlbum(name: String) async -> Album? {
+    func createAlbum(name: String, permissions: AlbumPermissions = .allAllowed) async -> Album? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             statusText = "先给这次出游起个名字"
@@ -316,7 +319,7 @@ final class SharePhotosStore: ObservableObject {
         showOperation(title: "创建相册", message: "正在开一个朋友照片局", progress: nil)
         defer { isBusy = false }
         do {
-            let album = try await api.createAlbum(name: trimmed)
+            let album = try await api.createAlbum(name: trimmed, permissions: permissions)
             albums.insert(album, at: 0)
             selectedAlbumId = album.id
             persistHomeSnapshot()
@@ -352,12 +355,74 @@ final class SharePhotosStore: ObservableObject {
         pendingDeepLink = nil
     }
 
-    func fetchInvite(album: Album) async throws -> AlbumInvite {
-        try await api.albumInvite(albumId: album.id)
+    func fetchInvite(album: Album, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        try await api.albumInvite(albumId: album.id, permissions: permissions)
     }
 
-    func resetInvite(album: Album) async throws -> AlbumInvite {
-        try await api.resetAlbumInvite(albumId: album.id)
+    func resetInvite(album: Album, permissions: AlbumPermissions? = nil) async throws -> AlbumInvite {
+        try await api.resetAlbumInvite(albumId: album.id, permissions: permissions)
+    }
+
+    func loadAlbumMembers(album: Album) async -> [AlbumMember] {
+        do {
+            return try await api.albumMembers(albumId: album.id)
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func updateAlbumPermissions(album: Album, permissions: AlbumPermissions) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.updateAlbumPermissions(albumId: album.id, permissions: permissions)
+            upsert(updated)
+            statusText = "已更新相册权限"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func updateMemberPermissions(album: Album, member: AlbumMember, permissions: AlbumPermissions) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.updateAlbumMemberPermissions(albumId: album.id, userId: member.userId, permissions: permissions)
+            upsert(updated)
+            statusText = "已更新 \(member.user.nickname) 的权限"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func removeMember(album: Album, member: AlbumMember) async -> Album? {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let updated = try await api.removeAlbumMember(albumId: album.id, userId: member.userId)
+            upsert(updated)
+            statusText = "已移除 \(member.user.nickname)"
+            return updated
+        } catch {
+            statusText = handleError(error)
+            return nil
+        }
+    }
+
+    func canDelete(album: Album, photo: Photo) -> Bool {
+        if album.canEditMembers || album.effectivePermissions.delete {
+            return true
+        }
+        guard let currentUser else { return false }
+        if photo.uploaderUserId == currentUser.id {
+            return true
+        }
+        return photo.displayUploader == currentUser.nickname
     }
 
     func submitJoinRequest(code: String) async -> Bool {
@@ -610,9 +675,18 @@ final class SharePhotosStore: ObservableObject {
 
     func cancelCurrentUpload() {
         guard isUploading else { return }
+        let albumId = uploadAlbumId
+        let baseline = uploadBaselinePhotoIds
+        let knownCreated = uploadCreatedPhotoIds
+        uploadCancelRequested = true
         statusText = "正在取消上传..."
-        uploadProgressText = "正在取消上传，已完成的照片会保留"
+        uploadProgressText = "正在取消上传，并清理本次已上传的照片"
         activeUploadTask?.cancel()
+        if let albumId {
+            Task { [weak self] in
+                await self?.cleanupCanceledUpload(albumId: albumId, baselinePhotoIds: baseline, knownCreatedPhotoIds: knownCreated)
+            }
+        }
     }
 
     func uploadAssets(_ assets: [PHAsset]) async {
@@ -635,11 +709,16 @@ final class SharePhotosStore: ObservableObject {
         isBusy = true
         isUploading = true
         uploadAlbumId = album.id
+        uploadCancelRequested = false
+        uploadBaselinePhotoIds = Set(album.photos.map(\.id))
+        uploadCreatedPhotoIds = []
         defer {
             isBusy = false
             isUploading = false
             uploadAlbumId = nil
             activeUploadTask = nil
+            uploadBaselinePhotoIds = []
+            uploadCreatedPhotoIds = []
         }
         let backgroundTask = UploadBackgroundTask(name: "PicMe.upload.\(album.id)") { [weak self] in
             Task { @MainActor in
@@ -658,52 +737,90 @@ final class SharePhotosStore: ObservableObject {
             uploadLivePhotoCount = 0
             uploadProgressFraction = 0
             uploadProgressText = "已选择 \(assets.count) 张，正在读取原始文件"
-            var files: [UploadFile] = []
             var liveCount = 0
+            var uploadedCount = 0
+            var ignoredCount = 0
             for (index, asset) in assets.enumerated() {
                 try Task.checkCancellation()
                 uploadPreparedCount = index
-                uploadProgressFraction = Double(index) / Double(max(assets.count, 1)) * 0.45
+                uploadProgressFraction = Double(index) / Double(max(assets.count, 1))
                 uploadProgressText = "正在准备第 \(index + 1)/\(assets.count) 张，Live Photo 会保留动态效果"
                 let pair = try await exporter.export(asset: asset)
                 try Task.checkCancellation()
-                files.append(contentsOf: pair.files)
                 if pair.video != nil {
                     liveCount += 1
                 }
                 uploadPreparedCount = index + 1
                 uploadLivePhotoCount = liveCount
-                uploadProgressFraction = Double(index + 1) / Double(max(assets.count, 1)) * 0.45
+
+                statusText = "正在上传第 \(index + 1)/\(assets.count) 张照片..."
+                uploadProgressText = "正在上传第 \(index + 1)/\(assets.count) 张，点击进度条可取消"
+                uploadProgressFraction = (Double(index) + 0.55) / Double(max(assets.count, 1))
+                try Task.checkCancellation()
+                let response = try await api.upload(albumId: album.id, uploader: uploader, files: pair.files)
+                try Task.checkCancellation()
+                let createdIds = response.photoIds ?? response.album.photos.map(\.id).filter { !uploadBaselinePhotoIds.contains($0) }
+                uploadCreatedPhotoIds.formUnion(createdIds)
+                uploadedCount += response.queued
+                ignoredCount += response.ignored
+                uploadUploadedCount = uploadedCount
+                uploadIgnoredCount = ignoredCount
+                upsert(response.album)
+                persistHomeSnapshot()
+                uploadProgressFraction = Double(index + 1) / Double(max(assets.count, 1))
+                uploadProgressText = "已上传 \(index + 1)/\(assets.count) 张，继续整理下一张"
             }
 
-            statusText = "正在上传 \(assets.count) 张照片..."
-            uploadProgressText = "正在上传 \(assets.count) 张朋友视角"
-            uploadProgressFraction = 0.65
-            try Task.checkCancellation()
-            let response = try await api.upload(albumId: album.id, uploader: uploader, files: files)
-            try Task.checkCancellation()
-            upsert(response.album)
             statusText = "上传完成：\(assets.count) 张，其中 \(liveCount) 张 Live Photo，后台开始整理"
-            uploadUploadedCount = response.queued
-            uploadIgnoredCount = response.ignored
-            uploadProgressText = "已收到 \(response.queued) 张，忽略 \(response.ignored) 个非照片文件"
+            uploadProgressText = "已收到 \(uploadedCount) 张，忽略 \(ignoredCount) 个非照片文件"
             uploadProgressFraction = 1
             await refreshAlbum(id: album.id)
             try Task.checkCancellation()
             await pollRecognition(albumId: album.id, tokenSnapshot: authToken)
         } catch is CancellationError {
             statusText = "上传已取消"
-            uploadProgressText = "上传已取消，可以重新选择照片上传"
+            uploadProgressText = uploadCancelRequested ? "上传已取消，正在清理本次已上传的照片" : "上传已取消，可以重新选择照片上传"
             uploadProgressFraction = nil
         } catch let error as URLError where error.code == .cancelled {
             statusText = "上传已取消"
-            uploadProgressText = "上传已取消，可以重新选择照片上传"
+            uploadProgressText = uploadCancelRequested ? "上传已取消，正在清理本次已上传的照片" : "上传已取消，可以重新选择照片上传"
             uploadProgressFraction = nil
         } catch {
             let message = handleError(error)
             statusText = message
             uploadProgressText = message
             uploadProgressFraction = nil
+        }
+    }
+
+    private func cleanupCanceledUpload(albumId: String, baselinePhotoIds: Set<String>, knownCreatedPhotoIds: Set<String>) async {
+        var pendingIds = knownCreatedPhotoIds
+        for attempt in 0..<4 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 900_000_000)
+            }
+            do {
+                let latest = try await api.fetchAlbum(id: albumId)
+                let newIds = latest.photos.map(\.id).filter { !baselinePhotoIds.contains($0) }
+                pendingIds.formUnion(newIds)
+                guard !pendingIds.isEmpty else { continue }
+                showOperation(title: "取消上传", message: "正在清理本次上传的 \(pendingIds.count) 张照片", progress: nil)
+                let updated = try await api.deleteSelectedPhotos(albumId: albumId, photoIds: Array(pendingIds))
+                upsert(updated)
+                pendingIds.removeAll()
+                statusText = "已取消上传，并清理本次照片"
+                uploadProgressText = "本次选择的照片已取消上传"
+                hideOperation(after: 0.9)
+            } catch is CancellationError {
+                continue
+            } catch {
+                statusText = "上传已取消，但清理失败：\(handleError(error))"
+                showOperation(title: "清理失败", message: "请稍后手动删除本次上传的照片", progress: nil)
+            }
+        }
+        if pendingIds.isEmpty {
+            statusText = "已取消上传"
+            uploadProgressText = "本次选择的照片已取消上传"
         }
     }
 
