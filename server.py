@@ -2427,6 +2427,17 @@ def detect_primary_face_box(image):
     return float(x), float(y), float(x + w), float(y + h)
 
 
+def clamp_square_crop_bounds(width, height, cx, cy, side):
+    side = int(round(max(1.0, min(float(side), float(width), float(height)))))
+    max_left = max(0, width - side)
+    max_top = max(0, height - side)
+    left = int(round(cx - side / 2))
+    top = int(round(cy - side / 2))
+    left = min(max(left, 0), max_left)
+    top = min(max(top, 0), max_top)
+    return left, top, left + side, top + side
+
+
 def crop_square_around_box(image, box, scale=2.15, y_offset_ratio=-0.08):
     height, width = image.shape[:2]
     x1, y1, x2, y2 = box
@@ -2436,35 +2447,10 @@ def crop_square_around_box(image, box, scale=2.15, y_offset_ratio=-0.08):
     cx = (x1 + x2) / 2
     cy = (y1 + y2) / 2 + face_h * y_offset_ratio
 
-    left = int(round(cx - side / 2))
-    top = int(round(cy - side / 2))
-    right = int(round(left + side))
-    bottom = int(round(top + side))
+    left, top, right, bottom = clamp_square_crop_bounds(width, height, cx, cy, side)
     if right <= left or bottom <= top:
         return None
-
-    source_left = max(0, left)
-    source_top = max(0, top)
-    source_right = min(width, right)
-    source_bottom = min(height, bottom)
-    if source_right <= source_left or source_bottom <= source_top:
-        return None
-
-    pad_left = source_left - left
-    pad_top = source_top - top
-    pad_right = right - source_right
-    pad_bottom = bottom - source_bottom
-    crop = image[source_top:source_bottom, source_left:source_right]
-    if any(value > 0 for value in (pad_left, pad_top, pad_right, pad_bottom)):
-        crop = cv2.copyMakeBorder(
-            crop,
-            pad_top,
-            pad_bottom,
-            pad_left,
-            pad_right,
-            cv2.BORDER_REPLICATE,
-        )
-    return crop
+    return image[top:bottom, left:right]
 
 
 def encode_face_thumbnail(image, box):
@@ -5202,7 +5188,7 @@ class AppHandler(BaseHTTPRequestHandler):
         for photo_id in queued:
             enqueue_photo_job(album_id, photo_id)
         LOGGER.info("album_id=%s created=%d queued=%d", album_id, len(created), len(queued), extra={"event": "direct_upload.complete"})
-        return self.send_json({"photos": response_created, "album": response_album, "queued": len(queued), "ignored": 0}, 202)
+        return self.send_json({"photos": response_created, "album": response_album, "queued": len(queued), "ignored": 0, "photoIds": queued}, 202)
 
     def upload_photos(self, album_id):
         LOGGER.info("album_id=%s", album_id, extra={"event": "upload.start"})
@@ -5394,7 +5380,7 @@ class AppHandler(BaseHTTPRequestHandler):
             ignored,
             extra={"event": "upload.complete"},
         )
-        return self.send_json({"photos": response_created, "album": response_album, "queued": len(created), "ignored": ignored}, 202)
+        return self.send_json({"photos": response_created, "album": response_album, "queued": len(created), "ignored": ignored, "photoIds": queued}, 202)
 
     def read_json_body(self):
         length = int(self.headers.get("Content-Length", "0"))
