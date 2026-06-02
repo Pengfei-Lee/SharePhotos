@@ -2427,6 +2427,57 @@ def detect_primary_face_box(image):
     return float(x), float(y), float(x + w), float(y + h)
 
 
+def crop_square_around_box(image, box, scale=2.15, y_offset_ratio=-0.08):
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = box
+    face_w = max(1.0, x2 - x1)
+    face_h = max(1.0, y2 - y1)
+    side = max(face_w, face_h) * scale
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2 + face_h * y_offset_ratio
+
+    left = int(round(cx - side / 2))
+    top = int(round(cy - side / 2))
+    right = int(round(left + side))
+    bottom = int(round(top + side))
+    if right <= left or bottom <= top:
+        return None
+
+    source_left = max(0, left)
+    source_top = max(0, top)
+    source_right = min(width, right)
+    source_bottom = min(height, bottom)
+    if source_right <= source_left or source_bottom <= source_top:
+        return None
+
+    pad_left = source_left - left
+    pad_top = source_top - top
+    pad_right = right - source_right
+    pad_bottom = bottom - source_bottom
+    crop = image[source_top:source_bottom, source_left:source_right]
+    if any(value > 0 for value in (pad_left, pad_top, pad_right, pad_bottom)):
+        crop = cv2.copyMakeBorder(
+            crop,
+            pad_top,
+            pad_bottom,
+            pad_left,
+            pad_right,
+            cv2.BORDER_REPLICATE,
+        )
+    return crop
+
+
+def encode_face_thumbnail(image, box):
+    crop = crop_square_around_box(image, box)
+    if crop is None:
+        return None
+    crop = cv2.resize(crop, (420, 420), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+    if not ok:
+        return None
+    return encoded
+
+
 def generate_face_thumbnail(album_id, stored_name):
     source = readable_image_path(album_id, stored_name)
     if not source or not source.exists():
@@ -2444,24 +2495,8 @@ def generate_face_thumbnail(album_id, stored_name):
     if not box:
         return None
 
-    height, width = image.shape[:2]
-    x1, y1, x2, y2 = box
-    face_w = max(1.0, x2 - x1)
-    face_h = max(1.0, y2 - y1)
-    size = max(face_w, face_h) * 2.15
-    cx = (x1 + x2) / 2
-    cy = (y1 + y2) / 2 - face_h * 0.08
-    left = int(max(0, round(cx - size / 2)))
-    top = int(max(0, round(cy - size / 2)))
-    right = int(min(width, round(cx + size / 2)))
-    bottom = int(min(height, round(cy + size / 2)))
-    if right <= left or bottom <= top:
-        return None
-
-    crop = image[top:bottom, left:right]
-    crop = cv2.resize(crop, (420, 420), interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
-    if not ok:
+    encoded = encode_face_thumbnail(image, box)
+    if encoded is None:
         return None
     target.write_bytes(encoded.tobytes())
     return target
@@ -2622,22 +2657,8 @@ def generate_face_thumbnail_for_photo(album_id, photo, source, user_id=None):
         box = detect_primary_face_box(image)
         if not box:
             return None
-        height, width = image.shape[:2]
-        x1, y1, x2, y2 = box
-        face_w = max(1.0, x2 - x1)
-        face_h = max(1.0, y2 - y1)
-        size = max(face_w, face_h) * 2.15
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2 - face_h * 0.08
-        left = int(max(0, round(cx - size / 2)))
-        top = int(max(0, round(cy - size / 2)))
-        right = int(min(width, round(cx + size / 2)))
-        bottom = int(min(height, round(cy + size / 2)))
-        if right <= left or bottom <= top:
-            return None
-        crop = cv2.resize(image[top:bottom, left:right], (420, 420), interpolation=cv2.INTER_AREA)
-        ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
-        if not ok:
+        encoded = encode_face_thumbnail(image, box)
+        if encoded is None:
             return None
         target.write_bytes(encoded.tobytes())
         key = OSS_SERVICE.generateObjectKey("faces", album_id=album_id, photo_id=photo["id"], user_id=user_id or album_id)
@@ -2994,11 +3015,29 @@ def stored_user_album_match(album, current_user):
     return match
 
 
+def album_match_photo_ids(album, folder_id):
+    if not folder_id:
+        return []
+    return [
+        photo.get("id") for photo in album.get("photos", [])
+        if photo.get("id") and folder_id in photo_folder_ids(photo)
+    ]
+
+
+def enrich_album_match_photo_state(album, match):
+    if not isinstance(match, dict) or not match.get("matched"):
+        return match
+    photo_ids = album_match_photo_ids(album, match.get("folderId") or "")
+    match["photoIds"] = photo_ids
+    match["photoCount"] = len(photo_ids)
+    return match
+
+
 def resolve_user_album_match(album, current_user, allow_compute=True):
     stored = stored_user_album_match(album, current_user)
     if stored or not allow_compute:
         return stored
-    return compute_user_album_match(album, current_user)
+    return enrich_album_match_photo_state(album, compute_user_album_match(album, current_user))
 
 
 def ensure_user_album_match(db, album, current_user):
@@ -3023,17 +3062,17 @@ def notify_user_album_match_if_needed(user, album, previous_match, next_match):
     if not user or not album or not next_match or not next_match.get("matched"):
         return
     previous_match = previous_match if isinstance(previous_match, dict) else {}
-    if previous_match.get("matched") and previous_match.get("folderId") == next_match.get("folderId"):
-        return
     folder_id = next_match.get("folderId") or ""
-    photo_ids = [
-        photo.get("id") for photo in album.get("photos", [])
-        if folder_id and folder_id in photo_folder_ids(photo)
-    ]
-    photo_ids = [item for item in photo_ids if item]
+    photo_ids = album_match_photo_ids(album, folder_id)
+    previous_photo_ids = set(previous_match.get("photoIds") or [])
+    new_photo_ids = [item for item in photo_ids if item not in previous_photo_ids]
+    if previous_match.get("matched") and previous_match.get("folderId") == folder_id and not new_photo_ids:
+        return
     album_name = album_display_name(album)
-    title = "匹配到你的照片"
-    body = "在「%s」中找到了 %d 张可能属于你的照片" % (album_name, len(photo_ids))
+    is_same_folder = previous_match.get("matched") and previous_match.get("folderId") == folder_id
+    title = "有新的你的照片" if is_same_folder else "匹配到你的照片"
+    count = len(new_photo_ids) if is_same_folder else len(photo_ids)
+    body = "在「%s」中新增 %d 张可能属于你的照片" % (album_name, count) if is_same_folder else "在「%s」中找到了 %d 张可能属于你的照片" % (album_name, len(photo_ids))
     create_notification(
         user.get("id"),
         "face.my_photos_matched",
@@ -3045,6 +3084,7 @@ def notify_user_album_match_if_needed(user, album, previous_match, next_match):
             "folderId": folder_id,
             "folderName": next_match.get("folderName") or "我的照片",
             "photoIds": photo_ids,
+            "newPhotoIds": new_photo_ids if is_same_folder else photo_ids,
             "photoCount": len(photo_ids),
             "distance": next_match.get("distance"),
         },
@@ -4511,6 +4551,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json("Album not found", 404)
             if not user:
                 return self.send_error_json("User not found", 404)
+            match = enrich_album_match_photo_state(album, match)
             matches = user.setdefault("avatarAlbumMatches", {})
             previous_match = matches.get(album_id)
             matches[album_id] = match
