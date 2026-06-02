@@ -2716,17 +2716,13 @@ def folder_cover_url(album_id, folder, photo):
     if not photo:
         return ""
     item = photo_public_urls(album_id, photo)
-    if folder_uses_scene_cover(folder):
-        return item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or ""
-    return item.get("faceUrl") or item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or ""
+    return item.get("coverUrl") or item.get("cardUrl") or item.get("imageUrl") or item.get("faceUrl") or ""
 
 
 def folder_cover_object_key(folder, photo):
     if not photo or not oss_enabled():
         return ""
-    if folder_uses_scene_cover(folder):
-        return thumb_object_key(photo) or preview_object_key(photo) or original_object_key(photo)
-    return face_object_key(photo) or thumb_object_key(photo) or preview_object_key(photo) or original_object_key(photo)
+    return thumb_object_key(photo) or preview_object_key(photo) or original_object_key(photo) or face_object_key(photo)
 
 
 def sync_folder_covers(album):
