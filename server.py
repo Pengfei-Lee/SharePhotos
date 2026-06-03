@@ -1608,6 +1608,30 @@ def public_permission_request(row, origin=""):
     }
 
 
+def album_owner_user(album, origin=""):
+    if not album:
+        return None
+    owner_id = album.get("ownerUserId") or album.get("createdByUserId") or ""
+    owner_username = normalize_username(album.get("ownerUsername") or album.get("createdByUsername") or "")
+    with LOCK:
+        db = load_db()
+        user = find_user_by_id(db, owner_id) if owner_id else None
+        if not user and owner_username:
+            user = find_user_by_username(db, owner_username)
+    if user:
+        return public_user(user, origin)
+    if owner_id or owner_username:
+        return {
+            "id": owner_id,
+            "username": owner_username,
+            "nickname": album.get("ownerNickname") or owner_username or owner_id,
+            "avatarUrl": "",
+            "hasFaceProfile": False,
+            "faceProfileStatus": "missing",
+        }
+    return None
+
+
 def actor_display_name(user, fallback="系统"):
     if not user:
         return fallback
@@ -1645,6 +1669,7 @@ def public_album_activity(activity):
                 "permission_request.created": "申请权限",
                 "permission_request.approved": "批准权限申请",
                 "permission_request.rejected": "拒绝权限申请",
+                "permission_request.cancelled": "撤销权限申请",
                 "album.member_left": "退出相册",
             }.get(data.get("type"), "协作动态")
         return data
@@ -1658,6 +1683,7 @@ def public_album_activity(activity):
             "permission_request.created": "申请权限",
             "permission_request.approved": "批准权限申请",
             "permission_request.rejected": "拒绝权限申请",
+            "permission_request.cancelled": "撤销权限申请",
             "album.member_left": "退出相册",
         }.get(data.get("type"), "协作动态")
     return data
@@ -3030,6 +3056,7 @@ def public_album(album, current_user=None):
     visible["permissions"] = album_permissions
     visible["currentUserPermissions"] = current_permissions
     visible["currentUserMemberPermissions"] = member_permissions
+    visible["ownerUser"] = album_owner_user(album)
     visible["folders"] = []
     for folder in album.get("folders", []):
         if folder.get("id") == "pending":
@@ -4987,10 +5014,10 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.list_join_requests(match.group(1))
         match = re.match(r"^/api/albums/([^/]+)/permission-requests$", path)
         if match:
-            owner = self.require_album_owner(match.group(1))
-            if not owner:
+            member = self.require_album_member(match.group(1))
+            if not member:
                 return
-            return self.list_permission_requests(match.group(1))
+            return self.list_permission_requests(match.group(1), member)
         return self.send_error_json("Not found", 404)
 
     def do_POST(self):
@@ -5196,6 +5223,12 @@ class AppHandler(BaseHTTPRequestHandler):
             if not owner:
                 return
             return self.remove_album_member_request(match.group(1), match.group(2), owner)
+        match = re.match(r"^/api/albums/([^/]+)/permission-requests/([^/]+)$", path)
+        if match:
+            user = self.require_album_member(match.group(1))
+            if not user:
+                return
+            return self.cancel_permission_request(match.group(1), match.group(2), user)
         match = re.match(r"^/api/albums/([^/]+)/folders/([^/]+)$", path)
         if match:
             if not self.require_album_member(match.group(1)):
@@ -6118,38 +6151,41 @@ class AppHandler(BaseHTTPRequestHandler):
         current_permissions = member_public_permissions(member_row)
         now = int(time.time())
         request_id = uuid.uuid4().hex
+        existing_request = None
         with sqlite_connect() as conn:
             existing = conn.execute(
                 """
-                SELECT id FROM album_permission_requests
-                WHERE album_id = ? AND user_id = ? AND status = 'pending'
+                SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
+                       r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
+                       u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                FROM album_permission_requests r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.album_id = ? AND r.user_id = ? AND r.status = 'pending'
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (album_id, current_user["id"]),
             ).fetchone()
+            if existing:
+                existing_request = public_permission_request(existing, self.request_origin())
+        if existing_request:
+            return self.send_json({
+                "status": "pending",
+                "requestId": existing_request.get("id"),
+                "request": existing_request,
+                "message": "已有待审批权限申请，请等待创建者处理",
+            }, 200)
+        with sqlite_connect() as conn:
             with conn:
-                if existing:
-                    request_id = existing["id"]
-                    conn.execute(
-                        """
-                        UPDATE album_permission_requests
-                        SET requested_permissions_json = ?, current_permissions_json = ?, created_at = ?,
-                            reviewed_by = NULL, reviewed_at = NULL
-                        WHERE id = ?
-                        """,
-                        (permissions_json(requested), permissions_json(current_permissions), now, request_id),
+                conn.execute(
+                    """
+                    INSERT INTO album_permission_requests(
+                        id, album_id, user_id, status, requested_permissions_json,
+                        current_permissions_json, created_at, reviewed_by, reviewed_at
                     )
-                else:
-                    conn.execute(
-                        """
-                        INSERT INTO album_permission_requests(
-                            id, album_id, user_id, status, requested_permissions_json,
-                            current_permissions_json, created_at, reviewed_by, reviewed_at
-                        )
-                        VALUES(?, ?, ?, 'pending', ?, ?, ?, NULL, NULL)
-                        """,
-                        (request_id, album_id, current_user["id"], permissions_json(requested), permissions_json(current_permissions), now),
-                    )
+                    VALUES(?, ?, ?, 'pending', ?, ?, ?, NULL, NULL)
+                    """,
+                    (request_id, album_id, current_user["id"], permissions_json(requested), permissions_json(current_permissions), now),
+                )
         album_name = album_display_name(album)
         applicant_name = actor_display_name(current_user, "协作用户")
         requested_label = permission_labels(requested)
@@ -6182,23 +6218,93 @@ class AppHandler(BaseHTTPRequestHandler):
         LOGGER.info("album_id=%s user_id=%s request_id=%s", album_id, current_user["id"], request_id, extra={"event": "permission.request"})
         return self.send_json({"status": "pending", "requestId": request_id, "message": "权限申请已提交，等待创建者审批"}, 201)
 
-    def list_permission_requests(self, album_id):
+    def list_permission_requests(self, album_id, current_user):
         if not sqlite_enabled():
             return self.send_json({"requests": []})
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+        is_owner = is_album_owner(album, current_user.get("id"))
         with sqlite_connect() as conn:
-            rows = conn.execute(
+            if is_owner:
+                rows = conn.execute(
+                    """
+                    SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
+                           r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
+                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                    FROM album_permission_requests r
+                    JOIN users u ON u.id = r.user_id
+                    WHERE r.album_id = ? AND r.status = 'pending'
+                    ORDER BY r.created_at DESC
+                    """,
+                    (album_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
+                           r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
+                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                    FROM album_permission_requests r
+                    JOIN users u ON u.id = r.user_id
+                    WHERE r.album_id = ? AND r.user_id = ?
+                    ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+                    LIMIT 10
+                    """,
+                    (album_id, current_user.get("id")),
+                ).fetchall()
+        return self.send_json({"requests": [public_permission_request(row, self.request_origin()) for row in rows]})
+
+    def cancel_permission_request(self, album_id, request_id, current_user):
+        if not sqlite_enabled():
+            return self.send_error_json("权限申请需要 SQLite 存储", 409)
+        with LOCK:
+            album = find_album(load_db(), album_id)
+        if not album:
+            return self.send_error_json("Album not found", 404)
+        with sqlite_connect() as conn:
+            request = conn.execute(
                 """
-                SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
-                       r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
-                       u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                SELECT r.*, u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
                 FROM album_permission_requests r
                 JOIN users u ON u.id = r.user_id
-                WHERE r.album_id = ?
-                ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+                WHERE r.id = ? AND r.album_id = ?
                 """,
-                (album_id,),
-            ).fetchall()
-        return self.send_json({"requests": [public_permission_request(row, self.request_origin()) for row in rows]})
+                (request_id, album_id),
+            ).fetchone()
+            if not request:
+                return self.send_error_json("申请不存在", 404)
+            if request["user_id"] != current_user.get("id"):
+                return self.send_error_json("只能撤销自己的权限申请", 403)
+            if request["status"] != "pending":
+                return self.send_error_json("这个申请已经处理过，不能撤销", 409)
+            now = int(time.time())
+            with conn:
+                conn.execute(
+                    "UPDATE album_permission_requests SET status = 'cancelled', reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+                    (current_user["id"], now, request_id),
+                )
+        try:
+            requested = normalize_album_permissions(json.loads(request["requested_permissions_json"] or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            requested = normalize_album_permissions()
+        record_album_activity(
+            album_id,
+            "permission_request.cancelled",
+            actor=current_user,
+            target_type="permission_request",
+            target_id=request_id,
+            message="%s 撤销了%s权限申请" % (actor_display_name(current_user, "协作用户"), permission_labels(requested)),
+            data={
+                "requestId": request_id,
+                "requestUserId": current_user["id"],
+                "status": "cancelled",
+                "albumName": album_display_name(album),
+                "requestedPermissions": requested,
+            },
+        )
+        return self.send_json({"status": "cancelled", "requestId": request_id, "message": "权限申请已撤销"})
 
     def review_permission_request(self, album_id, request_id, action, current_user):
         if not sqlite_enabled():

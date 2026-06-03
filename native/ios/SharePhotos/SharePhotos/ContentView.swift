@@ -1712,34 +1712,77 @@ private struct PermissionRequestSheet: View {
     @Environment(\.dismiss) private var dismiss
     let draft: PermissionRequestDraft
     @State private var permissions: AlbumPermissions
+    @State private var requests: [AlbumPermissionRequest] = []
+    @State private var isLoading = true
 
     init(draft: PermissionRequestDraft) {
         self.draft = draft
         _permissions = State(initialValue: draft.permissions)
     }
 
+    private var pendingRequest: AlbumPermissionRequest? {
+        requests.first { $0.status == "pending" }
+    }
+
+    private var latestRequest: AlbumPermissionRequest? {
+        requests.first
+    }
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 18) {
-                PermissionToggleGroup(title: "申请开通的权限", permissions: $permissions)
-                Button {
-                    Task {
-                        if await store.submitPermissionRequest(album: draft.album, permissions: permissions) {
-                            dismiss()
+            ScrollView {
+                VStack(spacing: 18) {
+                    AlbumOwnerHeader(album: draft.album)
+
+                    if isLoading {
+                        ProgressView("正在加载申请进度")
+                            .font(.subheadline.weight(.semibold))
+                            .tint(.teal)
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    } else if let pendingRequest {
+                        PermissionRequestProgressCard(request: pendingRequest)
+                        Button(role: .destructive) {
+                            Task {
+                                if await store.cancelPermissionRequest(album: draft.album, request: pendingRequest) {
+                                    requests = await store.loadMyPermissionRequests(album: draft.album)
+                                    permissions = draft.album.memberPermissions
+                                }
+                            }
+                        } label: {
+                            Label("撤销申请", systemImage: "xmark.circle.fill")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
                         }
+                        .buttonStyle(.bordered)
+                        .disabled(store.isBusy)
+                    } else {
+                        if let latestRequest {
+                            PermissionRequestResultBanner(request: latestRequest)
+                        }
+                        PermissionToggleGroup(title: "申请开通的权限", permissions: $permissions)
+                        Button {
+                            Task {
+                                if await store.submitPermissionRequest(album: draft.album, permissions: permissions) {
+                                    dismiss()
+                                } else {
+                                    requests = await store.loadMyPermissionRequests(album: draft.album)
+                                }
+                            }
+                        } label: {
+                            Label("提交申请", systemImage: "paperplane.fill")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(primaryGradient, in: Capsule())
+                                .foregroundColor(.white)
+                        }
+                        .disabled(store.isBusy)
                     }
-                } label: {
-                    Label("提交申请", systemImage: "paperplane.fill")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(primaryGradient, in: Capsule())
-                        .foregroundColor(.white)
+                    Spacer(minLength: 12)
                 }
-                .disabled(store.isBusy)
-                Spacer()
+                .padding(22)
             }
-            .padding(22)
             .background(AppBackground())
             .navigationTitle("申请权限")
             .toolbar {
@@ -1747,7 +1790,115 @@ private struct PermissionRequestSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
+            .task(id: draft.id) {
+                isLoading = true
+                requests = await store.loadMyPermissionRequests(album: draft.album)
+                isLoading = false
+            }
         }
+    }
+}
+
+private struct AlbumOwnerHeader: View {
+    let album: Album
+
+    var body: some View {
+        HStack(spacing: 14) {
+            OwnerAvatar(album: album, size: 54)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("向创建者申请")
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(.secondaryText)
+                Text(album.ownerDisplayName)
+                    .font(.title3.weight(.black))
+                    .foregroundColor(.primaryText)
+                if !album.ownerUsernameText.isEmpty, album.ownerUsernameText != album.ownerDisplayName {
+                    Text(album.ownerUsernameText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondaryText)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.14)))
+    }
+}
+
+private struct OwnerAvatar: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    let album: Album
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let avatarUrl = album.ownerUser?.avatarUrl, let url = store.imageURL(avatarUrl) {
+                RemoteImage(url: url, mode: .fill)
+            } else {
+                Circle()
+                    .fill(.teal.opacity(0.14))
+                    .overlay(Image(systemName: "person.fill").foregroundColor(.teal))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+    }
+}
+
+private struct PermissionRequestProgressCard: View {
+    let request: AlbumPermissionRequest
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("待创建者审批", systemImage: "clock.fill")
+                .font(.headline.weight(.black))
+                .foregroundColor(.teal)
+            Text("申请权限：\(permissionSummary(request.requestedPermissions))")
+                .font(.subheadline.weight(.bold))
+                .foregroundColor(.primaryText)
+            Text("提交时间：\(formatDate(request.createdAt))")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondaryText)
+            Text("这次申请还在审批中，暂时不能重复提交新的申请。")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.14)))
+    }
+}
+
+private struct PermissionRequestResultBanner: View {
+    let request: AlbumPermissionRequest
+
+    private var title: String {
+        switch request.status {
+        case "approved": return "上次申请已通过"
+        case "rejected": return "上次申请已拒绝"
+        case "cancelled": return "上次申请已撤销"
+        default: return "上次申请"
+        }
+    }
+
+    private var icon: String {
+        switch request.status {
+        case "approved": return "checkmark.circle.fill"
+        case "rejected": return "xmark.circle.fill"
+        case "cancelled": return "arrow.uturn.backward.circle.fill"
+        default: return "info.circle.fill"
+        }
+    }
+
+    var body: some View {
+        Label("\(title)：\(permissionSummary(request.requestedPermissions))", systemImage: icon)
+            .font(.caption.weight(.bold))
+            .foregroundColor(request.status == "approved" ? .teal : .secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -4223,7 +4374,9 @@ private struct OperationHUD: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if let progress = store.operationProgress {
+            if store.operationTitle == "需要授权", let album = store.permissionDeniedAlbum {
+                OwnerAvatar(album: album, size: 42)
+            } else if let progress = store.operationProgress {
                 ZStack {
                     Circle()
                         .stroke(.teal.opacity(0.18), lineWidth: 5)
@@ -4251,6 +4404,11 @@ private struct OperationHUD: View {
                     .foregroundColor(.secondaryText)
                     .lineLimit(2)
                 if store.operationTitle == "需要授权" {
+                    if let album = store.permissionDeniedAlbum {
+                        Text("创建者：\(album.ownerDisplayName)")
+                            .font(.caption.weight(.bold))
+                            .foregroundColor(.primaryText)
+                    }
                     Text("点按申请权限")
                         .font(.caption.weight(.black))
                         .foregroundColor(.teal)
