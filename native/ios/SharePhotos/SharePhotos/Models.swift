@@ -55,6 +55,7 @@ struct Album: Identifiable, Codable, Hashable {
     let isOwner: Bool?
     let permissions: AlbumPermissions?
     let currentUserPermissions: AlbumPermissions?
+    let currentUserMemberPermissions: AlbumPermissions?
     let ownerUserId: String?
     let ownerUsername: String?
 
@@ -62,6 +63,7 @@ struct Album: Identifiable, Codable, Hashable {
     var folderCount: Int { folders.count }
     var isAdmin: Bool { canAdmin == true || ["owner", "admin"].contains(currentUserRole ?? "") }
     var effectivePermissions: AlbumPermissions { currentUserPermissions ?? .allAllowed }
+    var memberPermissions: AlbumPermissions { currentUserMemberPermissions ?? effectivePermissions }
     var canEditMembers: Bool { isOwner == true || currentUserRole == "owner" }
     var ownerContactText: String {
         let username = (ownerUsername ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -246,6 +248,35 @@ struct JoinRequestsResponse: Codable {
 struct ReviewJoinRequestResponse: Codable {
     let status: String
     let album: Album?
+}
+
+struct AlbumPermissionRequest: Identifiable, Codable, Hashable {
+    let id: String
+    let albumId: String
+    let userId: String
+    let status: String
+    let createdAt: Int?
+    let reviewedAt: Int?
+    let requestedPermissions: AlbumPermissions
+    let currentPermissions: AlbumPermissions
+    let user: User
+}
+
+struct AlbumPermissionRequestsResponse: Codable {
+    let requests: [AlbumPermissionRequest]
+}
+
+struct PermissionRequestResponse: Codable {
+    let status: String
+    let requestId: String?
+    let message: String?
+    let album: Album?
+}
+
+struct PermissionRequestDraft: Identifiable, Hashable {
+    let id = UUID()
+    let album: Album
+    var permissions: AlbumPermissions
 }
 
 struct AlbumCollaborationRecord: Identifiable, Codable, Hashable {

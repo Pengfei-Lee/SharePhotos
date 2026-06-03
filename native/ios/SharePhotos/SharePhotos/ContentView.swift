@@ -534,6 +534,9 @@ struct ContentView: View {
         .sheet(item: $store.shareableFile) { file in
             ActivityView(items: [file.url])
         }
+        .sheet(item: $store.permissionRequestDraft) { draft in
+            PermissionRequestSheet(draft: draft)
+        }
         .preferredColorScheme(.light)
         .tint(.teal)
     }
@@ -634,7 +637,7 @@ private struct HomeView: View {
                                     Button(role: .destructive) {
                                         deletingAlbum = album
                                     } label: {
-                                        Label("删除相册", systemImage: "trash")
+                                        Label(album.canEditMembers ? "删除相册" : "退出相册", systemImage: album.canEditMembers ? "trash" : "rectangle.portrait.and.arrow.right")
                                     }
                                 }
                             }
@@ -679,19 +682,23 @@ private struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .background(AppBackground())
-        .alert("删除这个共享相册？", isPresented: Binding(
+        .alert((deletingAlbum?.canEditMembers ?? true) ? "删除这个共享相册？" : "退出这个共享相册？", isPresented: Binding(
             get: { deletingAlbum != nil },
             set: { if !$0 { deletingAlbum = nil } }
         )) {
             Button("取消", role: .cancel) { deletingAlbum = nil }
-            Button("删除", role: .destructive) {
+            Button((deletingAlbum?.canEditMembers ?? true) ? "删除" : "退出", role: .destructive) {
                 if let deletingAlbum {
-                    Task { await store.deleteAlbum(deletingAlbum) }
+                    if deletingAlbum.canEditMembers {
+                        Task { await store.deleteAlbum(deletingAlbum) }
+                    } else {
+                        Task { await store.leaveAlbum(deletingAlbum) }
+                    }
                 }
                 deletingAlbum = nil
             }
         } message: {
-            Text("会删除这个一级相册里的所有照片和分类。")
+            Text((deletingAlbum?.canEditMembers ?? true) ? "会删除这个一级相册里的所有照片和分类。" : "退出后你将不再看到这个相册，可通过分享链接重新申请加入。")
         }
         .sheet(item: $renamingAlbum) { album in
             RenameAlbumSheet(album: album)
@@ -977,6 +984,20 @@ private struct AlbumDetailView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
                         }
                         .buttonStyle(.plain)
+
+                        if !album.canEditMembers {
+                            Button {
+                                store.beginPermissionRequest(album: album)
+                            } label: {
+                                Label("申请权限", systemImage: "key")
+                                    .font(.headline.weight(.bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 16)
+                                    .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(.teal.opacity(0.18)))
+                            }
+                            .buttonStyle(.plain)
+                        }
 
                         if album.isAdmin {
                             Button {
@@ -1677,6 +1698,59 @@ private struct PermissionToggleRow: View {
     }
 }
 
+private func permissionSummary(_ permissions: AlbumPermissions) -> String {
+    var parts: [String] = []
+    if permissions.upload { parts.append("上传") }
+    if permissions.delete { parts.append("删除") }
+    if permissions.download { parts.append("下载") }
+    if permissions.share { parts.append("分享") }
+    return parts.isEmpty ? "无" : parts.joined(separator: "、")
+}
+
+private struct PermissionRequestSheet: View {
+    @EnvironmentObject private var store: SharePhotosStore
+    @Environment(\.dismiss) private var dismiss
+    let draft: PermissionRequestDraft
+    @State private var permissions: AlbumPermissions
+
+    init(draft: PermissionRequestDraft) {
+        self.draft = draft
+        _permissions = State(initialValue: draft.permissions)
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 18) {
+                PermissionToggleGroup(title: "申请开通的权限", permissions: $permissions)
+                Button {
+                    Task {
+                        if await store.submitPermissionRequest(album: draft.album, permissions: permissions) {
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Label("提交申请", systemImage: "paperplane.fill")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(primaryGradient, in: Capsule())
+                        .foregroundColor(.white)
+                }
+                .disabled(store.isBusy)
+                Spacer()
+            }
+            .padding(22)
+            .background(AppBackground())
+            .navigationTitle("申请权限")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 private struct JoinAlbumSheet: View {
     @EnvironmentObject private var store: SharePhotosStore
     @Environment(\.dismiss) private var dismiss
@@ -2035,44 +2109,89 @@ private struct JoinRequestsSheet: View {
     @Environment(\.dismiss) private var dismiss
     let album: Album
     @State private var requests: [JoinRequest] = []
+    @State private var permissionRequests: [AlbumPermissionRequest] = []
 
     var body: some View {
         NavigationView {
             List {
                 let pending = requests.filter { $0.status == "pending" }
-                if pending.isEmpty {
-                    Text("暂无待审批申请")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(pending) { request in
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(request.user.nickname)
-                                .font(.headline)
-                            Text("@\(request.user.username)")
-                                .font(.subheadline)
+                Section("加入申请") {
+                    if pending.isEmpty {
+                        Text("暂无待审批加入申请")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(pending) { request in
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(request.user.nickname)
+                                    .font(.headline)
+                                Text("@\(request.user.username)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                HStack {
+                                    Button("批准") {
+                                        Task {
+                                            await store.reviewJoinRequest(album: album, request: request, approve: true)
+                                            requests = await store.loadJoinRequests(album: album)
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    Button("拒绝", role: .destructive) {
+                                        Task {
+                                            await store.reviewJoinRequest(album: album, request: request, approve: false)
+                                            requests = await store.loadJoinRequests(album: album)
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+                if album.canEditMembers {
+                    Section("权限申请") {
+                        if permissionRequests.isEmpty {
+                            Text("暂无待审批权限申请")
                                 .foregroundColor(.secondary)
-                            HStack {
-                                Button("批准") {
-                                    Task {
-                                        await store.reviewJoinRequest(album: album, request: request, approve: true)
-                                        requests = await store.loadJoinRequests(album: album)
+                        } else {
+                            ForEach(permissionRequests) { request in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(request.user.nickname)
+                                        .font(.headline)
+                                    Text("@\(request.user.username)")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    Text("当前：\(permissionSummary(request.currentPermissions))")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.secondary)
+                                    Text("申请：\(permissionSummary(request.requestedPermissions))")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundColor(.teal)
+                                    HStack {
+                                        Button("批准") {
+                                            Task {
+                                                await store.reviewPermissionRequest(album: album, request: request, approve: true)
+                                                permissionRequests = await store.loadPermissionRequests(album: album)
+                                                requests = await store.loadJoinRequests(album: album)
+                                            }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        Button("拒绝", role: .destructive) {
+                                            Task {
+                                                await store.reviewPermissionRequest(album: album, request: request, approve: false)
+                                                permissionRequests = await store.loadPermissionRequests(album: album)
+                                            }
+                                        }
+                                        .buttonStyle(.bordered)
                                     }
                                 }
-                                .buttonStyle(.borderedProminent)
-                                Button("拒绝", role: .destructive) {
-                                    Task {
-                                        await store.reviewJoinRequest(album: album, request: request, approve: false)
-                                        requests = await store.loadJoinRequests(album: album)
-                                    }
-                                }
-                                .buttonStyle(.bordered)
+                                .padding(.vertical, 6)
                             }
                         }
-                        .padding(.vertical, 6)
                     }
                 }
             }
-            .navigationTitle("加入申请")
+            .navigationTitle("审批")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
@@ -2080,6 +2199,9 @@ private struct JoinRequestsSheet: View {
             }
             .task {
                 requests = await store.loadJoinRequests(album: album)
+                if album.canEditMembers {
+                    permissionRequests = await store.loadPermissionRequests(album: album)
+                }
             }
         }
     }
@@ -4128,6 +4250,11 @@ private struct OperationHUD: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondaryText)
                     .lineLimit(2)
+                if store.operationTitle == "需要授权" {
+                    Text("点按申请权限")
+                        .font(.caption.weight(.black))
+                        .foregroundColor(.teal)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -4135,6 +4262,12 @@ private struct OperationHUD: View {
         .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.teal.opacity(0.15)))
         .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            if store.operationTitle == "需要授权" {
+                store.openPendingPermissionRequest()
+            }
+        }
     }
 }
 
