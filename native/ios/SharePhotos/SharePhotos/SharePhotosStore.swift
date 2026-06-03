@@ -425,6 +425,12 @@ final class SharePhotosStore: ObservableObject {
         return photo.displayUploader == currentUser.nickname
     }
 
+    func showPermissionDenied(album: Album, action: String) {
+        let message = "你没有\(action)权限，请联系相册创建者 \(album.ownerContactText) 授权"
+        statusText = message
+        showOperation(title: "需要授权", message: message, progress: nil)
+    }
+
     func submitJoinRequest(code: String) async -> Bool {
         let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalized.isEmpty else {
