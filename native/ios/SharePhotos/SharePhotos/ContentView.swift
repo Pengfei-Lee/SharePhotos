@@ -2262,6 +2262,24 @@ private struct JoinRequestsSheet: View {
     @State private var requests: [JoinRequest] = []
     @State private var permissionRequests: [AlbumPermissionRequest] = []
 
+    private var reviewedJoinRequests: [JoinRequest] {
+        requests.filter { ["approved", "rejected"].contains($0.status) }
+    }
+
+    private var reviewedPermissionRequests: [AlbumPermissionRequest] {
+        permissionRequests.filter { ["approved", "rejected"].contains($0.status) }
+    }
+
+    private var pendingPermissionRequests: [AlbumPermissionRequest] {
+        permissionRequests.filter { $0.status == "pending" }
+    }
+
+    private var reviewedItems: [ApprovalHistoryItem] {
+        let joinItems = reviewedJoinRequests.map { ApprovalHistoryItem.join($0) }
+        let permissionItems = reviewedPermissionRequests.map { ApprovalHistoryItem.permission($0) }
+        return (joinItems + permissionItems).sorted { $0.sortTimestamp > $1.sortTimestamp }
+    }
+
     var body: some View {
         NavigationView {
             List {
@@ -2301,11 +2319,11 @@ private struct JoinRequestsSheet: View {
                 }
                 if album.canEditMembers {
                     Section("权限申请") {
-                        if permissionRequests.isEmpty {
+                        if pendingPermissionRequests.isEmpty {
                             Text("暂无待审批权限申请")
                                 .foregroundColor(.secondary)
                         } else {
-                            ForEach(permissionRequests) { request in
+                            ForEach(pendingPermissionRequests) { request in
                                 VStack(alignment: .leading, spacing: 10) {
                                     Text(request.user.nickname)
                                         .font(.headline)
@@ -2341,6 +2359,16 @@ private struct JoinRequestsSheet: View {
                         }
                     }
                 }
+                Section("已审批") {
+                    if reviewedItems.isEmpty {
+                        Text("暂无已审批记录")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(reviewedItems) { item in
+                            ApprovalHistoryRow(item: item)
+                        }
+                    }
+                }
             }
             .navigationTitle("审批")
             .toolbar {
@@ -2354,6 +2382,96 @@ private struct JoinRequestsSheet: View {
                     permissionRequests = await store.loadPermissionRequests(album: album)
                 }
             }
+        }
+    }
+}
+
+private enum ApprovalHistoryItem: Identifiable {
+    case join(JoinRequest)
+    case permission(AlbumPermissionRequest)
+
+    var id: String {
+        switch self {
+        case .join(let request): return "join-\(request.id)"
+        case .permission(let request): return "permission-\(request.id)"
+        }
+    }
+
+    var sortTimestamp: Int {
+        switch self {
+        case .join(let request): return request.reviewedAt ?? request.createdAt ?? 0
+        case .permission(let request): return request.reviewedAt ?? request.createdAt ?? 0
+        }
+    }
+}
+
+private struct ApprovalHistoryRow: View {
+    let item: ApprovalHistoryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.headline.weight(.bold))
+                Spacer()
+                if let timestamp {
+                    Text(formatDate(timestamp))
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+            }
+            Text(detail)
+                .font(.subheadline)
+                .foregroundColor(.secondaryText)
+            Label(userText, systemImage: "person.crop.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.teal)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var title: String {
+        switch item {
+        case .join(let request):
+            return "加入申请\(statusText(request.status))"
+        case .permission(let request):
+            return "权限申请\(statusText(request.status))"
+        }
+    }
+
+    private var detail: String {
+        switch item {
+        case .join:
+            return "申请加入相册"
+        case .permission(let request):
+            return "申请权限：\(permissionSummary(request.requestedPermissions))"
+        }
+    }
+
+    private var userText: String {
+        switch item {
+        case .join(let request):
+            return "\(request.user.nickname) @\(request.user.username)"
+        case .permission(let request):
+            return "\(request.user.nickname) @\(request.user.username)"
+        }
+    }
+
+    private var timestamp: Int? {
+        switch item {
+        case .join(let request):
+            return request.reviewedAt ?? request.createdAt
+        case .permission(let request):
+            return request.reviewedAt ?? request.createdAt
+        }
+    }
+
+    private func statusText(_ status: String) -> String {
+        switch status {
+        case "approved": return "已批准"
+        case "rejected": return "已拒绝"
+        case "cancelled": return "已撤销"
+        default: return "已处理"
         }
     }
 }
@@ -4424,8 +4542,16 @@ private struct OperationHUD: View {
         .onTapGesture {
             if store.operationTitle == "需要授权" {
                 store.openPendingPermissionRequest()
+            } else {
+                store.dismissOperation()
             }
         }
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { _ in
+                    store.dismissOperation()
+                }
+        )
     }
 }
 

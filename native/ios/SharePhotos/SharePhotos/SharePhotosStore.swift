@@ -1428,6 +1428,14 @@ final class SharePhotosStore: ObservableObject {
         operationMessage = message
         operationProgress = progress
         showsOperation = true
+        if shouldAutoHideOperation(title: title, progress: progress) {
+            hideOperation(after: 4.0)
+        }
+    }
+
+    func dismissOperation() {
+        operationRevision += 1
+        showsOperation = false
     }
 
     private func hideOperation(after seconds: Double) {
@@ -1437,6 +1445,15 @@ final class SharePhotosStore: ObservableObject {
             guard revision == operationRevision else { return }
             showsOperation = false
         }
+    }
+
+    private func shouldAutoHideOperation(title: String, progress: Double?) -> Bool {
+        guard progress == nil else { return false }
+        return title.contains("失败")
+            || title.contains("错误")
+            || title.contains("报错")
+            || title.localizedCaseInsensitiveContains("error")
+            || title.localizedCaseInsensitiveContains("failed")
     }
 
     private func requestAddOnlyAuthorization() async -> PHAuthorizationStatus {

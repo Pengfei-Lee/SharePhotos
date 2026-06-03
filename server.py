@@ -1675,6 +1675,9 @@ def photo_display_name(photo, fallback="照片"):
     return ((photo or {}).get("originalName") or (photo or {}).get("storedName") or fallback).strip()[:160]
 
 
+COLLABORATION_RECORD_TYPES = {"photo.upload", "photo.delete"}
+
+
 def public_album_activity(activity):
     if isinstance(activity, sqlite3.Row):
         data = json.loads(activity["data_json"] or "{}")
@@ -1793,7 +1796,8 @@ def list_album_activities(album_id, limit=50, before=0):
     if sqlite_enabled():
         sqlite_init_store()
         params = [album_id]
-        where = "album_id = ?"
+        where = "album_id = ? AND type IN (%s)" % ",".join("?" for _ in COLLABORATION_RECORD_TYPES)
+        params.extend(sorted(COLLABORATION_RECORD_TYPES))
         if before:
             where += " AND created_at < ?"
             params.append(int(before))
@@ -1810,7 +1814,10 @@ def list_album_activities(album_id, limit=50, before=0):
             ).fetchall()
         return [public_album_activity(row) for row in rows]
     db = load_db()
-    items = [item for item in db.get("albumActivities", []) if item.get("albumId") == album_id]
+    items = [
+        item for item in db.get("albumActivities", [])
+        if item.get("albumId") == album_id and item.get("type") in COLLABORATION_RECORD_TYPES
+    ]
     if before:
         items = [item for item in items if int(item.get("createdAt") or 0) < int(before)]
     items.sort(key=lambda item: (int(item.get("createdAt") or 0), item.get("id", "")), reverse=True)
@@ -6033,8 +6040,9 @@ class AppHandler(BaseHTTPRequestHandler):
                        u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
                 FROM album_join_requests r
                 JOIN users u ON u.id = r.user_id
-                WHERE r.album_id = ? AND r.status = 'pending'
-                ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+                WHERE r.album_id = ?
+                ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,
+                         COALESCE(r.reviewed_at, r.created_at) DESC, r.created_at DESC
                 """,
                 (album_id,),
             ).fetchall()
@@ -6265,8 +6273,9 @@ class AppHandler(BaseHTTPRequestHandler):
                            u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
                     FROM album_permission_requests r
                     JOIN users u ON u.id = r.user_id
-                    WHERE r.album_id = ? AND r.status = 'pending'
-                    ORDER BY r.created_at DESC
+                    WHERE r.album_id = ?
+                    ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,
+                             COALESCE(r.reviewed_at, r.created_at) DESC, r.created_at DESC
                     """,
                     (album_id,),
                 ).fetchall()
