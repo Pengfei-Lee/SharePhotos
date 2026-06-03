@@ -4866,7 +4866,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.download_photo_image(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/download-live$", path)
         if match:
-            if not self.require_album_permission(match.group(1), "download"):
+            if not self.require_album_member(match.group(1)):
                 return
             return self.download_live_photo(match.group(1), match.group(2))
         match = re.match(r"^/api/albums/([^/]+)/join-requests$", path)

@@ -55,12 +55,25 @@ struct Album: Identifiable, Codable, Hashable {
     let isOwner: Bool?
     let permissions: AlbumPermissions?
     let currentUserPermissions: AlbumPermissions?
+    let ownerUserId: String?
+    let ownerUsername: String?
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
     var isAdmin: Bool { canAdmin == true || ["owner", "admin"].contains(currentUserRole ?? "") }
     var effectivePermissions: AlbumPermissions { currentUserPermissions ?? .allAllowed }
     var canEditMembers: Bool { isOwner == true || currentUserRole == "owner" }
+    var ownerContactText: String {
+        let username = (ownerUsername ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !username.isEmpty {
+            return "@\(username)"
+        }
+        let userId = (ownerUserId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userId.isEmpty {
+            return userId
+        }
+        return "相册创建者"
+    }
 }
 
 struct User: Identifiable, Codable, Hashable {
