@@ -1613,9 +1613,38 @@ def album_owner_user(album, origin=""):
         return None
     owner_id = album.get("ownerUserId") or album.get("createdByUserId") or ""
     owner_username = normalize_username(album.get("ownerUsername") or album.get("createdByUsername") or "")
+    user = None
+    if sqlite_enabled() and album.get("id"):
+        try:
+            sqlite_init_store()
+            with sqlite_connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT u.id, u.username, u.nickname, u.avatar_url, u.avatar_object_key,
+                           u.has_face_profile, u.data_json
+                    FROM album_members m
+                    JOIN users u ON u.id = m.user_id
+                    WHERE m.album_id = ? AND m.status = 'active' AND m.role = 'owner'
+                    ORDER BY m.created_at ASC
+                    LIMIT 1
+                    """,
+                    (album.get("id"),),
+                ).fetchone()
+            if row:
+                user = json.loads(row["data_json"] or "{}")
+                user.update({
+                    "id": row["id"],
+                    "username": row["username"],
+                    "nickname": row["nickname"],
+                    "avatarUrl": row["avatar_url"] or "",
+                    "avatarObjectKey": row["avatar_object_key"] or "",
+                    "hasFaceProfile": bool(row["has_face_profile"]),
+                })
+        except Exception as error:
+            LOGGER.warning("album_id=%s error=%s", album.get("id"), error, extra={"event": "album.owner_lookup_failed"})
     with LOCK:
         db = load_db()
-        user = find_user_by_id(db, owner_id) if owner_id else None
+        user = user or (find_user_by_id(db, owner_id) if owner_id else None)
         if not user and owner_username:
             user = find_user_by_username(db, owner_username)
     if user:
@@ -6161,7 +6190,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 FROM album_permission_requests r
                 JOIN users u ON u.id = r.user_id
                 WHERE r.album_id = ? AND r.user_id = ? AND r.status = 'pending'
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY r.created_at DESC LIMIT 1
                 """,
                 (album_id, current_user["id"]),
             ).fetchone()
@@ -6203,7 +6232,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "requestedPermissions": requested,
             },
         )
-        owner_id = album.get("ownerUserId") or album.get("createdByUserId")
+        owner_payload = album_owner_user(album, self.request_origin()) or {}
+        owner_id = owner_payload.get("id") or album.get("ownerUserId") or album.get("createdByUserId")
         if owner_id and owner_id != current_user["id"]:
             create_notification(
                 owner_id,
