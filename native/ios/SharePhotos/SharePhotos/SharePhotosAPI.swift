@@ -213,6 +213,11 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(PermissionRequestResponse.self, from: data)
     }
 
+    func cancelPermissionRequest(albumId: String, requestId: String) async throws -> PermissionRequestResponse {
+        let data = try await request(path: "/api/albums/\(albumId)/permission-requests/\(requestId)", method: "DELETE")
+        return try JSONDecoder().decode(PermissionRequestResponse.self, from: data)
+    }
+
     func albumCollaborationRecords(albumId: String) async throws -> [AlbumCollaborationRecord] {
         let data = try await request(path: "/api/albums/\(albumId)/collaboration-records")
         return try JSONDecoder().decode(AlbumCollaborationRecordsResponse.self, from: data).records

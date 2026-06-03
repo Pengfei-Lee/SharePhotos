@@ -58,6 +58,7 @@ struct Album: Identifiable, Codable, Hashable {
     let currentUserMemberPermissions: AlbumPermissions?
     let ownerUserId: String?
     let ownerUsername: String?
+    let ownerUser: User?
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
@@ -65,16 +66,27 @@ struct Album: Identifiable, Codable, Hashable {
     var effectivePermissions: AlbumPermissions { currentUserPermissions ?? .allAllowed }
     var memberPermissions: AlbumPermissions { currentUserMemberPermissions ?? effectivePermissions }
     var canEditMembers: Bool { isOwner == true || currentUserRole == "owner" }
-    var ownerContactText: String {
-        let username = (ownerUsername ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var ownerDisplayName: String {
+        let nickname = (ownerUser?.nickname ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nickname.isEmpty {
+            return nickname
+        }
+        let username = (ownerUser?.username ?? ownerUsername ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !username.isEmpty {
             return "@\(username)"
         }
-        let userId = (ownerUserId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let userId = (ownerUser?.id ?? ownerUserId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !userId.isEmpty {
             return userId
         }
         return "相册创建者"
+    }
+    var ownerUsernameText: String {
+        let username = (ownerUser?.username ?? ownerUsername ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return username.isEmpty ? "" : "@\(username)"
+    }
+    var ownerContactText: String {
+        ownerDisplayName
     }
 }
 
@@ -271,6 +283,7 @@ struct PermissionRequestResponse: Codable {
     let requestId: String?
     let message: String?
     let album: Album?
+    let request: AlbumPermissionRequest?
 }
 
 struct PermissionRequestDraft: Identifiable, Hashable {

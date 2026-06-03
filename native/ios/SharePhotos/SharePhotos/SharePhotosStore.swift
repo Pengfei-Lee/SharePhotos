@@ -33,6 +33,7 @@ final class SharePhotosStore: ObservableObject {
     @Published var pendingDeepLink: PendingDeepLink?
     @Published var pendingPushRoute: PushNavigationRoute?
     @Published var permissionRequestDraft: PermissionRequestDraft?
+    @Published var permissionDeniedAlbum: Album?
     @Published private var pendingPermissionDeniedDraft: PermissionRequestDraft?
     @Published var avatarImageVersion = 0
     @Published var unreadMessageCount = 0
@@ -46,6 +47,7 @@ final class SharePhotosStore: ObservableObject {
     private var uploadCancelRequested = false
     private var uploadBaselinePhotoIds: Set<String> = []
     private var uploadCreatedPhotoIds: Set<String> = []
+    private var operationRevision = 0
 
     init(api: SharePhotosAPI) {
         self.api = api.withBaseURL(api.baseURL)
@@ -438,8 +440,10 @@ final class SharePhotosStore: ObservableObject {
         default: break
         }
         pendingPermissionDeniedDraft = PermissionRequestDraft(album: album, permissions: permissions)
+        permissionDeniedAlbum = album
         statusText = message
         showOperation(title: "需要授权", message: message, progress: nil)
+        hideOperation(after: 4.0)
     }
 
     func beginPermissionRequest(album: Album, permissions: AlbumPermissions? = nil) {
@@ -449,6 +453,7 @@ final class SharePhotosStore: ObservableObject {
     func openPendingPermissionRequest() {
         if let pendingPermissionDeniedDraft {
             permissionRequestDraft = pendingPermissionDeniedDraft
+            permissionDeniedAlbum = pendingPermissionDeniedDraft.album
             self.pendingPermissionDeniedDraft = nil
             showsOperation = false
         }
@@ -521,6 +526,10 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    func loadMyPermissionRequests(album: Album) async -> [AlbumPermissionRequest] {
+        await loadPermissionRequests(album: album)
+    }
+
     func submitPermissionRequest(album: Album, permissions: AlbumPermissions) async -> Bool {
         isBusy = true
         showOperation(title: "申请权限", message: "正在提交权限申请", progress: nil)
@@ -528,6 +537,11 @@ final class SharePhotosStore: ObservableObject {
         do {
             let response = try await api.submitPermissionRequest(albumId: album.id, permissions: permissions)
             statusText = response.message ?? "权限申请已提交，等待创建者审批"
+            if response.status == "pending", response.request != nil {
+                showOperation(title: "等待审批", message: statusText, progress: 1)
+                hideOperation(after: 1.2)
+                return false
+            }
             showOperation(title: "申请已提交", message: statusText, progress: 1)
             hideOperation(after: 1.2)
             return true
@@ -535,6 +549,24 @@ final class SharePhotosStore: ObservableObject {
             let message = handleError(error)
             statusText = message
             showOperation(title: "申请失败", message: message, progress: nil)
+            return false
+        }
+    }
+
+    func cancelPermissionRequest(album: Album, request: AlbumPermissionRequest) async -> Bool {
+        isBusy = true
+        showOperation(title: "撤销申请", message: "正在撤销权限申请", progress: nil)
+        defer { isBusy = false }
+        do {
+            _ = try await api.cancelPermissionRequest(albumId: album.id, requestId: request.id)
+            statusText = "权限申请已撤销"
+            showOperation(title: "已撤销", message: statusText, progress: 1)
+            hideOperation(after: 1.0)
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "撤销失败", message: message, progress: nil)
             return false
         }
     }
@@ -1391,6 +1423,7 @@ final class SharePhotosStore: ObservableObject {
     }
 
     private func showOperation(title: String, message: String, progress: Double?) {
+        operationRevision += 1
         operationTitle = title
         operationMessage = message
         operationProgress = progress
@@ -1398,8 +1431,10 @@ final class SharePhotosStore: ObservableObject {
     }
 
     private func hideOperation(after seconds: Double) {
+        let revision = operationRevision
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard revision == operationRevision else { return }
             showsOperation = false
         }
     }
