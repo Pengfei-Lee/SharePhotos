@@ -32,6 +32,8 @@ final class SharePhotosStore: ObservableObject {
     @Published private(set) var hasLocalSession = false
     @Published var pendingDeepLink: PendingDeepLink?
     @Published var pendingPushRoute: PushNavigationRoute?
+    @Published var permissionRequestDraft: PermissionRequestDraft?
+    @Published private var pendingPermissionDeniedDraft: PermissionRequestDraft?
     @Published var avatarImageVersion = 0
     @Published var unreadMessageCount = 0
 
@@ -427,8 +429,29 @@ final class SharePhotosStore: ObservableObject {
 
     func showPermissionDenied(album: Album, action: String) {
         let message = "你没有\(action)权限，请联系相册创建者 \(album.ownerContactText) 授权"
+        var permissions = album.memberPermissions
+        switch action {
+        case "上传": permissions.upload = true
+        case "删除": permissions.delete = true
+        case "下载": permissions.download = true
+        case "分享": permissions.share = true
+        default: break
+        }
+        pendingPermissionDeniedDraft = PermissionRequestDraft(album: album, permissions: permissions)
         statusText = message
         showOperation(title: "需要授权", message: message, progress: nil)
+    }
+
+    func beginPermissionRequest(album: Album, permissions: AlbumPermissions? = nil) {
+        permissionRequestDraft = PermissionRequestDraft(album: album, permissions: permissions ?? album.memberPermissions)
+    }
+
+    func openPendingPermissionRequest() {
+        if let pendingPermissionDeniedDraft {
+            permissionRequestDraft = pendingPermissionDeniedDraft
+            self.pendingPermissionDeniedDraft = nil
+            showsOperation = false
+        }
     }
 
     func submitJoinRequest(code: String) async -> Bool {
@@ -481,6 +504,51 @@ final class SharePhotosStore: ObservableObject {
                 upsert(album)
             }
             statusText = approve ? "已批准 \(request.user.nickname) 加入" : "已拒绝申请"
+            hideOperation(after: 0.8)
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "处理失败", message: message, progress: nil)
+        }
+    }
+
+    func loadPermissionRequests(album: Album) async -> [AlbumPermissionRequest] {
+        do {
+            return try await api.permissionRequests(albumId: album.id)
+        } catch {
+            statusText = handleError(error)
+            return []
+        }
+    }
+
+    func submitPermissionRequest(album: Album, permissions: AlbumPermissions) async -> Bool {
+        isBusy = true
+        showOperation(title: "申请权限", message: "正在提交权限申请", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.submitPermissionRequest(albumId: album.id, permissions: permissions)
+            statusText = response.message ?? "权限申请已提交，等待创建者审批"
+            showOperation(title: "申请已提交", message: statusText, progress: 1)
+            hideOperation(after: 1.2)
+            return true
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "申请失败", message: message, progress: nil)
+            return false
+        }
+    }
+
+    func reviewPermissionRequest(album: Album, request: AlbumPermissionRequest, approve: Bool) async {
+        isBusy = true
+        showOperation(title: approve ? "批准权限" : "拒绝权限", message: "正在处理 \(request.user.nickname)", progress: nil)
+        defer { isBusy = false }
+        do {
+            let response = try await api.reviewPermissionRequest(albumId: album.id, requestId: request.id, approve: approve)
+            if let album = response.album {
+                upsert(album)
+            }
+            statusText = approve ? "已批准 \(request.user.nickname) 的权限申请" : "已拒绝权限申请"
             hideOperation(after: 0.8)
         } catch {
             let message = handleError(error)
@@ -605,7 +673,7 @@ final class SharePhotosStore: ObservableObject {
 
     private func destination(for type: String?) -> String {
         switch type {
-        case "album.join_request":
+        case "album.join_request", "album.permission_request":
             return "join_requests"
         case "face.my_photos_matched", "album.join_approved":
             return "my_photos"
@@ -641,6 +709,26 @@ final class SharePhotosStore: ObservableObject {
             let message = handleError(error)
             statusText = message
             showOperation(title: "删除失败", message: message, progress: nil)
+        }
+    }
+
+    func leaveAlbum(_ album: Album) async {
+        isBusy = true
+        showOperation(title: "退出相册", message: "正在退出 \(album.name)", progress: nil)
+        defer { isBusy = false }
+        do {
+            try await api.deleteAlbum(id: album.id)
+            albums.removeAll { $0.id == album.id }
+            if selectedAlbumId == album.id {
+                selectedAlbumId = nil
+            }
+            persistHomeSnapshot()
+            statusText = "已退出 \(album.name)"
+            hideOperation(after: 0.8)
+        } catch {
+            let message = handleError(error)
+            statusText = message
+            showOperation(title: "退出失败", message: message, progress: nil)
         }
     }
 

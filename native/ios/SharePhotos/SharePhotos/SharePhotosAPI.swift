@@ -195,6 +195,24 @@ final class SharePhotosAPI {
         return try JSONDecoder().decode(ReviewJoinRequestResponse.self, from: data)
     }
 
+    func submitPermissionRequest(albumId: String, permissions: AlbumPermissions) async throws -> PermissionRequestResponse {
+        let data = try await jsonRequest(path: "/api/albums/\(albumId)/permission-requests", method: "POST", body: [
+            "permissions": permissions.dictionary
+        ])
+        return try JSONDecoder().decode(PermissionRequestResponse.self, from: data)
+    }
+
+    func permissionRequests(albumId: String) async throws -> [AlbumPermissionRequest] {
+        let data = try await request(path: "/api/albums/\(albumId)/permission-requests")
+        return try JSONDecoder().decode(AlbumPermissionRequestsResponse.self, from: data).requests
+    }
+
+    func reviewPermissionRequest(albumId: String, requestId: String, approve: Bool) async throws -> PermissionRequestResponse {
+        let action = approve ? "approve" : "reject"
+        let data = try await request(path: "/api/albums/\(albumId)/permission-requests/\(requestId)/\(action)", method: "POST")
+        return try JSONDecoder().decode(PermissionRequestResponse.self, from: data)
+    }
+
     func albumCollaborationRecords(albumId: String) async throws -> [AlbumCollaborationRecord] {
         let data = try await request(path: "/api/albums/\(albumId)/collaboration-records")
         return try JSONDecoder().decode(AlbumCollaborationRecordsResponse.self, from: data).records
