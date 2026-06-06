@@ -1366,13 +1366,28 @@ label {
 
 .join-code {
   background: rgba(20, 184, 166, 0.12);
+  border: 0;
   border-radius: 18px;
   color: #0f766e;
+  cursor: pointer;
   display: inline-block;
   font-size: 2rem;
+  font-family: inherit;
   letter-spacing: 0.08em;
   margin: 16px 0;
   padding: 12px 18px;
+}
+
+.join-code:active {
+  transform: translateY(1px);
+}
+
+.join-copy-status {
+  color: var(--muted);
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin: -6px 0 16px;
 }
 
 .join-primary,

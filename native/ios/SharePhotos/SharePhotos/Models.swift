@@ -251,6 +251,7 @@ struct JoinRequest: Identifiable, Codable, Hashable {
     let createdAt: Int?
     let reviewedAt: Int?
     let user: User
+    let reviewedByUser: User?
 }
 
 struct JoinRequestsResponse: Codable {
@@ -272,6 +273,7 @@ struct AlbumPermissionRequest: Identifiable, Codable, Hashable {
     let requestedPermissions: AlbumPermissions
     let currentPermissions: AlbumPermissions
     let user: User
+    let reviewedByUser: User?
 }
 
 struct AlbumPermissionRequestsResponse: Codable {
@@ -299,6 +301,7 @@ struct AlbumCollaborationRecord: Identifiable, Codable, Hashable {
     let title: String?
     let message: String?
     let actor: User?
+    let actorName: String?
     let createdAt: Int?
 
     var displayTitle: String {

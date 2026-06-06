@@ -153,6 +153,17 @@ OSS_AUTO_MIGRATE=0
 docker compose up -d --build
 ```
 
+### 分享落地页下载链接
+
+`/join/{code}` 分享落地页会展示 iOS 和 Android 两个下载入口。生产环境建议配置：
+
+```bash
+IOS_APP_STORE_URL=https://apps.apple.com/app/your-app-id
+ANDROID_DOWNLOAD_URL=https://your-oss-domain/path/to/picme.apk
+```
+
+旧的 `APP_DOWNLOAD_URL` 仍作为兼容兜底；如果没有单独配置上面两个变量，会继续使用 `APP_DOWNLOAD_URL`。
+
 ### H5 直传 OSS
 
 H5 会优先使用两步直传：

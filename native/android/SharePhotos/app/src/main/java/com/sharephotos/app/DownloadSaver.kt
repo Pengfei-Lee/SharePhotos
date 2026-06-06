@@ -26,10 +26,16 @@ class DownloadSaver(
             }
             val bytes = response.body?.bytes() ?: error("下载内容为空")
             val resolver = context.contentResolver
-            val collection = if (mimeType.startsWith("image/")) {
-                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (mimeType.startsWith("image/")) {
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                }
+            } else if (mimeType.startsWith("image/")) {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
             } else {
-                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                MediaStore.Files.getContentUri("external")
             }
 
             val values = ContentValues().apply {

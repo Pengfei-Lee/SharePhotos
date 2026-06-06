@@ -566,7 +566,7 @@ private struct PushRouteSheet: View {
             }
         }
         .task {
-            guard let albumId = route.albumId else { return }
+            guard route.destination != "messages", let albumId = route.albumId else { return }
             await store.refreshAlbum(id: albumId)
         }
     }
@@ -2426,6 +2426,11 @@ private struct ApprovalHistoryRow: View {
             Label(userText, systemImage: "person.crop.circle")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.teal)
+            if let reviewerText {
+                Label(reviewerText, systemImage: "checkmark.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.vertical, 6)
     }
@@ -2466,6 +2471,17 @@ private struct ApprovalHistoryRow: View {
         }
     }
 
+    private var reviewerText: String? {
+        switch item {
+        case .join(let request):
+            guard let reviewer = request.reviewedByUser else { return nil }
+            return "处理人：\(reviewer.nickname) @\(reviewer.username)"
+        case .permission(let request):
+            guard let reviewer = request.reviewedByUser else { return nil }
+            return "处理人：\(reviewer.nickname) @\(reviewer.username)"
+        }
+    }
+
     private func statusText(_ status: String) -> String {
         switch status {
         case "approved": return "已批准"
@@ -2483,16 +2499,20 @@ private struct CollaborationRecordsSheet: View {
     @State private var records: [AlbumCollaborationRecord] = []
     @State private var isLoading = true
 
+    private var collaborationRecords: [AlbumCollaborationRecord] {
+        records.filter { ["photo.upload", "photo.delete"].contains($0.type ?? "") }
+    }
+
     var body: some View {
         NavigationView {
             List {
                 if isLoading {
                     ProgressView("正在加载协作记录")
-                } else if records.isEmpty {
-                    Text("暂无协作记录")
+                } else if collaborationRecords.isEmpty {
+                    Text("暂无照片上传或删除记录")
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(records) { record in
+                    ForEach(collaborationRecords) { record in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(record.displayTitle)
@@ -2509,6 +2529,10 @@ private struct CollaborationRecordsSheet: View {
                                 .foregroundColor(.secondaryText)
                             if let actor = record.actor {
                                 Label(actor.nickname, systemImage: "person.crop.circle")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.teal)
+                            } else if let actorName = record.actorName, !actorName.isEmpty {
+                                Label(actorName, systemImage: "person.crop.circle")
                                     .font(.caption.weight(.semibold))
                                     .foregroundColor(.teal)
                             }
