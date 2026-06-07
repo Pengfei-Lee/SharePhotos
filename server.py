@@ -89,6 +89,8 @@ LEGACY_ALBUM_OWNER_USERNAME = os.environ.get("LEGACY_ALBUM_OWNER_USERNAME", "lpf
 APP_ASSOCIATED_DOMAIN = os.environ.get("APP_ASSOCIATED_DOMAIN", "picme.me").strip() or "picme.me"
 IOS_BUNDLE_IDENTIFIER = os.environ.get("IOS_BUNDLE_IDENTIFIER", "com.sharephotos.app").strip() or "com.sharephotos.app"
 APP_DOWNLOAD_URL = os.environ.get("APP_DOWNLOAD_URL", "").strip()
+IOS_APP_STORE_URL = os.environ.get("IOS_APP_STORE_URL", APP_DOWNLOAD_URL).strip()
+ANDROID_DOWNLOAD_URL = os.environ.get("ANDROID_DOWNLOAD_URL", APP_DOWNLOAD_URL).strip()
 ANDROID_APP_PACKAGE = os.environ.get("ANDROID_APP_PACKAGE", "com.sharephotos.app").strip() or "com.sharephotos.app"
 ANDROID_CERT_SHA256 = [
     item.strip().upper()
@@ -1605,7 +1607,23 @@ def public_permission_request(row, origin=""):
         "requestedPermissions": requested,
         "currentPermissions": current,
         "user": public_user(user, origin),
+        "reviewedByUser": public_reviewer_user(row, origin),
     }
+
+
+def public_reviewer_user(row, origin=""):
+    if not row or "reviewer_id" not in row.keys() or not row["reviewer_id"]:
+        return None
+    reviewer = json.loads(row["reviewer_data_json"] or "{}")
+    reviewer.update({
+        "id": row["reviewer_id"],
+        "username": row["reviewer_username"],
+        "nickname": row["reviewer_nickname"],
+        "avatarUrl": row["reviewer_avatar_url"] or "",
+        "avatarObjectKey": row["reviewer_avatar_object_key"] or "",
+        "hasFaceProfile": bool(row["reviewer_has_face_profile"]),
+    })
+    return public_user(reviewer, origin)
 
 
 def album_owner_user(album, origin=""):
@@ -1678,7 +1696,31 @@ def photo_display_name(photo, fallback="照片"):
 COLLABORATION_RECORD_TYPES = {"photo.upload", "photo.delete"}
 
 
-def public_album_activity(activity):
+def public_activity_actor(row, origin=""):
+    if not row or "actor_username" not in row.keys() or not row["actor_user_id"]:
+        return None
+    actor = {}
+    if row["actor_data_json"]:
+        try:
+            actor = json.loads(row["actor_data_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            actor = {}
+    actor.update({
+        "id": row["actor_user_id"],
+        "username": row["actor_username"] or "",
+        "nickname": row["actor_nickname"] or row["actor_name"] or "",
+        "avatarUrl": row["actor_avatar_url"] or "",
+        "avatarObjectKey": row["actor_avatar_object_key"] or "",
+        "hasFaceProfile": bool(row["actor_has_face_profile"]),
+    })
+    return public_user(actor, origin)
+
+
+def public_album_activity(activity, origin=""):
+    titles = {
+        "photo.upload": "上传照片",
+        "photo.delete": "删除照片",
+    }
     if isinstance(activity, sqlite3.Row):
         data = json.loads(activity["data_json"] or "{}")
         data.update({
@@ -1692,32 +1734,15 @@ def public_album_activity(activity):
             "message": activity["message"] or "",
             "createdAt": activity["created_at"],
         })
+        actor = public_activity_actor(activity, origin)
+        if actor:
+            data["actor"] = actor
         if not data.get("title"):
-            data["title"] = {
-                "photo.upload": "上传照片",
-                "photo.delete": "删除照片",
-                "join_request.approved": "批准加入申请",
-                "join_request.rejected": "拒绝加入申请",
-                "permission_request.created": "申请权限",
-                "permission_request.approved": "批准权限申请",
-                "permission_request.rejected": "拒绝权限申请",
-                "permission_request.cancelled": "撤销权限申请",
-                "album.member_left": "退出相册",
-            }.get(data.get("type"), "协作动态")
+            data["title"] = titles.get(data.get("type"), "")
         return data
     data = dict(activity or {})
     if not data.get("title"):
-        data["title"] = {
-            "photo.upload": "上传照片",
-            "photo.delete": "删除照片",
-            "join_request.approved": "批准加入申请",
-            "join_request.rejected": "拒绝加入申请",
-            "permission_request.created": "申请权限",
-            "permission_request.approved": "批准权限申请",
-            "permission_request.rejected": "拒绝权限申请",
-            "permission_request.cancelled": "撤销权限申请",
-            "album.member_left": "退出相册",
-        }.get(data.get("type"), "协作动态")
+        data["title"] = titles.get(data.get("type"), "")
     return data
 
 
@@ -1791,28 +1816,67 @@ def record_album_activity(album_id, activity_type, actor=None, actor_name="", ta
     return activity
 
 
-def list_album_activities(album_id, limit=50, before=0):
+def list_album_activities(album_id, limit=50, before=0, origin=""):
     limit = max(1, min(int(limit or 50), 200))
     if sqlite_enabled():
         sqlite_init_store()
         params = [album_id]
-        where = "album_id = ? AND type IN (%s)" % ",".join("?" for _ in COLLABORATION_RECORD_TYPES)
-        params.extend(sorted(COLLABORATION_RECORD_TYPES))
+        where = "a.album_id = ?"
         if before:
-            where += " AND created_at < ?"
+            where += " AND a.created_at < ?"
             params.append(int(before))
         params.append(limit)
         with sqlite_connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM album_activities
+                SELECT a.*,
+                       u.username AS actor_username, u.nickname AS actor_nickname,
+                       u.avatar_url AS actor_avatar_url, u.avatar_object_key AS actor_avatar_object_key,
+                       u.has_face_profile AS actor_has_face_profile, u.data_json AS actor_data_json
+                FROM album_activities a
+                LEFT JOIN users u ON u.id = a.actor_user_id
                 WHERE %s
-                ORDER BY created_at DESC, id DESC
+                ORDER BY a.created_at DESC, a.id DESC
                 LIMIT ?
                 """ % where,
                 params,
             ).fetchall()
-        return [public_album_activity(row) for row in rows]
+        return [public_album_activity(row, origin) for row in rows]
+    db = load_db()
+    items = [item for item in db.get("albumActivities", []) if item.get("albumId") == album_id]
+    if before:
+        items = [item for item in items if int(item.get("createdAt") or 0) < int(before)]
+    items.sort(key=lambda item: (int(item.get("createdAt") or 0), item.get("id", "")), reverse=True)
+    return items[:limit]
+
+
+def list_album_collaboration_records(album_id, limit=50, before=0, origin=""):
+    limit = max(1, min(int(limit or 50), 200))
+    if sqlite_enabled():
+        sqlite_init_store()
+        params = [album_id]
+        where = "a.album_id = ? AND a.type IN (%s)" % ",".join("?" for _ in COLLABORATION_RECORD_TYPES)
+        params.extend(sorted(COLLABORATION_RECORD_TYPES))
+        if before:
+            where += " AND a.created_at < ?"
+            params.append(int(before))
+        params.append(limit)
+        with sqlite_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT a.*,
+                       u.username AS actor_username, u.nickname AS actor_nickname,
+                       u.avatar_url AS actor_avatar_url, u.avatar_object_key AS actor_avatar_object_key,
+                       u.has_face_profile AS actor_has_face_profile, u.data_json AS actor_data_json
+                FROM album_activities a
+                LEFT JOIN users u ON u.id = a.actor_user_id
+                WHERE %s
+                ORDER BY a.created_at DESC, a.id DESC
+                LIMIT ?
+                """ % where,
+                params,
+            ).fetchall()
+        return [public_album_activity(row, origin) for row in rows]
     db = load_db()
     items = [
         item for item in db.get("albumActivities", [])
@@ -1841,10 +1905,21 @@ def public_notification(notification):
             "createdAt": notification["created_at"],
         })
         data["isRead"] = bool(data.get("readAt"))
+        flatten_notification_data(data)
         return data
     data = dict(notification or {})
     data["isRead"] = bool(data.get("readAt"))
+    flatten_notification_data(data)
     return data
+
+
+def flatten_notification_data(notification):
+    nested = notification.get("data") if isinstance(notification.get("data"), dict) else {}
+    for key in ("albumName", "requestId", "folderId", "folderName", "status"):
+        value = nested.get(key)
+        if value is not None and notification.get(key) in (None, ""):
+            notification[key] = value
+    return notification
 
 
 APNS_TOKEN_LOCK = threading.Lock()
@@ -1995,9 +2070,9 @@ def apns_payload_for_notification(notification):
 
 
 def notification_destination(notification_type):
-    if notification_type == "album.join_request":
+    if notification_type in {"album.join_request", "album.permission_request"}:
         return "join_requests"
-    if notification_type in {"face.my_photos_matched", "album.join_approved"}:
+    if notification_type == "face.my_photos_matched":
         return "my_photos"
     return "messages"
 
@@ -3077,7 +3152,7 @@ def sync_all_folder_covers(db):
     return changed
 
 
-def public_album(album, current_user=None):
+def public_album(album, current_user=None, origin=""):
     sync_folder_covers(album)
     album_permissions = ensure_album_permissions(album)
     visible = dict(album)
@@ -3092,7 +3167,7 @@ def public_album(album, current_user=None):
     visible["permissions"] = album_permissions
     visible["currentUserPermissions"] = current_permissions
     visible["currentUserMemberPermissions"] = member_permissions
-    visible["ownerUser"] = album_owner_user(album)
+    visible["ownerUser"] = album_owner_user(album, origin)
     visible["folders"] = []
     for folder in album.get("folders", []):
         if folder.get("id") == "pending":
@@ -4982,7 +5057,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         continue
                     if not stored_user_album_match(album, current_user):
                         enqueue_album_match_job(album.get("id"), current_user.get("id"))
-            return self.send_json({"albums": [public_album(album, current_user) for album in db["albums"] if album.get("id") in allowed_ids]})
+            return self.send_json({"albums": [public_album(album, current_user, self.request_origin()) for album in db["albums"] if album.get("id") in allowed_ids]})
         match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/qr\.svg$", path)
         if match:
             return self.serve_invite_qr(match.group(1))
@@ -5012,7 +5087,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     enqueue_album_match_job(album.get("id"), current_user.get("id"))
             if not album:
                 return self.send_error_json("Album not found", 404)
-            return self.send_json({"album": public_album(album, current_user)})
+            return self.send_json({"album": public_album(album, current_user, self.request_origin())})
         match = re.match(r"^/api/albums/([^/]+)/activities$", path)
         if match:
             if not self.require_album_member(match.group(1)):
@@ -5131,7 +5206,7 @@ class AppHandler(BaseHTTPRequestHandler):
             add_album_member(album["id"], current_user["id"], "owner", current_user["id"])
             LOGGER.info("album_id=%s name=%s", album["id"], album["name"], extra={"event": "album.create"})
             (UPLOADS / album["id"]).mkdir(parents=True, exist_ok=True)
-            return self.send_json({"album": public_album(album, current_user)}, 201)
+            return self.send_json({"album": public_album(album, current_user, self.request_origin())}, 201)
 
         match = re.match(r"^/api/albums/([^/]+)/upload$", path)
         if match:
@@ -5602,7 +5677,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         queued.append(photo_id)
 
             save_db(db)
-            response_album = public_album(album, self.current_user())
+            response_album = public_album(album, self.current_user(), self.request_origin())
             response_created = [
                 item for item in response_album.get("photos", [])
                 if item.get("id") in {photo.get("id") for photo in created}
@@ -5789,7 +5864,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     extra={"event": "upload.photo_created"},
                 )
             save_db(db)
-            response_album = public_album(album, self.current_user())
+            response_album = public_album(album, self.current_user(), self.request_origin())
             response_created = [
                 item for item in response_album.get("photos", [])
                 if item.get("id") in queued
@@ -5818,7 +5893,9 @@ class AppHandler(BaseHTTPRequestHandler):
         limit = params.get("limit", ["50"])[0]
         before = params.get("before", ["0"])[0]
         try:
-            activities = list_album_activities(album_id, int(limit or 50), int(before or 0))
+            # Keep the legacy activities endpoint aligned with collaboration records.
+            # Approval and permission history is exposed through the request APIs.
+            activities = list_album_collaboration_records(album_id, int(limit or 50), int(before or 0), self.request_origin())
         except ValueError:
             return self.send_error_json("Invalid pagination")
         return self.send_json({"activities": activities})
@@ -5828,7 +5905,7 @@ class AppHandler(BaseHTTPRequestHandler):
         limit = params.get("limit", ["50"])[0]
         before = params.get("before", ["0"])[0]
         try:
-            records = list_album_activities(album_id, int(limit or 50), int(before or 0))
+            records = list_album_collaboration_records(album_id, int(limit or 50), int(before or 0), self.request_origin())
         except ValueError:
             return self.send_error_json("Invalid pagination")
         return self.send_json({"records": records})
@@ -6026,6 +6103,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 data={"requestId": request_id, "applicantUserId": current_user["id"], "albumName": album_name},
             )
             notified += 1
+        create_notification(
+            current_user["id"],
+            "album.join_submitted",
+            "加入申请已提交",
+            "你申请加入「%s」，请等待相册管理员审批" % album_name,
+            album_id=row["album_id"],
+            actor=current_user,
+            data={"requestId": request_id, "status": "pending", "albumName": album_name},
+        )
         LOGGER.info("album_id=%s user_id=%s request_id=%s", row["album_id"], current_user["id"], request_id, extra={"event": "invite.request"})
         LOGGER.info("album_id=%s request_id=%s admins=%d", row["album_id"], request_id, notified, extra={"event": "notification.join_request"})
         return self.send_json({"status": "pending", "requestId": request_id, "message": "申请已提交，等待管理员批准"}, 201)
@@ -6037,9 +6123,13 @@ class AppHandler(BaseHTTPRequestHandler):
             rows = conn.execute(
                 """
                 SELECT r.id, r.album_id, r.invite_id, r.user_id, r.status, r.created_at, r.reviewed_by, r.reviewed_at,
-                       u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                       u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json,
+                       ru.id AS reviewer_id, ru.username AS reviewer_username, ru.nickname AS reviewer_nickname,
+                       ru.avatar_url AS reviewer_avatar_url, ru.avatar_object_key AS reviewer_avatar_object_key,
+                       ru.has_face_profile AS reviewer_has_face_profile, ru.data_json AS reviewer_data_json
                 FROM album_join_requests r
                 JOIN users u ON u.id = r.user_id
+                LEFT JOIN users ru ON ru.id = r.reviewed_by
                 WHERE r.album_id = ?
                 ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,
                          COALESCE(r.reviewed_at, r.created_at) DESC, r.created_at DESC
@@ -6064,6 +6154,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "createdAt": row["created_at"],
                 "reviewedAt": row["reviewed_at"],
                 "user": public_user(user, self.request_origin()),
+                "reviewedByUser": public_reviewer_user(row, self.request_origin()),
             })
         return self.send_json({"requests": requests})
 
@@ -6132,7 +6223,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json("只有相册创建人可以执行这个操作", 403)
             album["permissions"] = normalize_album_permissions(payload.get("permissions") if isinstance(payload, dict) else {})
             save_db(db)
-            response = public_album(album, current_user)
+            response = public_album(album, current_user, self.request_origin())
         return self.send_json({"album": response})
 
     def update_album_member_permissions_request(self, album_id, user_id, current_user):
@@ -6151,7 +6242,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return self.send_error_json("协作用户不存在", 404)
         with LOCK:
             album = find_album(load_db(), album_id)
-        return self.send_json({"album": public_album(album, current_user) if album else None})
+        return self.send_json({"album": public_album(album, current_user, self.request_origin()) if album else None})
 
     def remove_album_member_request(self, album_id, user_id, current_user):
         with LOCK:
@@ -6167,7 +6258,7 @@ class AppHandler(BaseHTTPRequestHandler):
         LOGGER.info("album_id=%s user_id=%s actor=%s", album_id, user_id, current_user["id"], extra={"event": "album.member_remove"})
         with LOCK:
             album = find_album(load_db(), album_id)
-        return self.send_json({"album": public_album(album, current_user) if album else None, "removedUserId": user_id})
+        return self.send_json({"album": public_album(album, current_user, self.request_origin()) if album else None, "removedUserId": user_id})
 
     def create_permission_request(self, album_id, current_user):
         if not sqlite_enabled():
@@ -6226,20 +6317,6 @@ class AppHandler(BaseHTTPRequestHandler):
         album_name = album_display_name(album)
         applicant_name = actor_display_name(current_user, "协作用户")
         requested_label = permission_labels(requested)
-        activity = record_album_activity(
-            album_id,
-            "permission_request.created",
-            actor=current_user,
-            target_type="permission_request",
-            target_id=request_id,
-            message="%s 申请开通%s权限" % (applicant_name, requested_label),
-            data={
-                "requestId": request_id,
-                "requestUserId": current_user["id"],
-                "albumName": album_name,
-                "requestedPermissions": requested,
-            },
-        )
         owner_payload = album_owner_user(album, self.request_origin()) or {}
         owner_id = owner_payload.get("id") or album.get("ownerUserId") or album.get("createdByUserId")
         if owner_id and owner_id != current_user["id"]:
@@ -6249,10 +6326,18 @@ class AppHandler(BaseHTTPRequestHandler):
                 "新的权限申请",
                 "%s 申请开通「%s」的%s权限" % (applicant_name, album_name, requested_label),
                 album_id=album_id,
-                activity_id=(activity or {}).get("id", ""),
                 actor=current_user,
                 data={"requestId": request_id, "applicantUserId": current_user["id"], "albumName": album_name, "requestedPermissions": requested},
             )
+        create_notification(
+            current_user["id"],
+            "album.permission_submitted",
+            "权限申请已提交",
+            "你申请开通「%s」的%s权限，请等待创建者审批" % (album_name, requested_label),
+            album_id=album_id,
+            actor=current_user,
+            data={"requestId": request_id, "status": "pending", "albumName": album_name, "requestedPermissions": requested},
+        )
         LOGGER.info("album_id=%s user_id=%s request_id=%s", album_id, current_user["id"], request_id, extra={"event": "permission.request"})
         return self.send_json({"status": "pending", "requestId": request_id, "message": "权限申请已提交，等待创建者审批"}, 201)
 
@@ -6270,10 +6355,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     """
                     SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
                            r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
-                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json,
+                           ru.id AS reviewer_id, ru.username AS reviewer_username, ru.nickname AS reviewer_nickname,
+                           ru.avatar_url AS reviewer_avatar_url, ru.avatar_object_key AS reviewer_avatar_object_key,
+                           ru.has_face_profile AS reviewer_has_face_profile, ru.data_json AS reviewer_data_json
                     FROM album_permission_requests r
                     JOIN users u ON u.id = r.user_id
-                    WHERE r.album_id = ?
+                    LEFT JOIN users ru ON ru.id = r.reviewed_by
+                    WHERE r.album_id = ? AND r.status IN ('pending', 'approved', 'rejected')
                     ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,
                              COALESCE(r.reviewed_at, r.created_at) DESC, r.created_at DESC
                     """,
@@ -6284,12 +6373,18 @@ class AppHandler(BaseHTTPRequestHandler):
                     """
                     SELECT r.id, r.album_id, r.user_id, r.status, r.requested_permissions_json,
                            r.current_permissions_json, r.created_at, r.reviewed_by, r.reviewed_at,
-                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json
+                           u.username, u.nickname, u.avatar_url, u.avatar_object_key, u.has_face_profile, u.data_json,
+                           ru.id AS reviewer_id, ru.username AS reviewer_username, ru.nickname AS reviewer_nickname,
+                           ru.avatar_url AS reviewer_avatar_url, ru.avatar_object_key AS reviewer_avatar_object_key,
+                           ru.has_face_profile AS reviewer_has_face_profile, ru.data_json AS reviewer_data_json
                     FROM album_permission_requests r
                     JOIN users u ON u.id = r.user_id
+                    LEFT JOIN users ru ON ru.id = r.reviewed_by
                     WHERE r.album_id = ? AND r.user_id = ?
-                    ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC
-                    LIMIT 10
+                      AND r.status IN ('pending', 'approved', 'rejected', 'cancelled')
+                    ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,
+                             COALESCE(r.reviewed_at, r.created_at) DESC, r.created_at DESC
+                    LIMIT 1
                     """,
                     (album_id, current_user.get("id")),
                 ).fetchall()
@@ -6328,16 +6423,15 @@ class AppHandler(BaseHTTPRequestHandler):
             requested = normalize_album_permissions(json.loads(request["requested_permissions_json"] or "{}"))
         except (TypeError, json.JSONDecodeError):
             requested = normalize_album_permissions()
-        record_album_activity(
-            album_id,
-            "permission_request.cancelled",
+        create_notification(
+            current_user["id"],
+            "album.permission_cancelled",
+            "权限申请已撤销",
+            "你已撤销「%s」的%s权限申请" % (album_display_name(album), permission_labels(requested)),
+            album_id=album_id,
             actor=current_user,
-            target_type="permission_request",
-            target_id=request_id,
-            message="%s 撤销了%s权限申请" % (actor_display_name(current_user, "协作用户"), permission_labels(requested)),
             data={
                 "requestId": request_id,
-                "requestUserId": current_user["id"],
                 "status": "cancelled",
                 "albumName": album_display_name(album),
                 "requestedPermissions": requested,
@@ -6385,36 +6479,17 @@ class AppHandler(BaseHTTPRequestHandler):
         with LOCK:
             album = find_album(load_db(), album_id)
         album_name = album_display_name(album)
-        user_payload = json.loads(request["data_json"] or "{}")
-        user_payload.update({"id": request["user_id"], "username": request["username"], "nickname": request["nickname"]})
-        requester_name = actor_display_name(user_payload, "协作用户")
         requested_label = permission_labels(requested)
-        activity = record_album_activity(
-            album_id,
-            "permission_request.%s" % next_status,
-            actor=current_user,
-            target_type="permission_request",
-            target_id=request_id,
-            message="%s %s了 %s 的%s权限申请" % (actor_display_name(current_user), "批准" if action == "approve" else "拒绝", requester_name, requested_label),
-            data={
-                "requestId": request_id,
-                "requestUserId": request["user_id"],
-                "status": next_status,
-                "albumName": album_name,
-                "requestedPermissions": requested,
-            },
-        )
         create_notification(
             request["user_id"],
             "album.permission_%s" % next_status,
             "权限申请已%s" % ("通过" if action == "approve" else "拒绝"),
             "你在「%s」的%s权限申请已%s" % (album_name, requested_label, "通过" if action == "approve" else "拒绝"),
             album_id=album_id,
-            activity_id=(activity or {}).get("id", ""),
             actor=current_user,
             data={"requestId": request_id, "status": next_status, "albumName": album_name, "requestedPermissions": requested},
         )
-        return self.send_json({"status": next_status, "album": public_album(album, current_user) if album else None})
+        return self.send_json({"status": next_status, "album": public_album(album, current_user, self.request_origin()) if album else None})
 
     def review_join_request(self, album_id, request_id, action, current_user):
         if not sqlite_enabled():
@@ -6457,26 +6532,16 @@ class AppHandler(BaseHTTPRequestHandler):
         with LOCK:
             album = find_album(load_db(), album_id)
         album_name = album_display_name(album)
-        activity = record_album_activity(
-            album_id,
-            "join_request.%s" % next_status,
-            actor=current_user,
-            target_type="join_request",
-            target_id=request_id,
-            message="%s %s了加入申请" % (actor_display_name(current_user), "批准" if action == "approve" else "拒绝"),
-            data={"requestId": request_id, "requestUserId": request["user_id"], "status": next_status, "albumName": album_name},
-        )
         create_notification(
             request["user_id"],
             "album.join_%s" % next_status,
             "加入申请已%s" % ("通过" if action == "approve" else "拒绝"),
             "你加入「%s」的申请已%s" % (album_name, "通过" if action == "approve" else "拒绝"),
             album_id=album_id,
-            activity_id=(activity or {}).get("id", ""),
             actor=current_user,
             data={"requestId": request_id, "status": next_status, "albumName": album_name},
         )
-        return self.send_json({"status": next_status, "album": public_album(album, current_user) if album else None})
+        return self.send_json({"status": next_status, "album": public_album(album, current_user, self.request_origin()) if album else None})
 
     def claim_worker_job(self):
         if not self.worker_authorized():
@@ -6584,7 +6649,7 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "worker.complete_saved"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def reanalyze_album_request(self, album_id):
         queued = []
@@ -6603,7 +6668,7 @@ class AppHandler(BaseHTTPRequestHandler):
         for photo_id in queued:
             enqueue_photo_job(album_id, photo_id)
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.reanalyze"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def merge_folder_request(self, album_id, source_folder_id):
         payload, error = self.read_json_body()
@@ -6630,7 +6695,7 @@ class AppHandler(BaseHTTPRequestHandler):
             target_folder_id,
             extra={"event": "folder.merge"},
         )
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def rename_folder_request(self, album_id, folder_id):
         payload, error = self.read_json_body()
@@ -6647,7 +6712,7 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.rename"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def rename_album_request(self, album_id):
         payload, error = self.read_json_body()
@@ -6663,7 +6728,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(rename_error)
             save_db(db)
         LOGGER.info("album_id=%s", album_id, extra={"event": "album.rename"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def mark_no_face_request(self, album_id, source_folder_id):
         with LOCK:
@@ -6673,14 +6738,14 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json("Album not found", 404)
             target = get_no_face_folder(album)
             if source_folder_id == target["id"]:
-                return self.send_json({"album": public_album(album, self.current_user())})
+                return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
             _, merge_error = merge_folder(album, source_folder_id, target["id"])
             if merge_error:
                 return self.send_error_json(merge_error)
             save_db(db)
         enqueue_album_match_jobs_for_album(album_id)
         LOGGER.info("album_id=%s source_folder_id=%s", album_id, source_folder_id, extra={"event": "folder.mark_no_face"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def move_photo_request(self, album_id, photo_id):
         payload, error = self.read_json_body()
@@ -6707,7 +6772,7 @@ class AppHandler(BaseHTTPRequestHandler):
             target_folder_id,
             extra={"event": "photo.move"},
         )
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def reclassify_photo_request(self, album_id, photo_id):
         with LOCK:
@@ -6723,7 +6788,7 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         enqueue_photo_job(album_id, photo_id)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.reclassify"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def delete_photo_request(self, album_id, photo_id):
         current_user = self.current_user()
@@ -6752,7 +6817,7 @@ class AppHandler(BaseHTTPRequestHandler):
             )
             save_db(db)
         LOGGER.info("album_id=%s photo_id=%s", album_id, photo_id, extra={"event": "photo.delete_request"})
-        return self.send_json({"album": public_album(album, self.current_user())})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
 
     def delete_selected_photos(self, album_id):
         payload, error = self.read_json_body()
@@ -6800,7 +6865,7 @@ class AppHandler(BaseHTTPRequestHandler):
         LOGGER.info("album_id=%s deleted=%d missing=%d forbidden=%d", album_id, deleted, len(missing), len(forbidden), extra={"event": "photo.delete_selected"})
         if forbidden and not deleted:
             return self.send_error_json("你没有删除所选照片的权限", 403)
-        return self.send_json({"album": public_album(album, self.current_user()), "deleted": deleted, "missing": missing, "forbidden": forbidden})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin()), "deleted": deleted, "missing": missing, "forbidden": forbidden})
 
     def delete_folder_request(self, album_id, folder_id):
         with LOCK:
@@ -6815,7 +6880,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_error_json(delete_error, 404)
             save_db(db)
         LOGGER.info("album_id=%s folder_id=%s", album_id, folder_id, extra={"event": "folder.delete_request"})
-        return self.send_json({"album": public_album(album, self.current_user()), "deleted": result})
+        return self.send_json({"album": public_album(album, self.current_user(), self.request_origin()), "deleted": result})
 
     def delete_album_request(self, album_id):
         with LOCK:
@@ -6841,18 +6906,6 @@ class AppHandler(BaseHTTPRequestHandler):
     def leave_album_request(self, album_id, current_user):
         if not remove_album_member(album_id, current_user.get("id")):
             return self.send_error_json("你还不是这个相册的协作用户", 404)
-        with LOCK:
-            album = find_album(load_db(), album_id)
-        album_name = album_display_name(album)
-        record_album_activity(
-            album_id,
-            "album.member_left",
-            actor=current_user,
-            target_type="member",
-            target_id=current_user.get("id"),
-            message="%s 退出了相册" % actor_display_name(current_user),
-            data={"albumName": album_name, "userId": current_user.get("id")},
-        )
         LOGGER.info("album_id=%s user_id=%s", album_id, current_user.get("id"), extra={"event": "album.leave"})
         return self.send_json({"leftAlbumId": album_id})
 
@@ -6995,7 +7048,10 @@ class AppHandler(BaseHTTPRequestHandler):
         logo_url = urljoin(self.request_origin(), SHARE_IMAGE_PATH)
         page_title = "加入 PicMe 相册：%s" % album_name
         page_description = photo_count or "好友邀请你加入 PicMe 旅行共享相册"
-        download_url = APP_DOWNLOAD_URL or "#"
+        ios_download_url = IOS_APP_STORE_URL or "#"
+        android_download_url = ANDROID_DOWNLOAD_URL or "#"
+        ios_download_label = "下载 iOS 版" if IOS_APP_STORE_URL else "iOS 下载链接准备中"
+        android_download_label = "下载 Android 版" if ANDROID_DOWNLOAD_URL else "Android 下载链接准备中"
         body = """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -7027,13 +7083,15 @@ class AppHandler(BaseHTTPRequestHandler):
       <p class="eyebrow">PicMe album invite</p>
       <h1>%s</h1>
       <p>%s</p>
-      <strong class="join-code">%s</strong>
+      <button class="join-code" type="button" data-copy-code="%s" aria-label="复制相册码">%s</button>
+      <span class="join-copy-status" aria-live="polite">点击相册码复制</span>
       <div class="join-actions">
         <a class="join-primary" data-universal-link="%s" data-android-intent="%s" href="%s">打开识我 App</a>
         <a class="join-secondary" href="/?invite=%s">网页登录并申请加入</a>
-        <a class="join-secondary" href="%s">%s</a>
+        <a class="join-secondary" data-platform-download="ios" href="%s">%s</a>
+        <a class="join-secondary" data-platform-download="android" href="%s">%s</a>
       </div>
-      <p class="join-hint">如果已经安装 App，点击上方按钮会直接打开对应相册；未安装时请先下载 App，或在网页端登录后提交加入申请。</p>
+      <p class="join-hint">如果已经安装 App，点击上方按钮会直接打开对应相册；未安装时可按手机系统选择下载入口，或在网页端登录后提交加入申请。</p>
     </section>
   </main>
   <script>
@@ -7044,6 +7102,23 @@ class AppHandler(BaseHTTPRequestHandler):
         link.href = link.dataset.androidIntent || link.href;
       } else {
         link.href = link.dataset.universalLink || link.href;
+      }
+      var codeButton = document.querySelector("[data-copy-code]");
+      var copyStatus = document.querySelector(".join-copy-status");
+      if (codeButton) {
+        codeButton.addEventListener("click", function () {
+          var code = codeButton.dataset.copyCode || "";
+          function copied() {
+            if (copyStatus) copyStatus.textContent = "已复制相册码 " + code;
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(copied).catch(function () {
+              window.prompt("复制相册码", code);
+            });
+          } else {
+            window.prompt("复制相册码", code);
+          }
+        });
       }
     })();
     window.setTimeout(function () {
@@ -7066,12 +7141,15 @@ class AppHandler(BaseHTTPRequestHandler):
             html.escape(album_name),
             html.escape(photo_count or "好友邀请你加入这个旅行相册"),
             html.escape(clean_code),
+            html.escape(clean_code),
             html.escape(share_url),
             html.escape(intent_url),
             html.escape(share_url),
             quote(clean_code),
-            html.escape(download_url),
-            "下载识我 App" if APP_DOWNLOAD_URL else "下载链接准备中",
+            html.escape(ios_download_url),
+            html.escape(ios_download_label),
+            html.escape(android_download_url),
+            html.escape(android_download_label),
         )
         return self.send_bytes(body, "text/html; charset=utf-8", cache_control="private, max-age=60")
 

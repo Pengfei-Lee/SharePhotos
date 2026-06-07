@@ -1,24 +1,42 @@
 package com.sharephotos.app;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
+import android.graphics.drawable.ColorDrawable;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.provider.MediaStore;
 import android.text.InputType;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.MediaController;
 import android.widget.Button;
 import android.widget.EditText;
@@ -28,21 +46,39 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.VideoView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.MultiFormatWriter;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.NotFoundException;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.Result;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.HybridBinarizer;
+import com.google.zxing.common.BitMatrix;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +86,12 @@ import java.util.UUID;
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_FILES = 1001;
     private static final int REQUEST_PICK_AVATAR = 1002;
+    private static final int REQUEST_PICK_QR_IMAGE = 1003;
+    private static final int REQUEST_CAPTURE_QR = 1004;
+    private static final int REQUEST_CAMERA_PERMISSION = 1005;
+    private static final int REQUEST_PICK_REGISTER_AVATAR = 1006;
+    private static final int REQUEST_WRITE_EXTERNAL_STORAGE = 1007;
+    private static final int REQUEST_POST_NOTIFICATIONS = 1008;
     private static final String PRODUCTION_BASE_URL = "https://picme.me";
     private static final String PREFS = "picme-auth";
     private static final String CACHE_ALBUMS = "cache.albums";
@@ -58,22 +100,72 @@ public class MainActivity extends Activity {
     private static final int AQUA = Color.rgb(28, 194, 199);
     private static final int PRIMARY = Color.rgb(7, 22, 30);
     private static final int SECONDARY = Color.rgb(120, 134, 140);
+    private static final long TRANSIENT_STATUS_MS = 4000L;
 
     private SharedPreferences prefs;
     private LinearLayout root;
     private TextView statusText;
+    private Button messageButton;
+    private Dialog messageDialog;
+    private Dialog managementDialog;
+    private String activeManagementPageTitle = "";
     private EditText usernameInput;
     private EditText passwordInput;
     private EditText inviteCodeInput;
-    private EditText uploadAlbumIdInput;
-    private EditText uploaderInput;
+    private String pendingJoinCode = "";
+    private String loginNoticeText = "";
+    private String pendingUploader = "";
     private EditText registerUsernameInput;
     private EditText registerNicknameInput;
     private EditText registerPasswordInput;
+    private EditText registerConfirmPasswordInput;
+    private ImageView registerAvatarPreview;
+    private Uri registerAvatarUri;
     private JSONArray albums = new JSONArray();
     private JSONObject currentUser;
+    private JSONObject pendingNotificationMessage;
+    private JSONObject pendingMessageRoute;
     private String selectedAlbumId = "";
+    private String currentScreen = "login";
+    private String photoReturnScreen = "album";
     private JSONObject currentAlbum;
+    private String activeFolderId = "";
+    private String activeAlbumTab = "my";
+    private boolean photoSelectionMode = false;
+    private Set<String> selectedPhotoIds = new HashSet<>();
+    private int unreadMessageCount = 0;
+    private volatile boolean isUploading = false;
+    private volatile String activeUploadAlbumId = "";
+    private String pendingUploadAlbumId = "";
+    private volatile boolean uploadCancelRequested = false;
+    private volatile int uploadSelectedCount = 0;
+    private volatile int uploadUploadedCount = 0;
+    private volatile String uploadProgressText = "";
+    private final Set<String> uploadBaselinePhotoIds = new HashSet<>();
+    private final Set<String> uploadCreatedPhotoIds = new HashSet<>();
+    private volatile int albumRecognitionPollRevision = 0;
+    private volatile int avatarRecognitionPollRevision = 0;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private boolean transientStatusVisible = false;
+    private View transientStatusView;
+    private Runnable transientStatusAction;
+    private final Runnable clearTransientStatusRunnable = () -> clearTransientStatus(false);
+    private Runnable pendingInvitePermissionSave;
+    private Runnable pendingLegacyWriteAction;
+    private final Map<String, Runnable> pendingMemberPermissionSaves = new HashMap<>();
+    private final LruCache<String, Bitmap> imageCache = new LruCache<String, Bitmap>(32 * 1024) {
+        @Override
+        protected int sizeOf(String key, Bitmap value) {
+            return Math.max(1, value.getByteCount() / 1024);
+        }
+    };
+    private Drawable transientPreviousBackground = null;
+    private int transientPreviousTextColor = SECONDARY;
+    private Typeface transientPreviousTypeface = Typeface.DEFAULT;
+    private int transientPreviousPaddingLeft = 0;
+    private int transientPreviousPaddingTop = 0;
+    private int transientPreviousPaddingRight = 0;
+    private int transientPreviousPaddingBottom = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,10 +176,13 @@ public class MainActivity extends Activity {
             showHome();
             loadAlbums();
             loadMe();
+            MessageNotificationJobService.schedule(this);
         } else {
+            MessageNotificationJobService.cancel(this);
             showLogin();
         }
         handleJoinIntent(getIntent());
+        handleNotificationIntent(getIntent());
     }
 
     @Override
@@ -95,9 +190,43 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleJoinIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (transientStatusVisible
+                && (event.getActionMasked() == MotionEvent.ACTION_DOWN || event.getActionMasked() == MotionEvent.ACTION_MOVE)) {
+            boolean keepForClickableTap = transientStatusAction != null
+                    && event.getActionMasked() == MotionEvent.ACTION_DOWN
+                    && isTouchInsideStatus(event);
+            if (!keepForClickableTap) {
+                clearTransientStatus(true);
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if ("register".equals(currentScreen)) {
+            showLogin();
+        } else if ("photo".equals(currentScreen)) {
+            showCurrentAlbumOrHome();
+        } else if ("folder".equals(currentScreen)) {
+            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+            if (album != null) showAlbumDetail(album);
+            else showHome();
+        } else if ("album".equals(currentScreen)) {
+            showHome();
+        } else {
+            finish();
+        }
     }
 
     private void showLogin() {
+        currentScreen = "login";
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackground(softBackground());
@@ -109,12 +238,22 @@ public class MainActivity extends Activity {
         scroll.addView(root, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         addCenteredBrand(root, dp(82), 38, 17);
-        spacer(dp(58));
+        boolean hasLoginNotice = loginNoticeText != null && !loginNoticeText.trim().isEmpty();
+        spacer(dp(hasLoginNotice ? 26 : 58));
 
         TextView title = text("登录", 40, PRIMARY, true);
-        title.setGravity(Gravity.LEFT);
+        title.setGravity(Gravity.START);
         root.addView(title, matchWrap());
         spacer(dp(22));
+
+        if (hasLoginNotice) {
+            TextView notice = text(loginNoticeText.trim(), 16, TEAL, true);
+            notice.setPadding(dp(14), dp(12), dp(14), dp(12));
+            notice.setBackground(round(Color.argb(242, 255, 255, 255), dp(18), Color.rgb(205, 244, 244), dp(2)));
+            LinearLayout.LayoutParams noticeParams = matchWrap();
+            noticeParams.setMargins(0, 0, 0, dp(18));
+            root.addView(notice, noticeParams);
+        }
 
         usernameInput = field("  登录账号", false);
         passwordInput = field("  密码", true);
@@ -122,7 +261,7 @@ public class MainActivity extends Activity {
         root.addView(passwordInput, fieldParams());
 
         TextView forgot = text("忘记密码？", 17, AQUA, true);
-        forgot.setGravity(Gravity.RIGHT);
+        forgot.setGravity(Gravity.END);
         LinearLayout.LayoutParams forgotParams = matchWrap();
         forgotParams.setMargins(0, 0, dp(4), dp(34));
         root.addView(forgot, forgotParams);
@@ -151,18 +290,19 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        currentScreen = "home";
         FrameLayout frame = new FrameLayout(this);
         frame.setBackground(softBackground());
         ScrollView scroll = new ScrollView(this);
         root = vertical();
-        root.setPadding(dp(22), dp(58), dp(22), dp(118));
+        root.setPadding(dp(18), dp(24), dp(18), dp(124));
         scroll.addView(root);
         frame.addView(scroll);
 
         LinearLayout top = horizontal();
         top.setGravity(Gravity.CENTER_VERTICAL);
         ImageView logo = new ImageView(this);
-        logo.setImageResource(getResources().getIdentifier("picme_logo", "drawable", getPackageName()));
+        logo.setImageResource(R.drawable.picme_logo);
         top.addView(logo, new LinearLayout.LayoutParams(dp(58), dp(58)));
         LinearLayout brandBlock = vertical();
         LinearLayout brandRow = horizontal();
@@ -176,14 +316,21 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         brandParams.setMargins(dp(14), 0, dp(12), 0);
         top.addView(brandBlock, brandParams);
+        messageButton = floatingButton(messageButtonText());
+        messageButton.setTextSize(14);
+        messageButton.setOnClickListener(v -> showMessageCenter());
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(dp(54), dp(54));
+        messageParams.setMargins(0, 0, dp(8), 0);
+        top.addView(messageButton, messageParams);
         ImageView avatar = capsuleImage();
+        avatar.setContentDescription("我的资料");
         avatar.setOnClickListener(v -> showProfileDialog());
         loadImageInto(currentUser == null ? "" : currentUser.optString("avatarUrl", ""), avatar);
-        top.addView(avatar, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        top.addView(avatar, new LinearLayout.LayoutParams(dp(54), dp(54)));
         root.addView(top, matchWrap());
-        spacer(dp(40));
+        spacer(dp(24));
 
-        TextView title = text("相册", 46, Color.BLACK, true);
+        TextView title = text("相册", 38, Color.BLACK, true);
         root.addView(title, matchWrap());
         statusText = text("正在同步你的相册", 15, SECONDARY, false);
         root.addView(statusText, matchWrap());
@@ -191,10 +338,10 @@ public class MainActivity extends Activity {
 
         renderAlbums();
 
-        Button joinButton = floatingButton("▣");
-        joinButton.setTextSize(24);
+        Button joinButton = floatingButton("扫码");
+        joinButton.setTextSize(14);
         joinButton.setOnClickListener(v -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString()));
-        FrameLayout.LayoutParams joinParams = new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.BOTTOM | Gravity.RIGHT);
+        FrameLayout.LayoutParams joinParams = new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.BOTTOM | Gravity.END);
         joinParams.setMargins(0, 0, dp(24), dp(104));
         frame.addView(joinButton, joinParams);
 
@@ -205,6 +352,7 @@ public class MainActivity extends Activity {
         frame.addView(createButton, createParams);
 
         setContentView(frame);
+        loadUnreadMessageCount();
     }
 
     private void renderAlbums() {
@@ -238,11 +386,17 @@ public class MainActivity extends Activity {
 
     private View albumCard(JSONObject album) {
         LinearLayout card = card();
-        card.setPadding(dp(22), dp(22), dp(22), dp(24));
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
         card.setOnClickListener(v -> {
             selectedAlbumId = album.optString("id");
-            uploadAlbumIdInput = null;
+            activeAlbumTab = "my";
+            clearPhotoSelection();
             showAlbumDetail(album);
+            refreshAlbumDetail(album.optString("id"));
+        });
+        card.setOnLongClickListener(v -> {
+            showAlbumContextActions(album);
+            return true;
         });
 
         HorizontalScrollView scroller = new HorizontalScrollView(this);
@@ -259,12 +413,12 @@ public class MainActivity extends Activity {
                 String cover = folder.optString("coverUrl", "");
                 if (cover.isEmpty()) cover = firstPhotoCover(album, folder);
                 loadImageInto(cover, image);
-                LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(78), dp(96));
-                imageParams.setMargins(0, 0, dp(8), 0);
+                LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(64), dp(88));
+                imageParams.setMargins(0, 0, dp(14), 0);
                 item.addView(image, imageParams);
                 TextView name = text(folder.optString("name", "人物"), 14, SECONDARY, true);
                 name.setGravity(Gravity.CENTER);
-                item.addView(name, new LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT));
+                item.addView(name, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
                 faces.addView(item);
             }
         }
@@ -272,16 +426,32 @@ public class MainActivity extends Activity {
         card.addView(scroller, matchWrap());
         spacer(card, dp(18));
 
-        TextView name = text(album.optString("name", "未命名相册"), 34, Color.BLACK, true);
+        TextView name = text(album.optString("name", "未命名相册"), 30, Color.BLACK, true);
         card.addView(name, matchWrap());
         String meta = safeArray(album, "photos").length() + " 张朋友视角 · " + safeArray(album, "contributors").length() + " 位参与者";
-        TextView metaView = text(meta, 19, SECONDARY, true);
+        TextView metaView = text(meta, 17, SECONDARY, true);
         metaView.setPadding(0, dp(10), 0, 0);
         card.addView(metaView, matchWrap());
         return card;
     }
 
+    private void showAlbumContextActions(JSONObject album) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(album.optString("name", "相册"))
+                .setNegativeButton("取消", null);
+        if (canEditMembers(album)) {
+            builder.setItems(new String[]{"重命名相册", "删除相册"}, (dialog, which) -> {
+                if (which == 0) showRenameAlbumDialog(album);
+                else confirmDeleteOrLeaveAlbum(album);
+            });
+        } else {
+            builder.setItems(new String[]{"退出相册"}, (dialog, which) -> confirmDeleteOrLeaveAlbum(album));
+        }
+        builder.show();
+    }
+
     private void showAlbumDetail(JSONObject album) {
+        currentScreen = "album";
         selectedAlbumId = album.optString("id");
         currentAlbum = album;
         FrameLayout frame = new FrameLayout(this);
@@ -302,7 +472,10 @@ public class MainActivity extends Activity {
         date.setGravity(Gravity.CENTER);
         header.addView(date, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button share = ghostButton("分享");
-        share.setOnClickListener(v -> shareAlbum(album));
+        share.setOnClickListener(v -> {
+            if (permissionAllowed(album, "share")) shareAlbum(album);
+            else showPermissionDenied(album, "分享", "share");
+        });
         header.addView(share);
         content.addView(header, matchWrap());
 
@@ -316,92 +489,270 @@ public class MainActivity extends Activity {
         content.addView(stats, matchWrap());
 
         addTabRow(content, album);
-        addSectionTitle(content, "我的照片", myPhotoCount(album) + " 张由头像匹配到的照片");
-        LinearLayout myGrid = photoGrid(myPhotos(album), 6);
-        content.addView(myGrid, matchWrap());
-
-        addSectionTitle(content, "人物小相册", "按人脸自动整理");
-        HorizontalScrollView folderScroller = new HorizontalScrollView(this);
-        folderScroller.setHorizontalScrollBarEnabled(false);
-        LinearLayout foldersRow = horizontal();
-        JSONArray folders = album.optJSONArray("folders");
-        if (folders != null) {
-            for (int i = 0; i < folders.length(); i++) {
-                JSONObject folder = folders.optJSONObject(i);
-                if (folder == null) continue;
-                LinearLayout item = vertical();
-                item.setGravity(Gravity.CENTER);
-                ImageView image = capsuleImage();
-                String cover = folder.optString("coverUrl", "");
-                if (cover.isEmpty()) cover = firstPhotoCover(album, folder);
-                loadImageInto(cover, image);
-                item.addView(image, new LinearLayout.LayoutParams(dp(74), dp(98)));
-                TextView name = text(folder.optString("name", "人物"), 14, SECONDARY, true);
-                name.setGravity(Gravity.CENTER);
-                item.addView(name, new LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT));
-                item.setOnClickListener(v -> showFolderDialog(album, folder));
-                foldersRow.addView(item);
-            }
+        if ("people".equals(activeAlbumTab)) {
+            addSectionTitle(content, "人物小相册", safeArray(album, "folders").length() + " 个可下载小相册");
+            content.addView(folderGrid(album), matchWrap());
+        } else if ("all".equals(activeAlbumTab)) {
+            addSectionTitle(content, "全部照片", "缩略图优先，原图按需下载");
+            addPhotoSelectionToolbar(content, album, safeArray(album, "photos"));
+            content.addView(photoGrid(safeArray(album, "photos"), 60), matchWrap());
+        } else {
+            addSectionTitle(content, "我的照片", myPhotoCount(album) + " 张由头像匹配到的照片");
+            JSONArray visible = myPhotos(album);
+            addPhotoSelectionToolbar(content, album, visible);
+            content.addView(photoGrid(visible, 60), matchWrap());
         }
-        folderScroller.addView(foldersRow);
-        content.addView(folderScroller, matchWrap());
 
-        addSectionTitle(content, "全部照片", "缩略图优先，原图按需下载");
-        content.addView(photoGrid(safeArray(album, "photos"), 60), matchWrap());
+        spacer(content, dp(16));
+        LinearLayout actionRow = horizontal();
+        actionRow.setGravity(Gravity.CENTER);
+        addActionButton(actionRow, "分享\n相册", () -> {
+            if (permissionAllowed(album, "share")) shareAlbum(album);
+            else showPermissionDenied(album, "分享", "share");
+        });
+        addActionButton(actionRow, "协作\n用户", () -> showAlbumMembers(album));
+        addActionButton(actionRow, "协作\n记录", () -> showCollaborationRecords(album));
+        if (!canEditMembers(album)) {
+            addActionButton(actionRow, "申请\n权限", () -> showPermissionRequestDialog(album, ""));
+        }
+        if (isAdmin(album)) {
+            addActionButton(actionRow, "审批", () -> showApprovalCenter(album));
+        }
+        content.addView(actionRow, matchWrap());
 
-        Button upload = primaryButton("+  上传照片");
-        upload.setOnClickListener(v -> showAlbumActions(album));
-        FrameLayout.LayoutParams uploadParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64), Gravity.BOTTOM);
+        if (canEditMembers(album)) {
+            Button rename = ghostButton("重命名相册");
+            rename.setOnClickListener(v -> showRenameAlbumDialog(album));
+            content.addView(rename, matchWrap());
+        }
+
+        Button destructive = ghostButton(canEditMembers(album) ? "删除整个相册" : "退出这个相册");
+        destructive.setTextColor(Color.rgb(230, 74, 83));
+        destructive.setOnClickListener(v -> confirmDeleteOrLeaveAlbum(album));
+        LinearLayout.LayoutParams destructiveParams = matchWrap();
+        destructiveParams.setMargins(0, dp(12), 0, dp(10));
+        content.addView(destructive, destructiveParams);
+
+        View upload = albumUploadControl(album);
+        FrameLayout.LayoutParams uploadParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                isUploadingToAlbum(album) ? dp(104) : dp(64),
+                Gravity.BOTTOM
+        );
         uploadParams.setMargins(dp(28), 0, dp(28), dp(22));
         frame.addView(upload, uploadParams);
         setContentView(frame);
     }
 
-    private void showAlbumActions(JSONObject album) {
+    private View albumUploadControl(final JSONObject album) {
+        boolean uploadingHere = isUploadingToAlbum(album);
+        LinearLayout control = vertical();
+        control.setGravity(Gravity.CENTER_VERTICAL);
+        control.setPadding(dp(20), uploadingHere ? dp(12) : 0, dp(20), uploadingHere ? dp(12) : 0);
+        control.setBackground(round(TEAL, dp(28), TEAL, 0));
+        control.setElevation(dp(5));
+        control.setClickable(true);
+        control.setOnClickListener(v -> {
+            if (!permissionAllowed(album, "upload")) {
+                showPermissionDenied(album, "上传", "upload");
+            } else if (uploadingHere) {
+                confirmCancelUpload();
+            } else if (isUploading) {
+                showTransientStatus("另一个相册正在上传照片，请等待完成或回到该相册取消上传");
+            } else {
+                showUploadDialog(album);
+            }
+        });
+        if (!uploadingHere) {
+            TextView title = text("+  上传照片", 20, Color.WHITE, true);
+            title.setGravity(Gravity.CENTER);
+            control.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            return control;
+        }
+
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(text("正在上传照片", 17, Color.WHITE, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        int progress = uploadProgressPercent();
+        header.addView(text(progress + "%", 17, Color.WHITE, true), matchWrap());
+        control.addView(header, matchWrap());
+
+        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgress(progress);
+        progressBar.setProgressTintList(ColorStateList.valueOf(Color.WHITE));
+        progressBar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.argb(95, 255, 255, 255)));
+        LinearLayout.LayoutParams progressParams = matchWrap();
+        progressParams.height = dp(8);
+        progressParams.setMargins(0, dp(8), 0, dp(6));
+        control.addView(progressBar, progressParams);
+
+        TextView detail = text(
+                uploadProgressText == null || uploadProgressText.isEmpty()
+                        ? "点击可取消本次上传"
+                        : uploadProgressText + "，点击可取消",
+                12,
+                Color.WHITE,
+                true
+        );
+        detail.setMaxLines(2);
+        control.addView(detail, matchWrap());
+        return control;
+    }
+
+    private boolean isUploadingToAlbum(JSONObject album) {
+        return isUploading
+                && album != null
+                && !activeUploadAlbumId.isEmpty()
+                && activeUploadAlbumId.equals(album.optString("id"));
+    }
+
+    private int uploadProgressPercent() {
+        int total = Math.max(uploadSelectedCount, 1);
+        int done = Math.min(Math.max(uploadUploadedCount, 0), total);
+        return Math.round(done * 100f / total);
+    }
+
+    private void refreshAlbumDetail(final String albumId) {
+        if (albumId == null || albumId.isEmpty() || !hasLocalSession()) return;
+        new Thread(() -> {
+            try {
+                JSONObject response = requestJson("GET", "/api/albums/" + albumId, null, true, true);
+                JSONObject updated = response.optJSONObject("album");
+                if (updated == null && response.optString("id", "").equals(albumId)) updated = response;
+                if (updated == null) return;
+                replaceAlbumInCache(updated);
+                final JSONObject latest = updated;
+                runOnUiThread(() -> {
+                    if ("album".equals(currentScreen) && albumId.equals(selectedAlbumId)) {
+                        showAlbumDetail(latest);
+                    } else if ("folder".equals(currentScreen) && albumId.equals(selectedAlbumId)) {
+                        JSONObject folder = findFolderById(latest, activeFolderId);
+                        if (folder != null) showFolderDialog(latest, folder);
+                    }
+                });
+            } catch (Exception ignored) {
+                // Cached album remains usable when a background refresh is unavailable.
+            }
+        }).start();
+    }
+
+    private void replaceAlbumInCache(JSONObject updated) {
+        if (updated == null) return;
+        JSONArray next = new JSONArray();
+        boolean replaced = false;
+        for (int i = 0; i < albums.length(); i++) {
+            JSONObject item = albums.optJSONObject(i);
+            if (item != null && updated.optString("id").equals(item.optString("id"))) {
+                next.put(updated);
+                replaced = true;
+            } else if (item != null) {
+                next.put(item);
+            }
+        }
+        if (!replaced) next.put(updated);
+        albums = next;
+        currentAlbum = updated;
+        cacheAlbums();
+    }
+
+    private void showUploadDialog(JSONObject album) {
         LinearLayout panel = vertical();
         panel.setPadding(dp(18), dp(8), dp(18), dp(8));
-        uploadAlbumIdInput = field("相册 ID", false);
-        uploadAlbumIdInput.setText(album.optString("id"));
-        uploaderInput = field("上传者，不填则使用账号", false);
-        if (currentUser != null) uploaderInput.setText(currentUser.optString("nickname"));
-        panel.addView(text(album.optString("name", "相册"), 24, PRIMARY, true), matchWrap());
-        panel.addView(uploadAlbumIdInput, matchWrap());
-        panel.addView(uploaderInput, matchWrap());
-        Button upload = primaryButton("选择照片 / 视频并直传 OSS");
-        upload.setOnClickListener(v -> pickFiles());
-        panel.addView(upload, matchWrap());
-        new AlertDialog.Builder(this)
+        panel.addView(text("把手机里的朋友视角加进来", 24, PRIMARY, true), matchWrap());
+        EditText uploader = field("上传者，不填写则默认为访客", false);
+        uploader.setText(pendingUploader);
+        panel.addView(uploader, matchWrap());
+        Button choose = primaryButton("从系统相册选择照片或 Live Photo");
+        panel.addView(choose, matchWrap());
+        TextView hint = text("手机上可以一次多选；上传后由后台生成预览和人物小相册。", 13, SECONDARY, false);
+        hint.setPadding(0, dp(10), 0, 0);
+        panel.addView(hint, matchWrap());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(panel)
                 .setNegativeButton("关闭", null)
-                .show();
+                .create();
+        choose.setOnClickListener(v -> {
+            pendingUploader = uploader.getText().toString().trim();
+            pendingUploadAlbumId = album.optString("id", selectedAlbumId);
+            dialog.dismiss();
+            pickFiles();
+        });
+        dialog.show();
     }
 
     private void showRegisterDialog() {
+        currentScreen = "register";
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackground(softBackground());
         LinearLayout panel = vertical();
-        panel.setPadding(dp(22), dp(18), dp(22), dp(8));
-        addCenteredBrand(panel, dp(62), 27, 14);
-        spacer(panel, dp(20));
-        TextView title = text("创建新账号", 30, PRIMARY, true);
-        panel.addView(title, matchWrap());
+        panel.setPadding(dp(28), dp(24), dp(28), dp(96));
+        panel.setBackground(softBackground());
+        scroll.addView(panel, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        Button back = ghostButton("‹ 返回");
+        back.setOnClickListener(v -> showLogin());
+        header.addView(back, new LinearLayout.LayoutParams(dp(104), dp(52)));
+        TextView pageTitle = text("创建新账号", 22, PRIMARY, true);
+        pageTitle.setGravity(Gravity.CENTER);
+        header.addView(pageTitle, new LinearLayout.LayoutParams(0, dp(52), 1));
+        header.addView(new View(this), new LinearLayout.LayoutParams(dp(104), dp(52)));
+        panel.addView(header, matchWrap());
+        spacer(panel, dp(24));
+
+        panel.addView(text("推荐上传头像", 21, PRIMARY, true), matchWrap());
+        panel.addView(text("上传清晰的头像，有助于我们更准确地识别你并匹配专属照片。", 14, SECONDARY, false), matchWrap());
+        registerAvatarUri = null;
+        registerAvatarPreview = capsuleImage();
+        registerAvatarPreview.setContentDescription("选择头像");
+        registerAvatarPreview.setImageResource(android.R.drawable.ic_menu_camera);
+        registerAvatarPreview.setColorFilter(AQUA);
+        registerAvatarPreview.setOnClickListener(v -> pickRegisterAvatar());
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(132), dp(132));
+        avatarParams.gravity = Gravity.CENTER_HORIZONTAL;
+        avatarParams.setMargins(0, dp(14), 0, dp(10));
+        panel.addView(registerAvatarPreview, avatarParams);
+        Button chooseAvatar = ghostButton("选择头像（推荐）");
+        chooseAvatar.setOnClickListener(v -> pickRegisterAvatar());
+        panel.addView(chooseAvatar, matchWrap());
 
         registerNicknameInput = field("  昵称（显示在相册中）", false);
         registerUsernameInput = field("  登录账号", false);
         registerPasswordInput = field("  密码", true);
+        registerConfirmPasswordInput = field("  确认密码", true);
         panel.addView(registerNicknameInput, fieldParams());
         panel.addView(registerUsernameInput, fieldParams());
+        panel.addView(text("登录账号为 1-20 位字母、数字或下划线", 13, SECONDARY, false), matchWrap());
         panel.addView(registerPasswordInput, fieldParams());
+        panel.addView(text("密码为 6-20 位，可使用数字、字母和英文符号", 13, SECONDARY, false), matchWrap());
+        panel.addView(registerConfirmPasswordInput, fieldParams());
 
-        Button create = primaryButton("创建并登录");
+        Button create = primaryButton("注册");
         create.setOnClickListener(v -> register());
         LinearLayout.LayoutParams createParams = matchWrap();
         createParams.height = dp(60);
         createParams.setMargins(0, dp(12), 0, 0);
         panel.addView(create, createParams);
 
-        new AlertDialog.Builder(this)
-                .setView(panel)
-                .setNegativeButton("关闭", null)
-                .show();
+        Button login = ghostButton("已有账号？立即登录");
+        login.setOnClickListener(v -> showLogin());
+        panel.addView(login, matchWrap());
+        statusText = text("", 14, SECONDARY, false);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setPadding(0, dp(12), 0, 0);
+        panel.addView(statusText, matchWrap());
+        setContentView(scroll);
+    }
+
+    private void pickRegisterAvatar() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQUEST_PICK_REGISTER_AVATAR);
     }
 
     private void addTabRow(LinearLayout content, JSONObject album) {
@@ -412,11 +763,19 @@ public class MainActivity extends Activity {
                 "人物小相册\n" + safeArray(album, "folders").length(),
                 "全部照片\n" + safeArray(album, "photos").length()
         };
+        String[] keys = {"my", "people", "all"};
         for (int i = 0; i < labels.length; i++) {
-            TextView tab = text(labels[i], 16, i == 0 ? Color.WHITE : PRIMARY, true);
+            final String key = keys[i];
+            boolean selected = key.equals(activeAlbumTab);
+            TextView tab = text(labels[i], 16, selected ? Color.WHITE : PRIMARY, true);
             tab.setGravity(Gravity.CENTER);
             tab.setPadding(dp(8), dp(12), dp(8), dp(12));
-            tab.setBackground(round(i == 0 ? TEAL : Color.WHITE, dp(14), Color.rgb(218, 246, 241), dp(1)));
+            tab.setBackground(round(selected ? TEAL : Color.WHITE, dp(14), Color.rgb(218, 246, 241), dp(1)));
+            tab.setOnClickListener(v -> {
+                activeAlbumTab = key;
+                clearPhotoSelection();
+                showAlbumDetail(album);
+            });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(72), 1);
             params.setMargins(i == 0 ? 0 : dp(6), dp(18), i == labels.length - 1 ? 0 : dp(6), dp(10));
             tabs.addView(tab, params);
@@ -425,15 +784,34 @@ public class MainActivity extends Activity {
     }
 
     private void showProfileDialog() {
+        ScrollView scroll = new ScrollView(this);
         LinearLayout panel = vertical();
-        panel.setPadding(dp(20), dp(12), dp(20), dp(8));
+        panel.setPadding(dp(20), dp(14), dp(20), dp(28));
+        scroll.addView(panel);
+
+        panel.addView(text("上传清晰的人脸头像后，PicMe 会更准确地推荐属于你的照片", 16, SECONDARY, true), matchWrap());
+        spacer(panel, dp(22));
+
         ImageView avatar = capsuleImage();
+        avatar.setContentDescription("更换头像");
         loadImageInto(currentUser == null ? "" : currentUser.optString("avatarUrl", ""), avatar);
-        panel.addView(avatar, new LinearLayout.LayoutParams(dp(86), dp(86)));
+        avatar.setOnClickListener(v -> pickAvatar());
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(148), dp(148));
+        avatarParams.gravity = Gravity.CENTER_HORIZONTAL;
+        panel.addView(avatar, avatarParams);
 
         TextView title = text(currentUser == null ? "我的资料" : currentUser.optString("nickname", "我的资料"), 25, PRIMARY, true);
         title.setGravity(Gravity.CENTER);
         panel.addView(title, matchWrap());
+        TextView faceStatus = text(avatarRecognitionStatusText(), 14, currentUser != null && currentUser.optBoolean("hasFaceProfile") ? TEAL : SECONDARY, true);
+        faceStatus.setGravity(Gravity.CENTER);
+        panel.addView(faceStatus, matchWrap());
+        spacer(panel, dp(18));
+
+        panel.addView(profileInfoRow("昵称", currentUser == null ? "-" : currentUser.optString("nickname", "-")), matchWrap());
+        panel.addView(profileInfoRow("登录账号", currentUser == null ? "-" : "@" + currentUser.optString("username", "-")), matchWrap());
+        panel.addView(profileInfoRow("我的照片推荐", avatarRecognitionStatusText()), matchWrap());
+        spacer(panel, dp(18));
 
         EditText nickname = field("昵称", false);
         if (currentUser != null) nickname.setText(currentUser.optString("nickname", ""));
@@ -441,20 +819,43 @@ public class MainActivity extends Activity {
 
         Button saveNickname = primaryButton("保存昵称");
         saveNickname.setOnClickListener(v -> updateNickname(nickname.getText().toString()));
-        panel.addView(saveNickname, matchWrap());
+        LinearLayout.LayoutParams saveParams = matchWrap();
+        saveParams.height = dp(58);
+        panel.addView(saveNickname, saveParams);
 
-        Button uploadAvatar = ghostButton("更换头像");
+        Button uploadAvatar = outlineButton("更换头像");
         uploadAvatar.setOnClickListener(v -> pickAvatar());
-        panel.addView(uploadAvatar, matchWrap());
+        LinearLayout.LayoutParams uploadParams = matchWrap();
+        uploadParams.height = dp(58);
+        uploadParams.setMargins(0, dp(12), 0, 0);
+        panel.addView(uploadAvatar, uploadParams);
 
         Button logoutButton = ghostButton("退出登录");
-        logoutButton.setOnClickListener(v -> logout());
-        panel.addView(logoutButton, matchWrap());
+        logoutButton.setTextColor(Color.rgb(230, 74, 83));
+        LinearLayout.LayoutParams logoutParams = matchWrap();
+        logoutParams.height = dp(58);
+        logoutParams.setMargins(0, dp(28), 0, 0);
+        panel.addView(logoutButton, logoutParams);
+        logoutButton.setOnClickListener(v -> {
+            if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+            logout();
+        });
+        showManagedAlbumPage("我的资料", scroll);
+    }
 
-        new AlertDialog.Builder(this)
-                .setView(panel)
-                .setNegativeButton("关闭", null)
-                .show();
+    private View profileInfoRow(String label, String value) {
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(14), dp(16), dp(14));
+        row.setBackground(round(Color.argb(238, 255, 255, 255), dp(16), Color.rgb(218, 246, 241), dp(1)));
+        row.addView(text(label, 15, SECONDARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView content = text(value == null || value.isEmpty() ? "-" : value, 16, PRIMARY, true);
+        content.setGravity(Gravity.END);
+        row.addView(content, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams params = matchWrap();
+        params.setMargins(0, dp(6), 0, dp(6));
+        row.setLayoutParams(params);
+        return row;
     }
 
     private TextView statPill(String value) {
@@ -477,14 +878,275 @@ public class MainActivity extends Activity {
     }
 
     private void showFolderDialog(JSONObject album, JSONObject folder) {
+        currentScreen = "folder";
+        currentAlbum = album;
+        selectedAlbumId = album.optString("id", selectedAlbumId);
+        activeFolderId = folder.optString("id", activeFolderId);
+        JSONObject activeFolder = findFolderById(album, activeFolderId);
+        if (activeFolder == null) activeFolder = folder;
+
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(softBackground());
+        ScrollView scroll = new ScrollView(this);
         LinearLayout panel = vertical();
-        panel.setPadding(dp(12), dp(6), dp(12), dp(6));
-        panel.addView(text(folder.optString("name", "小相册"), 24, PRIMARY, true), matchWrap());
-        panel.addView(photoGrid(folderPhotos(album, folder), 30), matchWrap());
+        panel.setPadding(dp(18), dp(28), dp(18), dp(32));
+        scroll.addView(panel);
+        frame.addView(scroll);
+
+        Button back = ghostButton("‹ 返回相册");
+        back.setOnClickListener(v -> showAlbumDetail(album));
+        panel.addView(back, new LinearLayout.LayoutParams(dp(150), dp(52)));
+
+        HorizontalScrollView switcher = new HorizontalScrollView(this);
+        switcher.setHorizontalScrollBarEnabled(false);
+        LinearLayout folderButtons = horizontal();
+        JSONArray folders = safeArray(album, "folders");
+        for (int i = 0; i < folders.length(); i++) {
+            JSONObject item = folders.optJSONObject(i);
+            if (item == null) continue;
+            boolean selected = activeFolderId.equals(item.optString("id"));
+            Button button = selected ? primaryButton(item.optString("name", "人物")) : outlineButton(item.optString("name", "人物"));
+            button.setTextSize(15);
+            button.setOnClickListener(v -> {
+                clearPhotoSelection();
+                showFolderDialog(album, item);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(128), dp(52));
+            params.setMargins(0, dp(10), dp(10), dp(10));
+            folderButtons.addView(button, params);
+        }
+        switcher.addView(folderButtons);
+        panel.addView(switcher, matchWrap());
+
+        panel.addView(text(activeFolder.optString("name", "小相册"), 34, Color.BLACK, true), matchWrap());
+        JSONArray visiblePhotos = folderPhotos(album, activeFolder);
+        panel.addView(text(visiblePhotos.length() + " 张照片", 20, SECONDARY, true), matchWrap());
+
+        LinearLayout actions = horizontal();
+        JSONObject finalActiveFolder = activeFolder;
+        addActionButton(actions, "重命名", () -> showRenameFolderDialog(album, finalActiveFolder));
+        addActionButton(actions, "下载", () -> {
+            if (permissionAllowed(album, "download")) runWithLegacyWritePermission(() -> downloadFolder(album, finalActiveFolder));
+            else showPermissionDenied(album, "下载", "download");
+        });
+        addActionButton(actions, "删除", () -> {
+            if (permissionAllowed(album, "delete")) confirmDeleteFolder(album, finalActiveFolder);
+            else showPermissionDenied(album, "删除", "delete");
+        });
+        panel.addView(actions, matchWrap());
+        addPhotoSelectionToolbar(panel, album, visiblePhotos);
+        panel.addView(photoGrid(visiblePhotos, 120), matchWrap());
+        setContentView(frame);
+    }
+
+    private JSONObject findFolderById(JSONObject album, String folderId) {
+        JSONArray folders = safeArray(album, "folders");
+        for (int i = 0; i < folders.length(); i++) {
+            JSONObject folder = folders.optJSONObject(i);
+            if (folder != null && folderId.equals(folder.optString("id"))) return folder;
+        }
+        return null;
+    }
+
+    private void addPhotoSelectionToolbar(LinearLayout content, JSONObject album, JSONArray photos) {
+        LinearLayout toolbar = horizontal();
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        if (!photoSelectionMode) {
+            TextView hint = text("点照片查看，或进入选择模式批量操作", 14, SECONDARY, false);
+            toolbar.addView(hint, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            Button select = ghostButton("选择");
+            select.setOnClickListener(v -> {
+                photoSelectionMode = true;
+                selectedPhotoIds.clear();
+                refreshCurrentAlbumView();
+            });
+            toolbar.addView(select, new LinearLayout.LayoutParams(dp(86), dp(44)));
+        } else {
+            TextView count = text("已选择 " + selectedPhotoIds.size() + " 项", 15, PRIMARY, true);
+            toolbar.addView(count, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            Button all = ghostButton(allPhotosSelected(photos) ? "清空" : "全选");
+            all.setOnClickListener(v -> {
+                if (allPhotosSelected(photos)) {
+                    selectedPhotoIds.clear();
+                } else {
+                    selectedPhotoIds.clear();
+                    for (int i = 0; i < photos.length(); i++) {
+                        JSONObject photo = photos.optJSONObject(i);
+                        if (photo != null) selectedPhotoIds.add(photo.optString("id"));
+                    }
+                }
+                refreshCurrentAlbumView();
+            });
+            toolbar.addView(all, new LinearLayout.LayoutParams(dp(78), dp(44)));
+            Button more = ghostButton("操作");
+            more.setOnClickListener(v -> showSelectedPhotoActions(album, photos));
+            toolbar.addView(more, new LinearLayout.LayoutParams(dp(78), dp(44)));
+            Button cancel = ghostButton("取消");
+            cancel.setOnClickListener(v -> {
+                clearPhotoSelection();
+                refreshCurrentAlbumView();
+            });
+            toolbar.addView(cancel, new LinearLayout.LayoutParams(dp(78), dp(44)));
+        }
+        content.addView(toolbar, matchWrap());
+    }
+
+    private boolean allPhotosSelected(JSONArray photos) {
+        if (photos == null || photos.length() == 0) return false;
+        for (int i = 0; i < photos.length(); i++) {
+            JSONObject photo = photos.optJSONObject(i);
+            if (photo == null || !selectedPhotoIds.contains(photo.optString("id"))) return false;
+        }
+        return true;
+    }
+
+    private void clearPhotoSelection() {
+        photoSelectionMode = false;
+        selectedPhotoIds.clear();
+    }
+
+    private JSONArray selectedPhotos(JSONArray visiblePhotos) {
+        JSONArray result = new JSONArray();
+        if (visiblePhotos == null) return result;
+        for (int i = 0; i < visiblePhotos.length(); i++) {
+            JSONObject photo = visiblePhotos.optJSONObject(i);
+            if (photo != null && selectedPhotoIds.contains(photo.optString("id"))) result.put(photo);
+        }
+        return result;
+    }
+
+    private void showSelectedPhotoActions(final JSONObject album, final JSONArray visiblePhotos) {
+        JSONArray selected = selectedPhotos(visiblePhotos);
+        if (selected.length() == 0) {
+            statusText.setText("请先选择照片");
+            return;
+        }
         new AlertDialog.Builder(this)
-                .setView(panel)
-                .setNegativeButton("关闭", null)
+                .setTitle("操作所选照片")
+                .setItems(new String[]{"保存到系统相册", "下载照片包", "移动到小相册", "删除所选照片"}, (dialog, which) -> {
+                    if (which == 0) {
+                        if (permissionAllowed(album, "download")) runWithLegacyWritePermission(() -> saveSelectedPhotos(selected));
+                        else showPermissionDenied(album, "下载", "download");
+                    } else if (which == 1) {
+                        if (permissionAllowed(album, "download")) runWithLegacyWritePermission(() -> downloadSelectedPhotos(album, selected));
+                        else showPermissionDenied(album, "下载", "download");
+                    } else if (which == 2) {
+                        showMoveSelectedPhotosDialog(album, selected);
+                    } else {
+                        if (canDeletePhotos(album, selected)) confirmDeleteSelectedPhotos(album, selected);
+                        else showPermissionDenied(album, "删除", "delete");
+                    }
+                })
+                .setNegativeButton("取消", null)
                 .show();
+    }
+
+    private LinearLayout folderGrid(JSONObject album) {
+        LinearLayout wrapper = vertical();
+        JSONArray folders = album.optJSONArray("folders");
+        if (folders == null || folders.length() == 0) {
+            TextView empty = text("还没有人物小相册", 16, SECONDARY, false);
+            empty.setPadding(0, dp(18), 0, dp(18));
+            wrapper.addView(empty, matchWrap());
+            return wrapper;
+        }
+        LinearLayout row = null;
+        for (int i = 0; i < folders.length(); i++) {
+            if (i % 2 == 0) {
+                row = horizontal();
+                wrapper.addView(row, matchWrap());
+            }
+            JSONObject folder = folders.optJSONObject(i);
+            if (folder == null) continue;
+            LinearLayout item = card();
+            item.setPadding(dp(12), dp(12), dp(12), dp(14));
+            ImageView image = capsuleImage();
+            String cover = folder.optString("coverUrl", "");
+            if (cover.isEmpty()) cover = firstPhotoCover(album, folder);
+            loadImageInto(cover, image);
+            item.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
+            TextView name = text(folder.optString("name", "人物"), 22, PRIMARY, true);
+            name.setPadding(0, dp(10), 0, 0);
+            item.addView(name, matchWrap());
+            item.addView(text(safeArray(folder, "photoIds").length() + " 张", 15, SECONDARY, true), matchWrap());
+            item.setOnClickListener(v -> showFolderDialog(album, folder));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            params.setMargins(dp(4), dp(4), dp(4), dp(8));
+            row.addView(item, params);
+        }
+        return wrapper;
+    }
+
+    private void showRenameFolderDialog(final JSONObject album, final JSONObject folder) {
+        EditText name = field("小相册名称", false);
+        name.setText(folder.optString("name", ""));
+        new AlertDialog.Builder(this)
+                .setTitle("重命名小相册")
+                .setView(name)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存", (dialog, which) -> renameFolder(album, folder, name.getText().toString()))
+                .show();
+    }
+
+    private void renameFolder(final JSONObject album, final JSONObject folder, final String rawName) {
+        final String name = rawName == null ? "" : rawName.trim();
+        if (name.isEmpty()) {
+            statusText.setText("小相册名称不能为空");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("name", name);
+                JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/folders/" + folder.optString("id") + "/rename", body, true, true);
+                updateAlbumFromResponse(response);
+                runOnUiThread(() -> statusText.setText("小相册名已保存"));
+            } catch (final Exception error) {
+                showError("保存失败", error);
+            }
+        }).start();
+    }
+
+    private void downloadFolder(final JSONObject album, final JSONObject folder) {
+        statusText.setText("正在下载小相册...");
+        new Thread(() -> {
+            try {
+                JSONObject manifest = requestJson("GET", "/api/albums/" + album.optString("id") + "/folders/" + folder.optString("id") + "/download", null, true, true);
+                JSONArray files = manifest.optJSONArray("files");
+                if (files == null || files.length() == 0) throw new IllegalStateException("没有可下载的照片");
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject file = files.optJSONObject(i);
+                    if (file == null) continue;
+                    final int index = i + 1;
+                    runOnUiThread(() -> statusText.setText("正在保存第 " + index + "/" + files.length() + " 个文件"));
+                    saveUrlToMediaStore(file.optString("url", ""), file.optString("name", "picme-" + index), file.optString("mimeType", "application/octet-stream"));
+                }
+                runOnUiThread(() -> statusText.setText("小相册已保存到系统相册/下载目录"));
+            } catch (final Exception error) {
+                showError("下载失败", error);
+            }
+        }).start();
+    }
+
+    private void confirmDeleteFolder(final JSONObject album, final JSONObject folder) {
+        new AlertDialog.Builder(this)
+                .setTitle("删除小相册？")
+                .setMessage("会移除这个小相册分类，照片也会从相册中删除。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> deleteFolder(album, folder))
+                .show();
+    }
+
+    private void deleteFolder(final JSONObject album, final JSONObject folder) {
+        new Thread(() -> {
+            try {
+                JSONObject response = requestJson("DELETE", "/api/albums/" + album.optString("id") + "/folders/" + folder.optString("id"), null, true, true);
+                updateAlbumFromResponse(response);
+                runOnUiThread(() -> statusText.setText("小相册已删除"));
+            } catch (final Exception error) {
+                showError("删除失败", error);
+            }
+        }).start();
     }
 
     private LinearLayout photoGrid(JSONArray photos, int limit) {
@@ -513,16 +1175,42 @@ public class MainActivity extends Activity {
             cell.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             if (photo != null) {
                 loadImageInto(bestPhotoURL(photo), image);
+                boolean selected = selectedPhotoIds.contains(photo.optString("id"));
+                if (photoSelectionMode) {
+                    if (selected) {
+                        View veil = new View(this);
+                        veil.setBackgroundColor(Color.argb(80, 28, 194, 199));
+                        cell.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                    }
+                    TextView check = text(selected ? "✓" : "", 20, Color.WHITE, true);
+                    check.setGravity(Gravity.CENTER);
+                    check.setBackground(round(selected ? AQUA : Color.argb(115, 0, 0, 0), dp(18), Color.WHITE, dp(2)));
+                    FrameLayout.LayoutParams checkParams = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END | Gravity.TOP);
+                    checkParams.setMargins(0, dp(8), dp(8), 0);
+                    cell.addView(check, checkParams);
+                }
                 if ("live_photo".equals(photo.optString("type"))) {
                     TextView badge = text("◎ LIVE", 12, Color.WHITE, true);
                     badge.setGravity(Gravity.CENTER);
                     badge.setBackground(round(Color.argb(145, 0, 0, 0), dp(16), Color.TRANSPARENT, 0));
-                    FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(72), dp(30), Gravity.LEFT | Gravity.BOTTOM);
+                    FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(72), dp(30), Gravity.START | Gravity.BOTTOM);
                     badgeParams.setMargins(dp(8), 0, 0, dp(8));
                     cell.addView(badge, badgeParams);
                 }
                 final int photoIndex = i;
-                cell.setOnClickListener(v -> showPhotoViewer(photos, photoIndex));
+                cell.setOnClickListener(v -> {
+                    JSONObject tapped = photos.optJSONObject(photoIndex);
+                    if (tapped == null) return;
+                    if (photoSelectionMode) {
+                        String id = tapped.optString("id");
+                        if (selectedPhotoIds.contains(id)) selectedPhotoIds.remove(id);
+                        else selectedPhotoIds.add(id);
+                        JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+                        if (album != null) refreshCurrentAlbumView();
+                    } else {
+                        showPhotoViewer(photos, photoIndex);
+                    }
+                });
             }
             row.addView(cell);
         }
@@ -537,6 +1225,8 @@ public class MainActivity extends Activity {
 
     private void showPhotoViewer(final JSONArray photos, final int startIndex) {
         if (photos == null || photos.length() == 0) return;
+        if (!"photo".equals(currentScreen)) photoReturnScreen = currentScreen;
+        currentScreen = "photo";
         final int index = Math.max(0, Math.min(startIndex, photos.length() - 1));
         final JSONObject photo = photos.optJSONObject(index);
         if (photo == null) return;
@@ -551,17 +1241,13 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(12), dp(18), dp(12), dp(8));
         Button back = ghostButton("‹ 返回");
-        back.setOnClickListener(v -> {
-            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
-            if (album != null) showAlbumDetail(album);
-            else showHome();
-        });
+        back.setOnClickListener(v -> showCurrentAlbumOrHome());
         header.addView(back);
         TextView counter = text((index + 1) + " / " + photos.length(), 16, Color.WHITE, true);
         counter.setGravity(Gravity.CENTER);
         header.addView(counter, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button close = ghostButton("关闭");
-        close.setOnClickListener(v -> showHome());
+        close.setOnClickListener(v -> showCurrentAlbumOrHome());
         header.addView(close);
         content.addView(header, matchWrap());
 
@@ -579,7 +1265,28 @@ public class MainActivity extends Activity {
         Button next = ghostButton("下一张");
         next.setEnabled(index < photos.length() - 1);
         next.setOnClickListener(v -> showPhotoViewer(photos, index + 1));
+        Button save = ghostButton("保存");
+        save.setOnClickListener(v -> {
+            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+            if (album != null && !permissionAllowed(album, "download")) {
+                showPermissionDenied(album, "下载", "download");
+            } else {
+                runWithLegacyWritePermission(() -> savePhotoResource(photo));
+            }
+        });
+        Button delete = ghostButton("删除");
+        delete.setTextColor(Color.rgb(230, 74, 83));
+        delete.setOnClickListener(v -> {
+            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+            if (album != null && canDeletePhoto(album, photo)) {
+                confirmDeletePhoto(album, photo);
+            } else if (album != null) {
+                showPermissionDenied(album, "删除", "delete");
+            }
+        });
         actions.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
+        actions.addView(save, new LinearLayout.LayoutParams(0, dp(46), 1));
+        actions.addView(delete, new LinearLayout.LayoutParams(0, dp(46), 1));
         actions.addView(next, new LinearLayout.LayoutParams(0, dp(46), 1));
         content.addView(actions, matchWrap());
 
@@ -591,6 +1298,14 @@ public class MainActivity extends Activity {
             content.addView(live, liveParams);
         }
         setContentView(frame);
+    }
+
+    private void showCurrentAlbumOrHome() {
+        JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+        JSONObject folder = album == null ? null : findFolderById(album, activeFolderId);
+        if (album != null && "folder".equals(photoReturnScreen) && folder != null) showFolderDialog(album, folder);
+        else if (album != null) showAlbumDetail(album);
+        else showHome();
     }
 
     private void addSwipeNavigation(View target, JSONArray photos, int index) {
@@ -607,6 +1322,7 @@ public class MainActivity extends Activity {
                     if (delta > 0 && index > 0) showPhotoViewer(photos, index - 1);
                     return true;
                 }
+                view.performClick();
             }
             return true;
         });
@@ -634,7 +1350,7 @@ public class MainActivity extends Activity {
             } catch (final Exception error) {
                 runOnUiThread(() -> {
                     frame.removeView(loading);
-                    if (statusText != null) statusText.setText("Live Photo 预览失败：" + error.getMessage());
+                    showError("Live Photo 预览失败", error);
                 });
             }
         }).start();
@@ -650,24 +1366,384 @@ public class MainActivity extends Activity {
         return video == null ? "" : video.optString("url", "");
     }
 
+    private void savePhotoResource(final JSONObject photo) {
+        statusText.setText("正在保存照片...");
+        new Thread(() -> {
+            try {
+                savePhotoResourceSync(photo);
+                runOnUiThread(() -> statusText.setText("已保存到系统相册"));
+            } catch (final Exception error) {
+                showError("保存失败", error);
+            }
+        }).start();
+    }
+
+    private void savePhotoResourceSync(final JSONObject photo) throws Exception {
+        String url = photo.optString("downloadImageUrl", "");
+        String mimeType = "image/jpeg";
+        String filename = photo.optString("originalName", "picme-" + System.currentTimeMillis() + ".jpg");
+        if (url.isEmpty()) url = photo.optString("imageUrl", photo.optString("previewUrl", bestPhotoURL(photo)));
+        if ("live_photo".equals(photo.optString("type")) && !photo.optString("downloadLiveUrl", "").isEmpty()) {
+            JSONObject manifest = requestJson("GET", photo.optString("downloadLiveUrl"), null, true, true);
+            JSONObject image = manifest.optJSONObject("image");
+            if (image != null) {
+                url = image.optString("url", url);
+                filename = image.optString("filename", filename);
+                mimeType = image.optString("mimeType", mimeType);
+            }
+            JSONObject video = manifest.optJSONObject("video");
+            if (video != null) {
+                saveUrlToMediaStore(video.optString("url", ""), video.optString("filename", "picme-live-" + System.currentTimeMillis() + ".mov"), video.optString("mimeType", "video/quicktime"));
+            }
+        }
+        if (url.isEmpty()) throw new IllegalStateException("没有可保存的原图资源");
+        saveUrlToMediaStore(absoluteURL(url), filename, mimeType);
+    }
+
+    private void saveSelectedPhotos(final JSONArray photos) {
+        statusText.setText("正在保存所选照片...");
+        new Thread(() -> {
+            try {
+                for (int i = 0; i < photos.length(); i++) {
+                    JSONObject photo = photos.optJSONObject(i);
+                    if (photo == null) continue;
+                    final int index = i + 1;
+                    runOnUiThread(() -> statusText.setText("正在保存第 " + index + "/" + photos.length() + " 张"));
+                    savePhotoResourceSync(photo);
+                }
+                runOnUiThread(() -> {
+                    clearPhotoSelection();
+                    statusText.setText("已保存 " + photos.length() + " 张照片");
+                    refreshCurrentAlbumView();
+                });
+            } catch (final Exception error) {
+                showError("保存失败", error);
+            }
+        }).start();
+    }
+
+    private void downloadSelectedPhotos(final JSONObject album, final JSONArray photos) {
+        statusText.setText("正在准备所选照片包...");
+        new Thread(() -> {
+            try {
+                JSONArray ids = new JSONArray();
+                for (int i = 0; i < photos.length(); i++) {
+                    JSONObject photo = photos.optJSONObject(i);
+                    if (photo != null) ids.put(photo.optString("id"));
+                }
+                JSONObject body = new JSONObject();
+                body.put("photoIds", ids);
+                JSONObject manifest = requestJson("POST", "/api/albums/" + album.optString("id") + "/photos/download-selected", body, true, true);
+                JSONArray files = manifest.optJSONArray("files");
+                if (files == null || files.length() == 0) throw new IllegalStateException("没有可下载的照片");
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject file = files.optJSONObject(i);
+                    if (file == null) continue;
+                    final int index = i + 1;
+                    runOnUiThread(() -> statusText.setText("正在保存照片包第 " + index + "/" + files.length() + " 个文件"));
+                    saveUrlToMediaStore(file.optString("url", ""), file.optString("name", "picme-selected-" + index), file.optString("mimeType", "application/octet-stream"));
+                }
+                runOnUiThread(() -> {
+                    clearPhotoSelection();
+                    statusText.setText("所选照片包已保存");
+                    refreshCurrentAlbumView();
+                });
+            } catch (final Exception error) {
+                showError("下载失败", error);
+            }
+        }).start();
+    }
+
+    private void showMoveSelectedPhotosDialog(final JSONObject album, final JSONArray photos) {
+        JSONArray folders = safeArray(album, "folders");
+        List<JSONObject> targets = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < folders.length(); i++) {
+            JSONObject folder = folders.optJSONObject(i);
+            if (folder == null) continue;
+            String id = folder.optString("id", "");
+            if ("pending".equals(id)) continue;
+            if ("folder".equals(currentScreen) && id.equals(activeFolderId)) continue;
+            targets.add(folder);
+            names.add(folder.optString("name", "小相册"));
+        }
+        if (targets.isEmpty()) {
+            statusText.setText("暂无可移动的小相册");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("移动到小相册")
+                .setItems(names.toArray(new String[0]), (dialog, which) -> moveSelectedPhotos(album, photos, targets.get(which)))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void moveSelectedPhotos(final JSONObject album, final JSONArray photos, final JSONObject targetFolder) {
+        statusText.setText("正在移动所选照片...");
+        new Thread(() -> {
+            try {
+                JSONObject latest = null;
+                for (int i = 0; i < photos.length(); i++) {
+                    JSONObject photo = photos.optJSONObject(i);
+                    if (photo == null) continue;
+                    JSONObject body = new JSONObject();
+                    body.put("targetFolderId", targetFolder.optString("id"));
+                    latest = requestJson("POST", "/api/albums/" + album.optString("id") + "/photos/" + photo.optString("id") + "/move", body, true, true);
+                    final int index = i + 1;
+                    runOnUiThread(() -> statusText.setText("正在移动第 " + index + "/" + photos.length() + " 张"));
+                }
+                clearPhotoSelection();
+                if (latest != null) updateAlbumFromResponse(latest);
+                runOnUiThread(() -> statusText.setText("已移动到 " + targetFolder.optString("name", "小相册")));
+            } catch (final Exception error) {
+                showError("移动失败", error);
+            }
+        }).start();
+    }
+
+    private void saveUrlToMediaStore(String rawUrl, String filename, String mimeType) throws Exception {
+        String url = absoluteURL(rawUrl);
+        if (url.isEmpty()) throw new IllegalStateException("下载地址为空");
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+        int code = connection.getResponseCode();
+        if (code < 200 || code >= 300) throw new IllegalStateException(readAll(connection.getErrorStream(), "下载失败：" + code));
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, (mimeType != null && mimeType.startsWith("image/")) ? Environment.DIRECTORY_PICTURES + "/PicMe" : Environment.DIRECTORY_DOWNLOADS + "/PicMe");
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        }
+        Uri collection;
+        if (mimeType != null && mimeType.startsWith("image/")) {
+            collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        } else {
+            collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : MediaStore.Files.getContentUri("external");
+        }
+        Uri outputUri = getContentResolver().insert(collection, values);
+        if (outputUri == null) throw new IllegalStateException("无法创建系统文件");
+        InputStream input = connection.getInputStream();
+        OutputStream output = getContentResolver().openOutputStream(outputUri);
+        if (output == null) throw new IllegalStateException("无法写入系统文件");
+        byte[] buffer = new byte[1024 * 64];
+        int read;
+        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        output.flush();
+        output.close();
+        input.close();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.clear();
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            getContentResolver().update(outputUri, values, null, null);
+        }
+    }
+
+    private void runWithLegacyWritePermission(Runnable action) {
+        if (action == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            action.run();
+            return;
+        }
+        pendingLegacyWriteAction = action;
+        requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_WRITE_EXTERNAL_STORAGE);
+    }
+
+    private void confirmDeletePhoto(final JSONObject album, final JSONObject photo) {
+        new AlertDialog.Builder(this)
+                .setTitle("删除照片？")
+                .setMessage("会从这个相册里删除这张照片。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> deletePhoto(album, photo))
+                .show();
+    }
+
+    private void deletePhoto(final JSONObject album, final JSONObject photo) {
+        new Thread(() -> {
+            try {
+                JSONObject response = requestJson("DELETE", "/api/albums/" + album.optString("id") + "/photos/" + photo.optString("id"), null, true, true);
+                updateAlbumFromResponse(response);
+                runOnUiThread(() -> statusText.setText("照片已删除"));
+            } catch (final Exception error) {
+                showError("删除失败", error);
+            }
+        }).start();
+    }
+
+    private void confirmDeleteSelectedPhotos(final JSONObject album, final JSONArray photos) {
+        new AlertDialog.Builder(this)
+                .setTitle("删除所选照片？")
+                .setMessage("会从这个相册里删除 " + photos.length() + " 张照片。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> deleteSelectedPhotos(album, photos))
+                .show();
+    }
+
+    private void deleteSelectedPhotos(final JSONObject album, final JSONArray photos) {
+        new Thread(() -> {
+            try {
+                JSONArray ids = new JSONArray();
+                for (int i = 0; i < photos.length(); i++) {
+                    JSONObject photo = photos.optJSONObject(i);
+                    if (photo != null) ids.put(photo.optString("id"));
+                }
+                JSONObject body = new JSONObject();
+                body.put("photoIds", ids);
+                JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/photos/delete-selected", body, true, true);
+                clearPhotoSelection();
+                updateAlbumFromResponse(response);
+                runOnUiThread(() -> statusText.setText("所选照片已删除"));
+            } catch (final Exception error) {
+                showError("删除失败", error);
+            }
+        }).start();
+    }
+
     private void shareAlbum(final JSONObject album) {
-        statusText.setText("正在生成分享链接...");
+        statusText.setText("正在读取分享信息...");
+        showManagedAlbumPage("分享相册", managementStateContent("正在生成分享信息", true, null));
         new Thread(() -> {
             try {
                 JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/invite", new JSONObject(), true, true);
                 JSONObject invite = response.optJSONObject("invite");
-                final String shareUrl = invite == null ? "" : invite.optString("shareUrl", "");
-                runOnUiThread(() -> {
-                    Intent intent = new Intent(Intent.ACTION_SEND);
-                    intent.setType("text/plain");
-                    intent.putExtra(Intent.EXTRA_TEXT, "加入 PicMe 相册：" + album.optString("name") + "\n" + shareUrl);
-                    startActivity(Intent.createChooser(intent, "分享相册"));
-                    statusText.setText("分享链接已生成");
-                });
+                if (invite == null) throw new IllegalStateException("无法生成分享信息");
+                runOnUiThread(() -> renderShareInviteDialog(album, invite));
             } catch (final Exception error) {
-                showError("分享失败", error);
+                runOnUiThread(() -> showManagedAlbumPage(
+                        "分享相册",
+                        managementStateContent("分享失败：" + humanReadableError(error.getMessage()), false, () -> shareAlbum(album))
+                ));
             }
         }).start();
+    }
+
+    private void renderShareInviteDialog(final JSONObject album, final JSONObject invite) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setPadding(dp(18), dp(10), dp(18), dp(8));
+        scroll.addView(panel);
+
+        String shareUrl = invite.optString("shareUrl", "");
+        String code = invite.optString("code", "");
+        ImageView qr = new ImageView(this);
+        qr.setContentDescription("相册分享二维码");
+        try {
+            qr.setImageBitmap(generateQRCode(shareUrl, 720));
+            qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            qr.setBackground(round(Color.WHITE, dp(16), Color.rgb(218, 246, 241), dp(1)));
+            panel.addView(qr, new LinearLayout.LayoutParams(dp(250), dp(250)));
+        } catch (Exception error) {
+            panel.addView(text("二维码生成失败，可复制链接分享", 14, SECONDARY, true), matchWrap());
+        }
+
+        TextView codeView = text(code, 30, AQUA, true);
+        codeView.setGravity(Gravity.CENTER);
+        codeView.setPadding(0, dp(12), 0, dp(4));
+        codeView.setOnClickListener(v -> copyText("相册码", code));
+        panel.addView(codeView, matchWrap());
+        TextView linkView = text(shareUrl, 13, SECONDARY, true);
+        linkView.setGravity(Gravity.CENTER);
+        linkView.setOnClickListener(v -> copyText("分享链接", shareUrl));
+        panel.addView(linkView, matchWrap());
+        panel.addView(text("点按相册码或链接即可复制", 12, SECONDARY, false), matchWrap());
+
+        spacer(panel, dp(12));
+        panel.addView(text("通过此链接加入的默认权限", 20, PRIMARY, true), matchWrap());
+        Map<String, Switch> switches = permissionSwitches(panel, permissionsObject(invite, "permissions"), true);
+        for (Switch control : switches.values()) {
+            control.setOnCheckedChangeListener((buttonView, isChecked) ->
+                    updateInvitePermissions(album, permissionsFromSwitches(switches)));
+        }
+
+        Button share = primaryButton("分享给微信或朋友");
+        share.setOnClickListener(v -> shareInviteText(album, invite));
+        LinearLayout.LayoutParams shareParams = matchWrap();
+        shareParams.setMargins(0, dp(18), 0, dp(6));
+        panel.addView(share, shareParams);
+
+        Button reset = ghostButton("重置相册码");
+        reset.setTextColor(Color.rgb(230, 74, 83));
+        reset.setOnClickListener(v -> confirmResetInvite(album, permissionsFromSwitches(switches)));
+        panel.addView(reset, matchWrap());
+
+        showManagedAlbumPage("分享相册", scroll);
+    }
+
+    private void updateInvitePermissions(final JSONObject album, final JSONObject permissions) {
+        if (pendingInvitePermissionSave != null) mainHandler.removeCallbacks(pendingInvitePermissionSave);
+        pendingInvitePermissionSave = () -> new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("permissions", permissions == null ? defaultPermissions() : permissions);
+                requestJson("POST", "/api/albums/" + album.optString("id") + "/invite", body, true, true);
+                runOnUiThread(() -> statusText.setText("已自动保存链接默认权限"));
+            } catch (final Exception error) {
+                showError("保存链接权限失败", error);
+            }
+        }).start();
+        mainHandler.postDelayed(pendingInvitePermissionSave, 250L);
+    }
+
+    private void confirmResetInvite(final JSONObject album, final JSONObject permissions) {
+        new AlertDialog.Builder(this)
+                .setTitle("重置相册码？")
+                .setMessage("旧的相册码和分享链接会立即失效。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("重置", (dialog, which) -> resetInvite(album, permissions))
+                .show();
+    }
+
+    private void resetInvite(final JSONObject album, final JSONObject permissions) {
+        statusText.setText("正在重置相册码...");
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("permissions", permissions == null ? defaultPermissions() : permissions);
+                JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/invite/reset", body, true, true);
+                JSONObject invite = response.optJSONObject("invite");
+                if (invite == null) throw new IllegalStateException("没有返回新的相册码");
+                runOnUiThread(() -> {
+                    statusText.setText("相册码已重置");
+                    renderShareInviteDialog(album, invite);
+                });
+            } catch (final Exception error) {
+                showError("重置相册码失败", error);
+            }
+        }).start();
+    }
+
+    private void shareInviteText(JSONObject album, JSONObject invite) {
+        String shareUrl = invite.optString("shareUrl", "");
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT, "加入 PicMe 相册：" + album.optString("name", "共享相册") + "\n" + shareUrl);
+        startActivity(Intent.createChooser(intent, "分享相册"));
+    }
+
+    private void copyText(String label, String value) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+        statusText.setText(label + "已复制");
+    }
+
+    private Bitmap generateQRCode(String value, int size) throws WriterException {
+        BitMatrix matrix = new MultiFormatWriter().encode(value, BarcodeFormat.QR_CODE, size, size);
+        int[] pixels = new int[size * size];
+        for (int y = 0; y < size; y++) {
+            int offset = y * size;
+            for (int x = 0; x < size; x++) {
+                pixels[offset + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
+            }
+        }
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
+        return bitmap;
     }
 
     private int myPhotoCount(JSONObject album) {
@@ -718,34 +1794,105 @@ public class MainActivity extends Activity {
 
     private JSONObject findAlbumById(String albumId) {
         if (albumId == null || albumId.isEmpty()) return null;
-        for (int i = 0; i < albums.length(); i++) {
-            JSONObject album = albums.optJSONObject(i);
+        return findAlbumInArray(albums, albumId);
+    }
+
+    private JSONObject findAlbumInArray(JSONArray source, String albumId) {
+        if (source == null || albumId == null || albumId.isEmpty()) return null;
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject album = source.optJSONObject(i);
             if (album != null && albumId.equals(album.optString("id"))) return album;
         }
         return null;
     }
 
     private void showCreateAlbumDialog() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(20), dp(14), dp(20), dp(28));
+        scroll.addView(panel);
+        panel.addView(text("给这次出游起个名字，并设置协作用户可以进行的操作。", 16, SECONDARY, true), matchWrap());
+        spacer(panel, dp(16));
         EditText name = field("例如：重庆周末小队", false);
         name.setPadding(dp(16), dp(12), dp(16), dp(12));
-        new AlertDialog.Builder(this)
-                .setTitle("这次出游叫什么")
-                .setView(name)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("创建", (dialog, which) -> createAlbum(name.getText().toString()))
-                .show();
+        panel.addView(name, matchWrap());
+        TextView hint = text("相册级权限", 18, PRIMARY, true);
+        panel.addView(hint, matchWrap());
+        Map<String, Switch> switches = permissionSwitches(panel, defaultPermissions(), true);
+        spacer(panel, dp(20));
+        Button create = primaryButton("创建相册");
+        create.setOnClickListener(v -> createAlbum(name.getText().toString(), permissionsFromSwitches(switches)));
+        LinearLayout.LayoutParams createParams = matchWrap();
+        createParams.height = dp(60);
+        panel.addView(create, createParams);
+        showManagedAlbumPage("创建新相册", scroll);
     }
 
     private void showJoinDialog(String preset) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(20), dp(14), dp(20), dp(28));
+        scroll.addView(panel);
+        panel.addView(text("扫描 PicMe 分享二维码，或粘贴相册码 / 分享链接。", 15, SECONDARY, false), matchWrap());
         inviteCodeInput = field("相册码或分享链接", false);
         inviteCodeInput.setText(inviteCodeFrom(preset));
-        new AlertDialog.Builder(this)
-                .setTitle("加入相册")
-                .setMessage("扫描微信里的分享链接后会自动带入相册码，也可以手动输入。")
-                .setView(inviteCodeInput)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("申请加入", (dialog, which) -> requestJoinFromInput())
-                .show();
+        panel.addView(inviteCodeInput, matchWrap());
+        spacer(panel, dp(8));
+        LinearLayout actions = horizontal();
+        Button camera = outlineButton("扫码加入相册");
+        camera.setOnClickListener(v -> captureJoinQRCode());
+        Button picker = outlineButton("从相册选择二维码");
+        picker.setOnClickListener(v -> pickJoinQRCodeImage());
+        actions.addView(camera, new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout.LayoutParams pickerParams = new LinearLayout.LayoutParams(0, dp(52), 1);
+        pickerParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(picker, pickerParams);
+        panel.addView(actions, matchWrap());
+        spacer(panel, dp(20));
+        Button join = primaryButton("申请加入");
+        join.setOnClickListener(v -> requestJoinFromInput());
+        LinearLayout.LayoutParams joinParams = matchWrap();
+        joinParams.height = dp(60);
+        panel.addView(join, joinParams);
+        showManagedAlbumPage("加入相册", scroll);
+    }
+
+    private void captureJoinQRCode() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
+            return;
+        }
+        Intent intent = new Intent(this, QRCodeScannerActivity.class);
+        statusText.setText("请扫描 PicMe 相册二维码");
+        startActivityForResult(intent, REQUEST_CAPTURE_QR);
+    }
+
+    private void pickJoinQRCodeImage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        statusText.setText("请选择包含分享二维码的图片");
+        startActivityForResult(intent, REQUEST_PICK_QR_IMAGE);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                captureJoinQRCode();
+            } else {
+                showTransientStatus("需要相机权限才能扫码，也可以从相册选择二维码");
+            }
+        } else if (requestCode == REQUEST_WRITE_EXTERNAL_STORAGE) {
+            Runnable action = pendingLegacyWriteAction;
+            pendingLegacyWriteAction = null;
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (action != null) action.run();
+            } else {
+                showTransientStatus("需要存储权限才能保存到系统相册，请在系统设置中授权");
+            }
+        }
     }
 
     private void handleJoinIntent(Intent intent) {
@@ -756,11 +1903,57 @@ public class MainActivity extends Activity {
             if (hasLocalSession()) {
                 showJoinDialog(code);
             } else {
+                pendingJoinCode = code;
+                loginNoticeText = "已识别相册码：" + code + "，登录后可申请加入。";
                 showLogin();
-                statusText.setText("已识别相册码：" + code + "，登录后可申请加入。");
-                inviteCodeInput = field("相册码或分享链接", false);
-                inviteCodeInput.setText(code);
             }
+        }
+    }
+
+    private boolean openPendingJoinAfterAuth() {
+        String code = pendingJoinCode == null ? "" : pendingJoinCode.trim();
+        if (code.isEmpty()) return false;
+        pendingJoinCode = "";
+        showJoinDialog(code);
+        return true;
+    }
+
+    private boolean openPendingNotificationAfterAuth() {
+        if (pendingNotificationMessage == null) return false;
+        JSONObject message = pendingNotificationMessage;
+        pendingNotificationMessage = null;
+        openMessage(message);
+        return true;
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String messageId = intent.getStringExtra("messageId");
+        if (messageId == null || messageId.isEmpty()) return;
+        JSONObject message = new JSONObject();
+        try {
+            message.put("id", messageId);
+            message.put("type", intent.getStringExtra("messageType"));
+            message.put("albumId", intent.getStringExtra("albumId"));
+        } catch (Exception ignored) {
+        }
+        intent.removeExtra("messageId");
+        if (hasLocalSession()) {
+            openMessage(message);
+        } else {
+            pendingNotificationMessage = message;
+            loginNoticeText = "登录后可查看这条消息。";
+            showLogin();
+        }
+    }
+
+    private void enableMessageNotifications() {
+        MessageNotificationJobService.schedule(this);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && !prefs.getBoolean("notificationPermissionRequested", false)) {
+            prefs.edit().putBoolean("notificationPermissionRequested", true).apply();
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIFICATIONS);
         }
     }
 
@@ -780,11 +1973,16 @@ public class MainActivity extends Activity {
                 JSONObject response = requestJson("POST", "/api/auth/login", body, false, false);
                 saveTokens(response);
                 currentUser = response.optJSONObject("user");
+                syncDefaultUploader();
                 cacheCurrentUser();
                 runOnUiThread(() -> {
+                    loginNoticeText = "";
                     showHome();
+                    enableMessageNotifications();
                     statusText.setText("欢迎回来，" + (currentUser == null ? username : currentUser.optString("nickname", username)));
-                    loadAlbums();
+                    if (!openPendingJoinAfterAuth() && !openPendingNotificationAfterAuth()) {
+                        loadAlbums();
+                    }
                 });
             } catch (final Exception error) {
                 showError("登录失败", error);
@@ -796,22 +1994,42 @@ public class MainActivity extends Activity {
         final String username = registerUsernameInput == null ? "" : registerUsernameInput.getText().toString().trim();
         final String nickname = registerNicknameInput == null ? "" : registerNicknameInput.getText().toString().trim();
         final String password = registerPasswordInput == null ? "" : registerPasswordInput.getText().toString();
-        if (username.isEmpty() || nickname.isEmpty() || password.isEmpty()) {
-            statusText.setText("请填写昵称、账号和密码");
+        final String confirmPassword = registerConfirmPasswordInput == null ? "" : registerConfirmPasswordInput.getText().toString();
+        final Uri avatarUri = registerAvatarUri;
+        if (nickname.isEmpty()) {
+            showTransientStatus("昵称不能为空");
+            return;
+        }
+        if (!isValidUsername(username)) {
+            showTransientStatus("登录账号需为 1-20 位字母、数字或下划线");
+            return;
+        }
+        if (!isValidPasswordFormat(password)) {
+            showTransientStatus("密码需为 6-20 位，且不能包含中文、空格或中文符号");
+            return;
+        }
+        if (!password.equals(confirmPassword)) {
+            showTransientStatus("两次输入的密码不一致");
             return;
         }
         statusText.setText("正在创建账号...");
         new Thread(() -> {
             try {
-                JSONObject response = registerRequest(username, nickname, password);
+                JSONObject response = registerRequest(username, nickname, password, avatarUri);
                 saveTokens(response);
                 currentUser = response.optJSONObject("user");
+                syncDefaultUploader();
                 cacheCurrentUser();
                 runOnUiThread(() -> {
+                    loginNoticeText = "";
                     showHome();
+                    enableMessageNotifications();
                     statusText.setText("欢迎加入 PicMe，" + nickname);
-                    loadAlbums();
+                    if (!openPendingJoinAfterAuth() && !openPendingNotificationAfterAuth()) {
+                        loadAlbums();
+                    }
                 });
+                if (avatarUri != null) pollAvatarRecognition();
             } catch (final Exception error) {
                 showError("创建账号失败", error);
             }
@@ -819,12 +2037,18 @@ public class MainActivity extends Activity {
     }
 
     private void logout() {
+        final String accessToken = prefs.getString("accessToken", "");
+        avatarRecognitionPollRevision++;
+        albumRecognitionPollRevision++;
         prefs.edit().clear().apply();
+        MessageNotificationJobService.cancel(this);
         albums = new JSONArray();
         selectedAlbumId = "";
+        loginNoticeText = "";
         currentUser = null;
         showLogin();
         statusText.setText("已退出登录");
+        if (!accessToken.isEmpty()) new Thread(() -> logoutServer(accessToken)).start();
     }
 
     private void loadMe() {
@@ -832,24 +2056,113 @@ public class MainActivity extends Activity {
             try {
                 JSONObject response = requestJson("GET", "/api/me", null, true, true);
                 currentUser = response.optJSONObject("user");
+                syncDefaultUploader();
                 cacheCurrentUser();
+                runOnUiThread(this::enableMessageNotifications);
+                if (currentUser != null && isAvatarRecognitionPending(currentUser)) pollAvatarRecognition();
             } catch (Exception ignored) {
             }
         }).start();
     }
 
+    private void pollAvatarRecognition() {
+        final int revision = ++avatarRecognitionPollRevision;
+        new Thread(() -> {
+            for (int attempt = 0; attempt < 24; attempt++) {
+                if (revision != avatarRecognitionPollRevision || !hasLocalSession()) return;
+                try {
+                    JSONObject response = requestJson("GET", "/api/me", null, true, true);
+                    JSONObject user = response.optJSONObject("user");
+                    if (user == null || revision != avatarRecognitionPollRevision) return;
+                    currentUser = user;
+                    syncDefaultUploader();
+                    cacheCurrentUser();
+                    if (user.optBoolean("hasFaceProfile") || "ready".equals(user.optString("faceProfileStatus"))) {
+                        JSONObject albumResponse = requestJson("GET", "/api/albums", null, true, true);
+                        JSONArray refreshed = albumResponse.optJSONArray("albums");
+                        albums = refreshed == null ? new JSONArray() : refreshed;
+                        cacheAlbums();
+                        runOnUiThread(() -> {
+                            if (isManagedPageOpen("我的资料")) {
+                                showProfileDialog();
+                            } else {
+                                showHome();
+                                statusText.setText("头像识别完成，已更新你的照片推荐");
+                            }
+                        });
+                        return;
+                    }
+                    if ("failed".equals(user.optString("faceProfileStatus"))) {
+                        runOnUiThread(() -> {
+                            if (isManagedPageOpen("我的资料")) showProfileDialog();
+                            else statusText.setText("头像未识别人脸，可以换一张更清晰的正脸头像");
+                        });
+                        return;
+                    }
+                    Thread.sleep(attempt < 4 ? 1000L : 2000L);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception error) {
+                    return;
+                }
+            }
+            if (revision == avatarRecognitionPollRevision && hasLocalSession()) {
+                runOnUiThread(() -> statusText.setText("头像识别仍在后台进行，稍后刷新即可看到结果"));
+            }
+        }).start();
+    }
+
+    private boolean isAvatarRecognitionPending(JSONObject user) {
+        if (user == null || user.optBoolean("hasFaceProfile")) return false;
+        String status = user.optString("faceProfileStatus", "");
+        return "queued".equals(status) || "processing".equals(status);
+    }
+
+    private String avatarRecognitionStatusText() {
+        if (currentUser == null) return "头像状态：尚未识别";
+        if (currentUser.optBoolean("hasFaceProfile") || "ready".equals(currentUser.optString("faceProfileStatus"))) {
+            return "头像状态：已识别，可自动匹配我的照片";
+        }
+        String status = currentUser.optString("faceProfileStatus", "missing");
+        if ("queued".equals(status) || "processing".equals(status)) return "头像状态：正在后台识别";
+        if ("failed".equals(status)) return "头像状态：未识别人脸，请更换清晰正脸";
+        return "头像状态：尚未上传可识别头像";
+    }
+
     private void loadAlbums() {
+        loadAlbums("");
+    }
+
+    private void loadAlbums(final String preferredAlbumId) {
         if (statusText != null) statusText.setText("正在同步相册...");
         new Thread(() -> {
             try {
                 final JSONObject response = requestJson("GET", "/api/albums", null, true, true);
                 albums = response.optJSONArray("albums");
                 if (albums == null) albums = new JSONArray();
-                if (albums.length() > 0) selectedAlbumId = albums.optJSONObject(0).optString("id");
+                String nextSelected = preferredAlbumId == null || preferredAlbumId.isEmpty() ? selectedAlbumId : preferredAlbumId;
+                if (findAlbumInArray(albums, nextSelected) == null && albums.length() > 0) {
+                    JSONObject first = albums.optJSONObject(0);
+                    nextSelected = first == null ? "" : first.optString("id");
+                }
+                selectedAlbumId = nextSelected == null ? "" : nextSelected;
                 cacheAlbums();
                 runOnUiThread(() -> {
-                    renderAlbums();
-                    statusText.setText(albums.length() == 0 ? "暂无相册" : "已同步 " + albums.length() + " 个相册");
+                    JSONObject preferred = findAlbumById(preferredAlbumId);
+                    if (preferred != null && preferredAlbumId != null && !preferredAlbumId.isEmpty()) {
+                        if (pendingMessageRoute != null) {
+                            JSONObject message = pendingMessageRoute;
+                            pendingMessageRoute = null;
+                            routeMessageToAlbum(message, preferred);
+                        } else {
+                            showAlbumDetail(preferred);
+                        }
+                        statusText.setText("已打开 " + preferred.optString("name", "相册"));
+                    } else {
+                        renderAlbums();
+                        statusText.setText(albums.length() == 0 ? "暂无相册" : "已同步 " + albums.length() + " 个相册");
+                    }
                 });
             } catch (final Exception error) {
                 showError("读取相册失败", error);
@@ -857,7 +2170,7 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private void createAlbum(final String rawName) {
+    private void createAlbum(final String rawName, final JSONObject permissions) {
         final String name = rawName == null ? "" : rawName.trim();
         if (name.isEmpty()) {
             statusText.setText("先给这次出游起个名字");
@@ -868,8 +2181,10 @@ public class MainActivity extends Activity {
             try {
                 JSONObject body = new JSONObject();
                 body.put("name", name);
+                body.put("permissions", permissions == null ? defaultPermissions() : permissions);
                 requestJson("POST", "/api/albums", body, true, true);
                 runOnUiThread(() -> {
+                    if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
                     statusText.setText("已创建 " + name);
                     loadAlbums();
                 });
@@ -892,9 +2207,10 @@ public class MainActivity extends Activity {
                 body.put("nickname", nickname);
                 JSONObject response = requestJson("POST", "/api/me/profile", body, true, true);
                 currentUser = response.optJSONObject("user");
+                syncDefaultUploader();
                 cacheCurrentUser();
                 runOnUiThread(() -> {
-                    showHome();
+                    showProfileDialog();
                     statusText.setText("昵称已更新");
                 });
             } catch (final Exception error) {
@@ -909,23 +2225,744 @@ public class MainActivity extends Activity {
             statusText.setText("请填写相册码或分享链接");
             return;
         }
-        statusText.setText("正在提交加入申请...");
+        statusText.setText("正在确认相册码...");
         new Thread(() -> {
             try {
-                requestJson("GET", "/api/invites/" + code, null, true, true);
+                JSONObject preview = requestJson("GET", "/api/invites/" + code, null, true, true);
+                JSONObject invite = preview.optJSONObject("invite");
+                String albumId = invite == null ? "" : invite.optString("albumId", "");
+                if ("member".equals(preview.optString("joinStatus"))) {
+                    runOnUiThread(() -> {
+                        if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+                        statusText.setText("你已经在这个相册里，正在打开...");
+                    });
+                    loadAlbums(albumId);
+                    return;
+                }
+                runOnUiThread(() -> statusText.setText("正在提交加入申请..."));
                 requestJson("POST", "/api/invites/" + code + "/request", new JSONObject(), true, true);
-                runOnUiThread(() -> statusText.setText("已提交加入申请，等待相册管理员审批"));
+                String albumName = invite == null ? "" : invite.optString("albumName", "");
+                runOnUiThread(() -> {
+                    if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+                    showTransientStatus(albumName.isEmpty()
+                            ? "已提交加入申请，等待相册管理员审批"
+                            : "已提交加入「" + albumName + "」申请，等待相册管理员审批");
+                });
             } catch (final Exception error) {
                 showError("申请加入失败", error);
             }
         }).start();
     }
 
-    private void pickFiles() {
-        if (selectedAlbumId.isEmpty() && uploadAlbumIdInput != null) {
-            selectedAlbumId = uploadAlbumIdInput.getText().toString().trim();
+    private void showMessageCenter() {
+        statusText.setText("正在加载消息...");
+        if (messageDialog != null && messageDialog.isShowing()) messageDialog.dismiss();
+        messageDialog = showManagementPage("消息提醒", managementStateContent("正在加载消息", true, null), "", null);
+        new Thread(() -> {
+            try {
+                final JSONObject response = requestJson("GET", "/api/messages", null, true, true);
+                final JSONArray messages = response.optJSONArray("messages");
+                unreadMessageCount = response.optInt("unreadCount", 0);
+                runOnUiThread(() -> renderMessagesDialog(messages == null ? new JSONArray() : messages, response.optInt("unreadCount", 0)));
+            } catch (final Exception error) {
+                runOnUiThread(() -> {
+                    if (messageDialog != null && messageDialog.isShowing()) messageDialog.dismiss();
+                    messageDialog = showManagementPage(
+                            "消息提醒",
+                            managementStateContent("加载消息失败：" + humanReadableError(error.getMessage()), false, this::showMessageCenter),
+                            "",
+                            null
+                    );
+                });
+            }
+        }).start();
+    }
+
+    private String messageButtonText() {
+        return unreadMessageCount > 0 ? "消息\n" + (unreadMessageCount > 99 ? "99+" : String.valueOf(unreadMessageCount)) : "消息";
+    }
+
+    private void loadUnreadMessageCount() {
+        if (!hasLocalSession()) return;
+        new Thread(() -> {
+            try {
+                JSONObject response = requestJson("GET", "/api/messages/unread-count", null, true, true);
+                unreadMessageCount = response.optInt("unreadCount", 0);
+                runOnUiThread(() -> {
+                    if (messageButton != null) messageButton.setText(messageButtonText());
+                });
+            } catch (Exception ignored) {
+            }
+        }).start();
+    }
+
+    private void renderMessagesDialog(JSONArray messages, int unreadCount) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(8), dp(18), dp(8));
+        scroll.addView(panel);
+        TextView summary = text(unreadCount > 0 ? unreadCount + " 条未读消息" : "暂无未读消息", 16, SECONDARY, true);
+        panel.addView(summary, matchWrap());
+        if (messages.length() == 0) {
+            panel.addView(text("暂无站内消息", 16, SECONDARY, false), matchWrap());
         }
-        if (selectedAlbumId.isEmpty()) {
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null) continue;
+            panel.addView(messageRow(message), matchWrap());
+        }
+        if (messageDialog != null && messageDialog.isShowing()) messageDialog.dismiss();
+        messageDialog = showManagementPage("消息提醒", scroll, "全部已读", this::markAllMessagesRead);
+    }
+
+    private View messageRow(final JSONObject message) {
+        LinearLayout row = card();
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        String unreadPrefix = message.optBoolean("isRead", message.optBoolean("read", false)) ? "" : "● ";
+        LinearLayout titleRow = horizontal();
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.addView(text(unreadPrefix + message.optString("title", "站内消息"), 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        String createdAt = formatTimestamp(message.optLong("createdAt", 0));
+        if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), matchWrap());
+        row.addView(titleRow, matchWrap());
+        String body = message.optString("body", "");
+        if (!body.isEmpty()) row.addView(text(body, 14, SECONDARY, false), matchWrap());
+        String albumName = message.optString("albumName", "");
+        if (!albumName.isEmpty()) row.addView(text("相册 · " + albumName, 13, TEAL, true), matchWrap());
+        row.setOnClickListener(v -> openMessage(message));
+        return row;
+    }
+
+    private void openMessage(final JSONObject message) {
+        if (message == null) return;
+        final boolean wasUnread = !message.optBoolean("isRead", message.optBoolean("read", false));
+        new Thread(() -> {
+            try {
+                requestJson("POST", "/api/messages/" + message.optString("id") + "/read", null, true, true);
+                if (wasUnread) unreadMessageCount = Math.max(0, unreadMessageCount - 1);
+            } catch (Exception ignored) {
+            }
+            runOnUiThread(() -> {
+                if (messageButton != null) messageButton.setText(messageButtonText());
+                if (messageDialog != null && messageDialog.isShowing()) messageDialog.dismiss();
+                if (!messageRequiresAlbum(message)) {
+                    showMessageCenter();
+                    return;
+                }
+                String albumId = message.optString("albumId", "");
+                JSONObject album = findAlbumById(albumId);
+                if (album != null) {
+                    routeMessageToAlbum(message, album);
+                } else if (!albumId.isEmpty()) {
+                    pendingMessageRoute = message;
+                    loadAlbums(albumId);
+                } else {
+                    statusText.setText("消息已读");
+                }
+            });
+        }).start();
+    }
+
+    private boolean messageRequiresAlbum(JSONObject message) {
+        String type = message == null ? "" : message.optString("type", "");
+        return "album.join_request".equals(type)
+                || "album.permission_request".equals(type)
+                || "face.my_photos_matched".equals(type);
+    }
+
+    private void routeMessageToAlbum(JSONObject message, JSONObject album) {
+        String type = message == null ? "" : message.optString("type", "");
+        if ("album.join_request".equals(type) || "album.permission_request".equals(type)) {
+            showApprovalCenter(album);
+            return;
+        }
+        if ("face.my_photos_matched".equals(type)) {
+            activeAlbumTab = "my";
+            clearPhotoSelection();
+            showAlbumDetail(album);
+            return;
+        }
+        showMessageCenter();
+    }
+
+    private void markAllMessagesRead() {
+        new Thread(() -> {
+            try {
+                requestJson("POST", "/api/messages/mark-read", null, true, true);
+                unreadMessageCount = 0;
+                runOnUiThread(() -> {
+                    statusText.setText("消息已全部标记为已读");
+                    if (messageButton != null) messageButton.setText(messageButtonText());
+                });
+            } catch (final Exception error) {
+                showError("标记已读失败", error);
+            }
+        }).start();
+    }
+
+    private void showAlbumMembers(final JSONObject album) {
+        statusText.setText("正在加载协作用户...");
+        showManagedAlbumPage("协作用户", managementStateContent("正在加载协作用户", true, null));
+        new Thread(() -> {
+            try {
+                final JSONArray members = requestJson("GET", "/api/albums/" + album.optString("id") + "/members", null, true, true).optJSONArray("members");
+                runOnUiThread(() -> renderMembersDialog(album, members == null ? new JSONArray() : members));
+            } catch (final Exception error) {
+                runOnUiThread(() -> showManagedAlbumPage(
+                        "协作用户",
+                        managementStateContent("加载协作用户失败：" + humanReadableError(error.getMessage()), false, () -> showAlbumMembers(album))
+                ));
+            }
+        }).start();
+    }
+
+    private void renderMembersDialog(final JSONObject album, JSONArray members) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(10), dp(18), dp(8));
+        scroll.addView(panel);
+
+        for (int i = 0; i < members.length(); i++) {
+            JSONObject member = members.optJSONObject(i);
+            if (member == null) continue;
+            panel.addView(memberRow(album, member), matchWrap());
+        }
+        showManagedAlbumPage("协作用户", scroll);
+    }
+
+    private View memberRow(final JSONObject album, final JSONObject member) {
+        LinearLayout card = card();
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        JSONObject user = member.optJSONObject("user");
+        LinearLayout top = horizontal();
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView avatar = capsuleImage();
+        avatar.setContentDescription(displayUserName(user) + "的头像");
+        loadImageInto(user == null ? "" : user.optString("avatarUrl", ""), avatar);
+        top.addView(avatar, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout names = vertical();
+        names.addView(text(displayUserName(user), 19, PRIMARY, true), matchWrap());
+        names.addView(text("@" + (user == null ? member.optString("userId") : user.optString("username")) + " · " + roleText(member.optString("role")), 14, SECONDARY, true), matchWrap());
+        top.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button permissions = ghostButton("权限");
+        top.addView(permissions, new LinearLayout.LayoutParams(dp(82), dp(42)));
+        if (canEditMembers(album) && !"owner".equals(member.optString("role"))) {
+            Button remove = ghostButton("移除");
+            remove.setTextColor(Color.rgb(230, 74, 83));
+            remove.setOnClickListener(v -> confirmRemoveMember(album, member));
+            top.addView(remove, new LinearLayout.LayoutParams(dp(82), dp(42)));
+        }
+        card.addView(top, matchWrap());
+
+        LinearLayout permissionPanel = vertical();
+        permissionPanel.setVisibility(View.GONE);
+        Map<String, Switch> switches = permissionSwitches(permissionPanel, member.optJSONObject("permissions"), canEditMembers(album) && !"owner".equals(member.optString("role")));
+        if (canEditMembers(album) && !"owner".equals(member.optString("role"))) {
+            for (Switch control : switches.values()) {
+                control.setOnCheckedChangeListener((buttonView, isChecked) -> scheduleMemberPermissionsUpdate(album, member, permissionsFromSwitches(switches)));
+            }
+        }
+        card.addView(permissionPanel, matchWrap());
+        permissions.setOnClickListener(v -> {
+            boolean expanding = permissionPanel.getVisibility() != View.VISIBLE;
+            permissionPanel.setVisibility(expanding ? View.VISIBLE : View.GONE);
+            permissions.setText(expanding ? "收起" : "权限");
+        });
+        return card;
+    }
+
+    private void showCollaborationRecords(final JSONObject album) {
+        statusText.setText("正在加载协作记录...");
+        showManagedAlbumPage("协作记录", managementStateContent("正在加载协作记录", true, null));
+        new Thread(() -> {
+            try {
+                final JSONArray records = requestJson("GET", "/api/albums/" + album.optString("id") + "/collaboration-records", null, true, true).optJSONArray("records");
+                runOnUiThread(() -> renderRecordsDialog("协作记录", records == null ? new JSONArray() : records, "暂无照片上传或删除记录"));
+            } catch (final Exception error) {
+                runOnUiThread(() -> showManagedAlbumPage(
+                        "协作记录",
+                        managementStateContent("加载协作记录失败：" + humanReadableError(error.getMessage()), false, () -> showCollaborationRecords(album))
+                ));
+            }
+        }).start();
+    }
+
+    private void showApprovalCenter(final JSONObject album) {
+        statusText.setText("正在加载审批...");
+        showManagedAlbumPage("审批", managementStateContent("正在加载审批", true, null));
+        new Thread(() -> {
+            try {
+                final JSONArray joins = requestJson("GET", "/api/albums/" + album.optString("id") + "/join-requests", null, true, true).optJSONArray("requests");
+                final JSONArray permissions = canEditMembers(album)
+                        ? requestJson("GET", "/api/albums/" + album.optString("id") + "/permission-requests", null, true, true).optJSONArray("requests")
+                        : new JSONArray();
+                runOnUiThread(() -> renderApprovalDialog(album, joins == null ? new JSONArray() : joins, permissions == null ? new JSONArray() : permissions));
+            } catch (final Exception error) {
+                runOnUiThread(() -> showManagedAlbumPage(
+                        "审批",
+                        managementStateContent("加载审批失败：" + humanReadableError(error.getMessage()), false, () -> showApprovalCenter(album))
+                ));
+            }
+        }).start();
+    }
+
+    private void renderApprovalDialog(final JSONObject album, JSONArray joins, JSONArray permissions) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(8), dp(18), dp(8));
+        scroll.addView(panel);
+        panel.addView(text("加入申请", 21, PRIMARY, true), matchWrap());
+        int pendingJoinCount = addJoinApprovalRows(panel, album, joins, true);
+        if (pendingJoinCount == 0) panel.addView(text("暂无待审批加入申请", 15, SECONDARY, false), matchWrap());
+        if (canEditMembers(album)) {
+            spacer(panel, dp(12));
+            panel.addView(text("权限申请", 21, PRIMARY, true), matchWrap());
+            int pendingPermissionCount = addPermissionApprovalRows(panel, album, permissions, true);
+            if (pendingPermissionCount == 0) panel.addView(text("暂无待审批权限申请", 15, SECONDARY, false), matchWrap());
+        }
+        spacer(panel, dp(12));
+        panel.addView(text("已审批", 21, PRIMARY, true), matchWrap());
+        int reviewed = addReviewedApprovalRows(panel, album, joins, canEditMembers(album) ? permissions : new JSONArray());
+        if (reviewed == 0) panel.addView(text("暂无已审批记录", 15, SECONDARY, false), matchWrap());
+        showManagedAlbumPage("审批", scroll);
+    }
+
+    private int addReviewedApprovalRows(LinearLayout panel, JSONObject album, JSONArray joins, JSONArray permissions) {
+        List<ApprovalRecord> records = new ArrayList<>();
+        for (int i = 0; i < joins.length(); i++) {
+            JSONObject request = joins.optJSONObject(i);
+            if (request != null && isReviewedApprovalStatus(request.optString("status"))) {
+                records.add(new ApprovalRecord("join", request));
+            }
+        }
+        for (int i = 0; i < permissions.length(); i++) {
+            JSONObject request = permissions.optJSONObject(i);
+            if (request != null && isReviewedApprovalStatus(request.optString("status"))) {
+                records.add(new ApprovalRecord("permission", request));
+            }
+        }
+        Collections.sort(records, (left, right) -> Long.compare(requestTimestamp(right.request), requestTimestamp(left.request)));
+        for (ApprovalRecord record : records) {
+            JSONArray single = new JSONArray().put(record.request);
+            if ("join".equals(record.kind)) addJoinApprovalRows(panel, album, single, false);
+            else addPermissionApprovalRows(panel, album, single, false);
+        }
+        return records.size();
+    }
+
+    private int addJoinApprovalRows(LinearLayout panel, JSONObject album, JSONArray requests, boolean pendingOnly) {
+        int count = 0;
+        for (int i = 0; i < requests.length(); i++) {
+            JSONObject request = requests.optJSONObject(i);
+            if (request == null) continue;
+            boolean pending = "pending".equals(request.optString("status"));
+            if (pendingOnly != pending) continue;
+            if (!pendingOnly && !isReviewedApprovalStatus(request.optString("status"))) continue;
+            JSONObject user = request.optJSONObject("user");
+            LinearLayout row = card();
+            row.setPadding(dp(14), dp(12), dp(14), dp(12));
+            row.addView(approvalTitleRow("加入申请" + statusLabel(request.optString("status")), requestTimestamp(request)), matchWrap());
+            row.addView(text("申请加入相册", 15, SECONDARY, false), matchWrap());
+            row.addView(text(userIdentity(user), 14, TEAL, true), matchWrap());
+            if (!pending) addReviewerDetails(row, request);
+            if (pending) addReviewButtons(row, () -> reviewJoin(album, request, true), () -> reviewJoin(album, request, false));
+            panel.addView(row, matchWrap());
+            count++;
+        }
+        return count;
+    }
+
+    private int addPermissionApprovalRows(LinearLayout panel, JSONObject album, JSONArray requests, boolean pendingOnly) {
+        int count = 0;
+        for (int i = 0; i < requests.length(); i++) {
+            JSONObject request = requests.optJSONObject(i);
+            if (request == null) continue;
+            boolean pending = "pending".equals(request.optString("status"));
+            if (pendingOnly != pending) continue;
+            if (!pendingOnly && !isReviewedApprovalStatus(request.optString("status"))) continue;
+            JSONObject user = request.optJSONObject("user");
+            LinearLayout row = card();
+            row.setPadding(dp(14), dp(12), dp(14), dp(12));
+            row.addView(approvalTitleRow("权限申请" + statusLabel(request.optString("status")), requestTimestamp(request)), matchWrap());
+            row.addView(text("申请：" + permissionSummary(request.optJSONObject("requestedPermissions")), 15, TEAL, true), matchWrap());
+            row.addView(text("当前：" + permissionSummary(request.optJSONObject("currentPermissions")), 14, SECONDARY, true), matchWrap());
+            row.addView(text(userIdentity(user), 14, TEAL, true), matchWrap());
+            if (!pending) addReviewerDetails(row, request);
+            if (pending) addReviewButtons(row, () -> reviewPermission(album, request, true), () -> reviewPermission(album, request, false));
+            panel.addView(row, matchWrap());
+            count++;
+        }
+        return count;
+    }
+
+    private void addReviewerDetails(LinearLayout row, JSONObject request) {
+        JSONObject reviewer = request.optJSONObject("reviewedByUser");
+        if (reviewer == null) return;
+        row.addView(text("处理人 · " + userIdentity(reviewer), 13, SECONDARY, true), matchWrap());
+    }
+
+    private void renderRecordsDialog(String title, JSONArray records, String emptyText) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(8), dp(18), dp(8));
+        scroll.addView(panel);
+        int visibleRecords = 0;
+        for (int i = 0; i < records.length(); i++) {
+            JSONObject record = records.optJSONObject(i);
+            if (record != null && isCollaborationRecordType(record.optString("type"))) visibleRecords++;
+        }
+        if (visibleRecords == 0) {
+            panel.addView(text(emptyText, 16, SECONDARY, false), matchWrap());
+        }
+        for (int i = 0; i < records.length(); i++) {
+            JSONObject record = records.optJSONObject(i);
+            if (record == null) continue;
+            if (!isCollaborationRecordType(record.optString("type"))) continue;
+            LinearLayout row = card();
+            row.setPadding(dp(14), dp(12), dp(14), dp(12));
+            LinearLayout titleRow = horizontal();
+            titleRow.setGravity(Gravity.CENTER_VERTICAL);
+            titleRow.addView(text(record.optString("title", "协作动态"), 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            String createdAt = formatTimestamp(record.optLong("createdAt", 0));
+            if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), matchWrap());
+            row.addView(titleRow, matchWrap());
+            String message = record.optString("message", "");
+            if (!message.isEmpty()) row.addView(text(message, 14, SECONDARY, false), matchWrap());
+            JSONObject actor = record.optJSONObject("actor");
+            String actorName = actor == null ? record.optString("actorName", "") : displayUserName(actor);
+            if (!actorName.isEmpty()) row.addView(text("操作人 · " + actorName, 13, TEAL, true), matchWrap());
+            panel.addView(row, matchWrap());
+        }
+        showManagedAlbumPage(title, scroll);
+    }
+
+    private boolean isReviewedApprovalStatus(String status) {
+        return "approved".equals(status) || "rejected".equals(status);
+    }
+
+    private boolean isCollaborationRecordType(String type) {
+        return "photo.upload".equals(type) || "photo.delete".equals(type);
+    }
+
+    private void showPermissionDenied(final JSONObject album, String action, final String permissionKey) {
+        JSONObject owner = album == null ? null : album.optJSONObject("ownerUser");
+        showTransientStatus(
+                "你没有" + action + "权限，请联系相册创建者授权。点按申请权限",
+                () -> showPermissionRequestDialog(album, permissionKey),
+                owner,
+                ownerDisplayName(album)
+        );
+    }
+
+    private void showPermissionRequestDialog(final JSONObject album, final String requestedKey) {
+        statusText.setText("正在读取权限申请...");
+        showManagedAlbumPage("申请权限", managementStateContent("正在加载申请进度", true, null));
+        new Thread(() -> {
+            try {
+                final JSONArray requests = requestJson("GET", "/api/albums/" + album.optString("id") + "/permission-requests", null, true, true).optJSONArray("requests");
+                runOnUiThread(() -> renderPermissionRequestDialog(album, requests == null ? new JSONArray() : requests, requestedKey));
+            } catch (final Exception error) {
+                runOnUiThread(() -> showManagedAlbumPage(
+                        "申请权限",
+                        managementStateContent("读取申请进度失败：" + humanReadableError(error.getMessage()), false, () -> showPermissionRequestDialog(album, requestedKey))
+                ));
+            }
+        }).start();
+    }
+
+    private void renderPermissionRequestDialog(final JSONObject album, JSONArray requests, String requestedKey) {
+        JSONObject latest = latestRequest(requests);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(12), dp(18), dp(24));
+        scroll.addView(panel);
+        JSONObject owner = album.optJSONObject("ownerUser");
+        LinearLayout ownerRow = horizontal();
+        ownerRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView avatar = capsuleImage();
+        avatar.setContentDescription(ownerDisplayName(album) + "的头像");
+        loadImageInto(owner == null ? "" : owner.optString("avatarUrl", ""), avatar);
+        ownerRow.addView(avatar, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        LinearLayout ownerTexts = vertical();
+        ownerTexts.addView(text("向创建者申请", 15, SECONDARY, true), matchWrap());
+        ownerTexts.addView(text(ownerDisplayName(album), 23, PRIMARY, true), matchWrap());
+        ownerRow.addView(ownerTexts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        panel.addView(ownerRow, matchWrap());
+        spacer(panel, dp(12));
+
+        if (latest != null && "pending".equals(latest.optString("status"))) {
+            panel.addView(text("待创建者审批", 22, PRIMARY, true), matchWrap());
+            panel.addView(text("申请权限：" + permissionSummary(latest.optJSONObject("requestedPermissions")), 16, SECONDARY, true), matchWrap());
+            String submittedAt = formatTimestamp(latest.optLong("createdAt", 0));
+            if (!submittedAt.isEmpty()) panel.addView(text("提交时间：" + submittedAt, 14, SECONDARY, true), matchWrap());
+            panel.addView(text("这次申请还在审批中，暂时不能重复提交新的申请。", 14, SECONDARY, false), matchWrap());
+            spacer(panel, dp(18));
+            Button cancel = outlineButton("撤销申请");
+            cancel.setTextColor(Color.rgb(230, 74, 83));
+            cancel.setOnClickListener(v -> cancelPermissionRequest(album, latest));
+            LinearLayout.LayoutParams cancelParams = matchWrap();
+            cancelParams.height = dp(58);
+            panel.addView(cancel, cancelParams);
+            showManagedAlbumPage("申请权限", scroll);
+            return;
+        }
+
+        if (latest != null) {
+            panel.addView(text("上次申请" + statusLabel(latest.optString("status")) + "：" + permissionSummary(latest.optJSONObject("requestedPermissions")), 15, SECONDARY, true), matchWrap());
+            spacer(panel, dp(8));
+        }
+        panel.addView(text("申请开通的权限", 20, PRIMARY, true), matchWrap());
+        JSONObject initial = permissionsObject(album, "currentUserMemberPermissions");
+        if (requestedKey != null && !requestedKey.isEmpty()) {
+            try { initial.put(requestedKey, true); } catch (Exception ignored) {}
+        }
+        Map<String, Switch> switches = permissionSwitches(panel, initial, true);
+        spacer(panel, dp(20));
+        Button submit = primaryButton("提交申请");
+        submit.setOnClickListener(v -> submitPermissionRequest(album, permissionsFromSwitches(switches)));
+        LinearLayout.LayoutParams submitParams = matchWrap();
+        submitParams.height = dp(60);
+        panel.addView(submit, submitParams);
+        showManagedAlbumPage("申请权限", scroll);
+    }
+
+    private void confirmDeleteOrLeaveAlbum(final JSONObject album) {
+        boolean owner = canEditMembers(album);
+        new AlertDialog.Builder(this)
+                .setTitle(owner ? "删除相册？" : "退出相册？")
+                .setMessage(owner ? "会删除整个相册和其中的照片分类。" : "退出后你将不再看到这个相册，可通过分享链接重新申请加入。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton(owner ? "删除" : "退出", (dialog, which) -> deleteOrLeaveAlbum(album))
+                .show();
+    }
+
+    private void showRenameAlbumDialog(final JSONObject album) {
+        EditText name = field("相册名称", false);
+        name.setText(album.optString("name", ""));
+        new AlertDialog.Builder(this)
+                .setTitle("重命名相册")
+                .setView(name)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存", (dialog, which) -> renameAlbum(album, name.getText().toString()))
+                .show();
+    }
+
+    private void renameAlbum(final JSONObject album, final String rawName) {
+        final String name = rawName == null ? "" : rawName.trim();
+        if (name.isEmpty()) {
+            statusText.setText("相册名不能为空");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("name", name);
+                JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/rename", body, true, true);
+                updateAlbumFromResponse(response);
+                runOnUiThread(() -> statusText.setText("相册名已保存"));
+            } catch (final Exception error) {
+                showError("保存失败", error);
+            }
+        }).start();
+    }
+
+    private void deleteOrLeaveAlbum(final JSONObject album) {
+        statusText.setText(canEditMembers(album) ? "正在删除相册..." : "正在退出相册...");
+        new Thread(() -> {
+            try {
+                requestJson("DELETE", "/api/albums/" + album.optString("id"), null, true, true);
+                runOnUiThread(() -> {
+                    showHome();
+                    statusText.setText(canEditMembers(album) ? "相册已删除" : "已退出相册");
+                    loadAlbums();
+                });
+            } catch (final Exception error) {
+                showError(canEditMembers(album) ? "删除失败" : "退出失败", error);
+            }
+        }).start();
+    }
+
+    private void updateMemberPermissions(final JSONObject album, final JSONObject member, final JSONObject permissions) {
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("permissions", permissions);
+                requestJson("POST", "/api/albums/" + album.optString("id") + "/members/" + member.optString("userId") + "/permissions", body, true, true);
+                runOnUiThread(() -> statusText.setText("成员权限已保存"));
+            } catch (final Exception error) {
+                showError("保存成员权限失败", error);
+            }
+        }).start();
+    }
+
+    private void scheduleMemberPermissionsUpdate(final JSONObject album, final JSONObject member, final JSONObject permissions) {
+        String memberId = member.optString("userId");
+        Runnable previous = pendingMemberPermissionSaves.remove(memberId);
+        if (previous != null) mainHandler.removeCallbacks(previous);
+        Runnable save = () -> {
+            pendingMemberPermissionSaves.remove(memberId);
+            updateMemberPermissions(album, member, permissions);
+        };
+        pendingMemberPermissionSaves.put(memberId, save);
+        mainHandler.postDelayed(save, 250L);
+    }
+
+    private void confirmRemoveMember(final JSONObject album, final JSONObject member) {
+        JSONObject user = member.optJSONObject("user");
+        new AlertDialog.Builder(this)
+                .setTitle("移除协作用户？")
+                .setMessage("移除 " + displayUserName(user) + " 后，对方将不再看到这个相册。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("移除", (dialog, which) -> removeMember(album, member))
+                .show();
+    }
+
+    private void removeMember(final JSONObject album, final JSONObject member) {
+        new Thread(() -> {
+            try {
+                requestJson("DELETE", "/api/albums/" + album.optString("id") + "/members/" + member.optString("userId"), null, true, true);
+                runOnUiThread(() -> {
+                    statusText.setText("协作用户已移除");
+                    showAlbumMembers(album);
+                    loadAlbums();
+                });
+            } catch (final Exception error) {
+                showError("移除失败", error);
+            }
+        }).start();
+    }
+
+    private void reviewJoin(final JSONObject album, final JSONObject request, final boolean approve) {
+        new Thread(() -> {
+            try {
+                requestJson("POST", "/api/albums/" + album.optString("id") + "/join-requests/" + request.optString("id") + "/" + (approve ? "approve" : "reject"), null, true, true);
+                runOnUiThread(() -> {
+                    statusText.setText(approve ? "已批准加入申请" : "已拒绝加入申请");
+                    showApprovalCenter(album);
+                    loadAlbums();
+                });
+            } catch (final Exception error) {
+                showError("处理失败", error);
+            }
+        }).start();
+    }
+
+    private void reviewPermission(final JSONObject album, final JSONObject request, final boolean approve) {
+        new Thread(() -> {
+            try {
+                requestJson("POST", "/api/albums/" + album.optString("id") + "/permission-requests/" + request.optString("id") + "/" + (approve ? "approve" : "reject"), null, true, true);
+                runOnUiThread(() -> {
+                    statusText.setText(approve ? "已批准权限申请" : "已拒绝权限申请");
+                    showApprovalCenter(album);
+                    loadAlbums();
+                });
+            } catch (final Exception error) {
+                showError("处理失败", error);
+            }
+        }).start();
+    }
+
+    private void submitPermissionRequest(final JSONObject album, final JSONObject permissions) {
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("permissions", permissions);
+                JSONObject response = requestJson("POST", "/api/albums/" + album.optString("id") + "/permission-requests", body, true, true);
+                runOnUiThread(() -> {
+                    if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+                    showTransientStatus(response.optString("message", "权限申请已提交，等待创建者审批"));
+                });
+            } catch (final Exception error) {
+                showError("提交申请失败", error);
+            }
+        }).start();
+    }
+
+    private void cancelPermissionRequest(final JSONObject album, final JSONObject request) {
+        new Thread(() -> {
+            try {
+                requestJson("DELETE", "/api/albums/" + album.optString("id") + "/permission-requests/" + request.optString("id"), null, true, true);
+                runOnUiThread(() -> {
+                    statusText.setText("权限申请已撤销");
+                    showPermissionRequestDialog(album, "");
+                });
+            } catch (final Exception error) {
+                showError("撤销失败", error);
+            }
+        }).start();
+    }
+
+    private void startUploadState(String albumId, int count) {
+        albumRecognitionPollRevision++;
+        isUploading = true;
+        activeUploadAlbumId = albumId == null ? "" : albumId;
+        uploadCancelRequested = false;
+        uploadSelectedCount = count;
+        uploadUploadedCount = 0;
+        uploadBaselinePhotoIds.clear();
+        uploadCreatedPhotoIds.clear();
+        JSONObject album = findAlbumById(activeUploadAlbumId);
+        if (album != null) uploadBaselinePhotoIds.addAll(photoIds(album));
+        uploadProgressText = "正在准备 " + count + " 个文件，点击底部进度可取消";
+        statusText.setText(uploadProgressText);
+        refreshCurrentAlbumView();
+    }
+
+    private void finishUploadState(String message) {
+        isUploading = false;
+        activeUploadAlbumId = "";
+        uploadCancelRequested = false;
+        uploadProgressText = "";
+        uploadSelectedCount = 0;
+        uploadUploadedCount = 0;
+        uploadBaselinePhotoIds.clear();
+        uploadCreatedPhotoIds.clear();
+        runOnUiThread(() -> {
+            if (statusText != null) statusText.setText(message);
+            refreshCurrentAlbumView();
+        });
+    }
+
+    private void updateUploadProgress(String message, int done, int total) {
+        uploadUploadedCount = Math.max(uploadUploadedCount, done);
+        uploadProgressText = message;
+        runOnUiThread(() -> {
+            if (statusText != null) statusText.setText(message);
+            JSONObject album = findAlbumById(activeUploadAlbumId);
+            if (album != null && activeUploadAlbumId.equals(selectedAlbumId)) {
+                showAlbumDetail(album);
+            }
+        });
+    }
+
+    private void confirmCancelUpload() {
+        new AlertDialog.Builder(this)
+                .setTitle("取消正在上传的照片？")
+                .setMessage("会尽快停止本次上传。已经提交到后台的照片可能仍会继续整理，稍后可在相册里删除。")
+                .setNegativeButton("继续上传", null)
+                .setPositiveButton("取消上传", (dialog, which) -> {
+                    uploadCancelRequested = true;
+                    uploadProgressText = "正在取消上传...";
+                    if (statusText != null) statusText.setText(uploadProgressText);
+                    refreshCurrentAlbumView();
+                })
+                .show();
+    }
+
+    private void ensureUploadNotCancelled() {
+        if (uploadCancelRequested) throw new IllegalStateException("上传已取消");
+    }
+
+    private void refreshCurrentAlbumView() {
+        JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+        if (album == null) return;
+        JSONObject folder = findFolderById(album, activeFolderId);
+        if ("folder".equals(currentScreen) && folder != null) showFolderDialog(album, folder);
+        else showAlbumDetail(album);
+    }
+
+    private void pickFiles() {
+        if (pendingUploadAlbumId.isEmpty()) {
             statusText.setText("请先选择一个相册");
             return;
         }
@@ -947,6 +2984,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_PICK_REGISTER_AVATAR && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            registerAvatarUri = data.getData();
+            if (registerAvatarPreview != null) {
+                registerAvatarPreview.clearColorFilter();
+                registerAvatarPreview.setImageURI(registerAvatarUri);
+            }
+            return;
+        }
         if (requestCode == REQUEST_PICK_AVATAR && resultCode == RESULT_OK && data != null && data.getData() != null) {
             statusText.setText("头像已选择，正在上传识别...");
             final Uri avatarUri = data.getData();
@@ -954,17 +2999,39 @@ public class MainActivity extends Activity {
                 try {
                     uploadAvatar(avatarUri, true);
                     runOnUiThread(() -> {
-                        showHome();
+                        showProfileDialog();
                         statusText.setText("头像已更新，后台正在匹配你的照片");
                         loadAlbums();
                     });
+                    pollAvatarRecognition();
                 } catch (final Exception error) {
                     showError("头像上传失败", error);
                 }
             }).start();
             return;
         }
-        if (requestCode != REQUEST_PICK_FILES || resultCode != RESULT_OK || data == null) return;
+        if (requestCode == REQUEST_PICK_QR_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            final Uri imageUri = data.getData();
+            statusText.setText("正在识别二维码...");
+            new Thread(() -> {
+                try {
+                    final String raw = decodeQRCode(decodeBitmapFromUri(imageUri));
+                    runOnUiThread(() -> applyScannedInviteCode(raw));
+                } catch (final Exception error) {
+                    showError("二维码识别失败", error);
+                }
+            }).start();
+            return;
+        }
+        if (requestCode == REQUEST_CAPTURE_QR && resultCode == RESULT_OK && data != null) {
+            String raw = data.getStringExtra(QRCodeScannerActivity.EXTRA_SCAN_RESULT);
+            if (raw != null && !raw.trim().isEmpty()) applyScannedInviteCode(raw);
+            return;
+        }
+        if (requestCode != REQUEST_PICK_FILES) return;
+        final String uploadAlbumId = pendingUploadAlbumId;
+        pendingUploadAlbumId = "";
+        if (resultCode != RESULT_OK || data == null || uploadAlbumId.isEmpty()) return;
         final List<Uri> uris = new ArrayList<>();
         if (data.getClipData() != null) {
             for (int i = 0; i < data.getClipData().getItemCount(); i++) {
@@ -973,27 +3040,84 @@ public class MainActivity extends Activity {
         } else if (data.getData() != null) {
             uris.add(data.getData());
         }
-        statusText.setText("正在准备直传 " + uris.size() + " 个文件...");
+        if (uris.isEmpty()) return;
+        startUploadState(uploadAlbumId, uris.size());
         new Thread(() -> {
             try {
-                directUpload(uris);
+                directUpload(uploadAlbumId, uris);
                 runOnUiThread(() -> {
-                    statusText.setText("上传完成，后台开始整理");
+                    finishUploadState("上传完成，后台开始整理");
                     loadAlbums();
                 });
+                pollAlbumRecognition(uploadAlbumId);
             } catch (final Exception error) {
-                showError("上传失败", error);
+                if (uploadCancelRequested) {
+                    cleanupCanceledUpload(uploadAlbumId);
+                } else {
+                    finishUploadState("上传失败");
+                    showError("上传失败", error);
+                }
             }
         }).start();
     }
 
-    private void directUpload(List<Uri> uris) throws Exception {
-        String uploader = uploaderInput == null ? "" : uploaderInput.getText().toString().trim();
-        if (uploader.isEmpty() && currentUser != null) uploader = currentUser.optString("nickname");
-        if (uploader.isEmpty()) uploader = "Android";
+    private Bitmap decodeBitmapFromUri(Uri uri) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            BitmapFactory.decodeStream(input, null, bounds);
+        }
+        int sample = 1;
+        int longest = Math.max(bounds.outWidth, bounds.outHeight);
+        while (longest / sample > 1800) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = Math.max(1, sample);
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            Bitmap bitmap = BitmapFactory.decodeStream(input, null, options);
+            if (bitmap == null) throw new IllegalStateException("无法读取这张二维码图片");
+            return bitmap;
+        }
+    }
+
+    private String decodeQRCode(Bitmap bitmap) throws Exception {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int[] pixels = new int[width * height];
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+        RGBLuminanceSource source = new RGBLuminanceSource(width, height, pixels);
+        BinaryBitmap binaryBitmap = new BinaryBitmap(new HybridBinarizer(source));
+        MultiFormatReader reader = new MultiFormatReader();
+        Map<DecodeHintType, Object> hints = new EnumMap<>(DecodeHintType.class);
+        hints.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
+        try {
+            Result result = reader.decode(binaryBitmap, hints);
+            return result == null ? "" : result.getText();
+        } catch (NotFoundException error) {
+            throw new IllegalStateException("没有在图片里识别到 PicMe 分享二维码");
+        } finally {
+            reader.reset();
+        }
+    }
+
+    private void applyScannedInviteCode(String raw) {
+        String code = inviteCodeFrom(raw);
+        if (code.isEmpty()) {
+            statusText.setText("二维码不是有效的 PicMe 相册分享码");
+            return;
+        }
+        if (inviteCodeInput != null) inviteCodeInput.setText(code);
+        statusText.setText("已识别相册码：" + code);
+        showJoinDialog(code);
+    }
+
+    private void directUpload(String albumId, List<Uri> uris) throws Exception {
+        String uploader = pendingUploader.trim();
+        if (uploader.isEmpty()) uploader = "访客";
         Map<String, Uri> uriById = new HashMap<>();
         JSONArray files = new JSONArray();
         for (int i = 0; i < uris.size(); i++) {
+            ensureUploadNotCancelled();
+            updateUploadProgress("正在准备第 " + (i + 1) + "/" + uris.size() + " 个文件", i, uris.size());
             Uri uri = uris.get(i);
             String name = displayName(uri);
             String clientFileId = "android-" + i + "-" + UUID.randomUUID();
@@ -1008,18 +3132,138 @@ public class MainActivity extends Activity {
         }
         JSONObject initBody = new JSONObject();
         initBody.put("files", files);
-        JSONObject init = requestJson("POST", "/api/albums/" + selectedAlbumId + "/uploads/init", initBody, true, true);
+        updateUploadProgress("正在准备上传", 0, Math.max(uris.size(), 1));
+        JSONObject init = requestJson("POST", "/api/albums/" + albumId + "/uploads/init", initBody, true, true);
         JSONArray uploads = init.optJSONArray("uploads");
         if (uploads == null || uploads.length() == 0) throw new IllegalStateException("没有可上传的文件");
         for (int i = 0; i < uploads.length(); i++) {
+            ensureUploadNotCancelled();
+            updateUploadProgress("正在上传第 " + (i + 1) + "/" + uploads.length() + " 张，点击进度可取消", i, uploads.length());
             JSONObject upload = uploads.getJSONObject(i);
             putSignedResource(upload.getJSONObject("image"), uriById);
             if (!upload.isNull("video")) putSignedResource(upload.getJSONObject("video"), uriById);
+            uploadUploadedCount = i + 1;
+            updateUploadProgress("已上传 " + uploadUploadedCount + "/" + uploads.length() + " 张", uploadUploadedCount, uploads.length());
         }
+        ensureUploadNotCancelled();
         JSONObject completeBody = new JSONObject();
         completeBody.put("uploader", uploader);
         completeBody.put("uploads", uploads);
-        requestJson("POST", "/api/albums/" + selectedAlbumId + "/uploads/complete", completeBody, true, true);
+        updateUploadProgress("正在提交照片", uploads.length(), uploads.length());
+        JSONObject response = requestJson("POST", "/api/albums/" + albumId + "/uploads/complete", completeBody, true, true);
+        JSONArray createdIds = response.optJSONArray("photoIds");
+        if (createdIds != null) {
+            for (int i = 0; i < createdIds.length(); i++) {
+                String id = createdIds.optString(i);
+                if (!id.isEmpty()) uploadCreatedPhotoIds.add(id);
+            }
+        }
+    }
+
+    private void cleanupCanceledUpload(String albumId) {
+        updateUploadProgress("正在取消上传，并清理本次照片", 0, Math.max(uploadSelectedCount, 1));
+        Set<String> pendingIds = new HashSet<>(uploadCreatedPhotoIds);
+        String cleanupError = "";
+        for (int attempt = 0; attempt < 4; attempt++) {
+            try {
+                if (attempt > 0) Thread.sleep(attempt * 900L);
+                JSONObject response = requestJson("GET", "/api/albums/" + albumId, null, true, true);
+                JSONObject latest = response.optJSONObject("album");
+                if (latest == null && albumId.equals(response.optString("id"))) latest = response;
+                if (latest != null) {
+                    Set<String> latestIds = photoIds(latest);
+                    latestIds.removeAll(uploadBaselinePhotoIds);
+                    pendingIds.addAll(latestIds);
+                }
+                if (pendingIds.isEmpty()) continue;
+                JSONObject body = new JSONObject();
+                body.put("photoIds", new JSONArray(pendingIds));
+                JSONObject deleted = requestJson("POST", "/api/albums/" + albumId + "/photos/delete-selected", body, true, true);
+                JSONObject updated = deleted.optJSONObject("album");
+                if (updated != null) replaceAlbumInCache(updated);
+                pendingIds.clear();
+                cleanupError = "";
+                break;
+            } catch (Exception error) {
+                cleanupError = humanReadableError(error.getMessage());
+            }
+        }
+        final String message = pendingIds.isEmpty()
+                ? "上传已取消，本次照片已清理"
+                : "上传已取消，但清理失败：" + (cleanupError.isEmpty() ? "请稍后手动删除本次照片" : cleanupError);
+        runOnUiThread(() -> {
+            finishUploadState(message);
+            loadAlbums();
+        });
+    }
+
+    private Set<String> photoIds(JSONObject album) {
+        Set<String> ids = new HashSet<>();
+        JSONArray photos = safeArray(album, "photos");
+        for (int i = 0; i < photos.length(); i++) {
+            JSONObject photo = photos.optJSONObject(i);
+            if (photo != null && !photo.optString("id").isEmpty()) ids.add(photo.optString("id"));
+        }
+        return ids;
+    }
+
+    private void pollAlbumRecognition(String albumId) {
+        final int revision = ++albumRecognitionPollRevision;
+        new Thread(() -> {
+            for (int attempt = 0; attempt < 30; attempt++) {
+                if (revision != albumRecognitionPollRevision || !hasLocalSession()) return;
+                try {
+                    if (attempt > 0) Thread.sleep(1500L);
+                    if (revision != albumRecognitionPollRevision || !hasLocalSession()) return;
+                    JSONObject response = requestJson("GET", "/api/albums/" + albumId, null, true, true);
+                    JSONObject latest = response.optJSONObject("album");
+                    if (latest == null && albumId.equals(response.optString("id"))) latest = response;
+                    if (latest == null) continue;
+                    replaceAlbumInCache(latest);
+                    JSONArray photos = safeArray(latest, "photos");
+                    int active = 0;
+                    int ready = 0;
+                    int failed = 0;
+                    for (int i = 0; i < photos.length(); i++) {
+                        JSONObject photo = photos.optJSONObject(i);
+                        if (photo == null) continue;
+                        String status = photo.optString("status", "ready");
+                        if ("queued".equals(status) || "preparing".equals(status) || "processing".equals(status)) active++;
+                        else if ("failed".equals(status)) failed++;
+                        else ready++;
+                    }
+                    final JSONObject refreshed = latest;
+                    final int activeCount = active;
+                    final int readyCount = ready;
+                    final int failedCount = failed;
+                    runOnUiThread(() -> {
+                        if (albumId.equals(selectedAlbumId) && ("album".equals(currentScreen) || "folder".equals(currentScreen))) {
+                            if ("folder".equals(currentScreen)) {
+                                JSONObject folder = findFolderById(refreshed, activeFolderId);
+                                if (folder != null) showFolderDialog(refreshed, folder);
+                                else showAlbumDetail(refreshed);
+                            } else {
+                                showAlbumDetail(refreshed);
+                            }
+                        }
+                        if (activeCount > 0) {
+                            statusText.setText(activeCount + " 张照片正在整理，已完成 " + readyCount + " 张");
+                        }
+                    });
+                    if (active == 0) {
+                        runOnUiThread(() -> showTransientStatus(
+                                failedCount > 0
+                                        ? "照片整理完成：" + readyCount + " 张可查看，" + failedCount + " 张需要稍后再看"
+                                        : "照片整理完成，人物小相册已更新"
+                        ));
+                        return;
+                    }
+                } catch (Exception error) {
+                    if (attempt >= 2) return;
+                }
+            }
+            runOnUiThread(() -> showTransientStatus("照片较多，后台会继续整理，稍后刷新即可看到结果"));
+        }).start();
     }
 
     private void uploadAvatar(Uri uri, boolean retryRefresh) throws Exception {
@@ -1054,13 +3298,16 @@ public class MainActivity extends Activity {
             uploadAvatar(uri, false);
             return;
         }
+        if (code == 401) expireSession();
         if (code < 200 || code >= 300) throw new IllegalStateException(text.isEmpty() ? ("请求失败：" + code) : text);
         JSONObject response = text.isEmpty() ? new JSONObject() : new JSONObject(text);
+        imageCache.evictAll();
         currentUser = response.optJSONObject("user");
+        syncDefaultUploader();
         cacheCurrentUser();
     }
 
-    private JSONObject registerRequest(String username, String nickname, String password) throws Exception {
+    private JSONObject registerRequest(String username, String nickname, String password, Uri avatarUri) throws Exception {
         String boundary = "PicMeBoundary" + UUID.randomUUID();
         HttpURLConnection connection = (HttpURLConnection) new URL(PRODUCTION_BASE_URL + "/api/auth/register").openConnection();
         connection.setRequestMethod("POST");
@@ -1071,6 +3318,7 @@ public class MainActivity extends Activity {
         writeFormField(output, boundary, "username", username);
         writeFormField(output, boundary, "nickname", nickname);
         writeFormField(output, boundary, "password", password);
+        if (avatarUri != null) writeMultipartFile(output, boundary, "avatar", avatarUri);
         output.write(("--" + boundary + "--\r\n").getBytes("UTF-8"));
         output.flush();
         output.close();
@@ -1084,6 +3332,34 @@ public class MainActivity extends Activity {
         output.write(("--" + boundary + "\r\n").getBytes("UTF-8"));
         output.write(("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n").getBytes("UTF-8"));
         output.write((value + "\r\n").getBytes("UTF-8"));
+    }
+
+    private void writeMultipartFile(OutputStream output, String boundary, String fieldName, Uri uri) throws Exception {
+        String filename = displayName(uri);
+        String mimeType = contentType(uri, filename);
+        output.write(("--" + boundary + "\r\n").getBytes("UTF-8"));
+        output.write(("Content-Disposition: form-data; name=\"" + fieldName + "\"; filename=\"" + filename + "\"\r\n").getBytes("UTF-8"));
+        output.write(("Content-Type: " + mimeType + "\r\n\r\n").getBytes("UTF-8"));
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IllegalStateException("无法读取头像文件");
+            byte[] buffer = new byte[1024 * 64];
+            int read;
+            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        }
+        output.write("\r\n".getBytes("UTF-8"));
+    }
+
+    private void logoutServer(String accessToken) {
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL(PRODUCTION_BASE_URL + "/api/auth/logout").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+            connection.getResponseCode();
+            connection.disconnect();
+        } catch (Exception ignored) {
+            // Local logout has already completed; server revocation is best effort.
+        }
     }
 
     private void putSignedResource(JSONObject resource, Map<String, Uri> uriById) throws Exception {
@@ -1109,12 +3385,15 @@ public class MainActivity extends Activity {
         if (input == null) throw new IllegalStateException("无法读取 " + resource.optString("originalName"));
         byte[] buffer = new byte[1024 * 64];
         int read;
-        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        while ((read = input.read(buffer)) != -1) {
+            ensureUploadNotCancelled();
+            output.write(buffer, 0, read);
+        }
         input.close();
         output.flush();
         output.close();
         int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IllegalStateException(readAll(connection.getErrorStream(), "OSS 上传失败：" + code));
+        if (code < 200 || code >= 300) throw new IllegalStateException(readAll(connection.getErrorStream(), "文件上传失败：" + code));
     }
 
     private JSONObject requestJson(String method, String path, JSONObject body, boolean auth, boolean retryRefresh) throws Exception {
@@ -1134,9 +3413,33 @@ public class MainActivity extends Activity {
         }
         int code = connection.getResponseCode();
         String text = readAll(code >= 400 ? connection.getErrorStream() : connection.getInputStream(), "");
-        if (code == 401 && auth && retryRefresh && refreshTokens()) return requestJson(method, path, body, true, false);
+        if (code == 401 && auth) {
+            if (retryRefresh && refreshTokens()) return requestJson(method, path, body, true, false);
+            expireSession();
+            throw new IllegalStateException("登录已失效，请重新登录");
+        }
         if (code < 200 || code >= 300) throw new IllegalStateException(text.isEmpty() ? ("请求失败：" + code) : text);
         return text.isEmpty() ? new JSONObject() : new JSONObject(text);
+    }
+
+    private void expireSession() {
+        avatarRecognitionPollRevision++;
+        albumRecognitionPollRevision++;
+        prefs.edit()
+                .remove("accessToken")
+                .remove("refreshToken")
+                .remove(CACHE_ALBUMS)
+                .remove(CACHE_USER)
+                .apply();
+        MessageNotificationJobService.cancel(this);
+        albums = new JSONArray();
+        selectedAlbumId = "";
+        currentAlbum = null;
+        currentUser = null;
+        runOnUiThread(() -> {
+            showLogin();
+            showTransientStatus("登录已失效，请重新登录");
+        });
     }
 
     private boolean refreshTokens() {
@@ -1166,6 +3469,19 @@ public class MainActivity extends Activity {
         return !prefs.getString("accessToken", "").isEmpty() || !prefs.getString("refreshToken", "").isEmpty();
     }
 
+    private boolean isValidUsername(String value) {
+        return value != null && value.matches("^[A-Za-z0-9_]{1,20}$");
+    }
+
+    private boolean isValidPasswordFormat(String value) {
+        if (value == null || value.length() < 6 || value.length() > 20) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            if (character < 0x21 || character > 0x7E) return false;
+        }
+        return true;
+    }
+
     private void restoreCachedSessionData() {
         try {
             String cachedAlbums = prefs.getString(CACHE_ALBUMS, "");
@@ -1175,7 +3491,10 @@ public class MainActivity extends Activity {
         }
         try {
             String cachedUser = prefs.getString(CACHE_USER, "");
-            if (!cachedUser.isEmpty()) currentUser = new JSONObject(cachedUser);
+            if (!cachedUser.isEmpty()) {
+                currentUser = new JSONObject(cachedUser);
+                syncDefaultUploader();
+            }
         } catch (Exception ignored) {
             currentUser = null;
         }
@@ -1216,6 +3535,13 @@ public class MainActivity extends Activity {
         target.setImageDrawable(placeholderDrawable());
         String absolute = absoluteURL(path);
         if (absolute.isEmpty()) return;
+        String cacheKey = absolute.contains("?") ? absolute.substring(0, absolute.indexOf('?')) : absolute;
+        target.setTag(cacheKey);
+        Bitmap cached = imageCache.get(cacheKey);
+        if (cached != null) {
+            target.setImageBitmap(cached);
+            return;
+        }
         new Thread(() -> {
             try {
                 HttpURLConnection connection = (HttpURLConnection) new URL(absolute).openConnection();
@@ -1223,7 +3549,12 @@ public class MainActivity extends Activity {
                 InputStream input = connection.getInputStream();
                 final Bitmap bitmap = BitmapFactory.decodeStream(input);
                 input.close();
-                if (bitmap != null) runOnUiThread(() -> target.setImageBitmap(bitmap));
+                if (bitmap != null) {
+                    imageCache.put(cacheKey, bitmap);
+                    runOnUiThread(() -> {
+                        if (cacheKey.equals(target.getTag())) target.setImageBitmap(bitmap);
+                    });
+                }
             } catch (Exception ignored) {
             }
         }).start();
@@ -1238,18 +3569,33 @@ public class MainActivity extends Activity {
     private String inviteCodeFrom(String raw) {
         String value = raw == null ? "" : raw.trim();
         if (value.isEmpty()) return "";
+        String inviteParam = queryParameter(value, "invite");
+        if (!inviteParam.isEmpty()) value = inviteParam;
         int index = value.indexOf("/join/");
         if (index >= 0) value = value.substring(index + 6);
         int query = value.indexOf('?');
         if (query >= 0) value = value.substring(0, query);
+        int fragment = value.indexOf('#');
+        if (fragment >= 0) value = value.substring(0, fragment);
         int slash = value.indexOf('/');
         if (slash >= 0) value = value.substring(0, slash);
-        return value.replaceAll("[^A-Za-z0-9_-]", "").toUpperCase();
+        return value.replaceAll("[^A-Za-z0-9_-]", "").toUpperCase(Locale.ROOT);
+    }
+
+    private String queryParameter(String raw, String name) {
+        if (raw == null || name == null || name.isEmpty()) return "";
+        try {
+            Uri uri = Uri.parse(raw);
+            String value = uri.getQueryParameter(name);
+            return value == null ? "" : value.trim();
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private String assetIdFromName(String filename) {
         int dot = filename.lastIndexOf('.');
-        return dot > 0 ? filename.substring(0, dot).toLowerCase() : filename.toLowerCase();
+        return dot > 0 ? filename.substring(0, dot).toLowerCase(Locale.ROOT) : filename.toLowerCase(Locale.ROOT);
     }
 
     private String displayName(Uri uri) {
@@ -1285,7 +3631,7 @@ public class MainActivity extends Activity {
     private String contentType(Uri uri, String filename) {
         String mimeType = getContentResolver().getType(uri);
         if (mimeType != null) return mimeType;
-        String lower = filename.toLowerCase();
+        String lower = filename.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".heic") || lower.endsWith(".heif")) return "image/heic";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".png")) return "image/png";
@@ -1304,8 +3650,469 @@ public class MainActivity extends Activity {
     }
 
     private void showError(final String prefix, final Exception error) {
+        String detail = humanReadableError(error == null ? null : error.getMessage());
+        showTransientStatus(prefix + "：" + detail);
+    }
+
+    private String humanReadableError(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "未知错误";
+        String value = raw.trim();
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (lower.contains("unable to resolve host") || lower.contains("no address associated with hostname")) {
+            return "网络连接失败，请检查网络后重试";
+        }
+        if (lower.contains("failed to connect") || lower.contains("connection refused") || lower.contains("connect timed out")) {
+            return "连接服务失败，请稍后重试";
+        }
+        if (lower.contains("socket closed") || lower.contains("connection reset")) {
+            return "网络连接已中断，请重试";
+        }
+        if (lower.equals("http 502") || lower.equals("http 503") || lower.equals("http 504")) {
+            return "服务暂不可用，请稍后重试";
+        }
+        if (value.startsWith("{")) {
+            try {
+                JSONObject payload = new JSONObject(value);
+                String[] keys = {"error", "message", "detail"};
+                for (String key : keys) {
+                    String message = payload.optString(key, "").trim();
+                    if (!message.isEmpty()) return message;
+                }
+            } catch (Exception ignored) {
+                // Fall through to the original response when it is not valid JSON.
+            }
+        }
+        return value;
+    }
+
+    private void showTransientStatus(final String message) {
+        showTransientStatus(message, null);
+    }
+
+    private void showTransientStatus(final String message, final Runnable action) {
+        showTransientStatus(message, action, null, "");
+    }
+
+    private void showTransientStatus(final String message, final Runnable action, final JSONObject owner, final String ownerName) {
         runOnUiThread(() -> {
-            if (statusText != null) statusText.setText(prefix + "：" + (error.getMessage() == null ? "未知错误" : error.getMessage()));
+            clearTransientStatus(false);
+            mainHandler.removeCallbacks(clearTransientStatusRunnable);
+            transientStatusVisible = true;
+            transientStatusAction = action;
+            View hud = transientStatusHud(message, action != null, owner, ownerName);
+            transientStatusView = hud;
+            hud.setClickable(true);
+            hud.setOnClickListener(action == null ? v -> clearTransientStatus(true) : v -> {
+                Runnable callback = transientStatusAction;
+                clearTransientStatus(true);
+                if (callback != null) callback.run();
+            });
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP
+            );
+            params.setMargins(dp(18), dp(42), dp(18), 0);
+            addContentView(hud, params);
+            mainHandler.postDelayed(clearTransientStatusRunnable, TRANSIENT_STATUS_MS);
+        });
+    }
+
+    private View transientStatusHud(String message, boolean actionable, JSONObject owner, String ownerName) {
+        LinearLayout hud = horizontal();
+        hud.setGravity(Gravity.CENTER_VERTICAL);
+        hud.setPadding(dp(14), dp(12), dp(14), dp(12));
+        hud.setBackground(round(Color.argb(248, 255, 255, 255), dp(20), Color.rgb(205, 244, 244), dp(2)));
+        hud.setElevation(dp(10));
+        if (owner != null) {
+            ImageView avatar = capsuleImage();
+            avatar.setContentDescription((ownerName == null || ownerName.isEmpty() ? "相册创建者" : ownerName) + "的头像");
+            loadImageInto(owner.optString("avatarUrl", ""), avatar);
+            LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(46), dp(46));
+            avatarParams.setMargins(0, 0, dp(12), 0);
+            hud.addView(avatar, avatarParams);
+        }
+        LinearLayout texts = vertical();
+        String title = actionable ? "需要授权" : "提示";
+        texts.addView(text(title, 17, PRIMARY, true), matchWrap());
+        if (owner != null) {
+            texts.addView(text("创建者：" + (ownerName == null || ownerName.isEmpty() ? "相册创建者" : ownerName), 13, TEAL, true), matchWrap());
+        }
+        TextView body = text(message == null ? "" : message, 13, SECONDARY, true);
+        body.setMaxLines(3);
+        texts.addView(body, matchWrap());
+        hud.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        return hud;
+    }
+
+    private boolean isTouchInsideStatus(MotionEvent event) {
+        if (transientStatusView == null) return false;
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        if (!transientStatusView.getGlobalVisibleRect(bounds)) return false;
+        return bounds.contains((int) event.getRawX(), (int) event.getRawY());
+    }
+
+    private void clearTransientStatus(boolean fromInteraction) {
+        if (!transientStatusVisible) return;
+        mainHandler.removeCallbacks(clearTransientStatusRunnable);
+        transientStatusVisible = false;
+        transientStatusAction = null;
+        if (transientStatusView != null) {
+            ViewGroup parent = (ViewGroup) transientStatusView.getParent();
+            if (parent != null) parent.removeView(transientStatusView);
+            transientStatusView = null;
+        }
+    }
+
+    private void showManagedAlbumPage(String title, View content) {
+        if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+        Dialog dialog = showManagementPage(title, content, "", null);
+        managementDialog = dialog;
+        activeManagementPageTitle = title == null ? "" : title;
+        dialog.setOnDismissListener(d -> {
+            if (managementDialog == dialog) {
+                managementDialog = null;
+                activeManagementPageTitle = "";
+            }
+        });
+    }
+
+    private boolean isManagedPageOpen(String title) {
+        return managementDialog != null
+                && managementDialog.isShowing()
+                && activeManagementPageTitle.equals(title == null ? "" : title);
+    }
+
+    private View managementStateContent(String message, boolean loading, Runnable retry) {
+        LinearLayout state = vertical();
+        state.setGravity(Gravity.CENTER);
+        state.setPadding(dp(24), dp(80), dp(24), dp(80));
+        if (loading) {
+            ProgressBar progress = new ProgressBar(this);
+            state.addView(progress, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            spacer(state, dp(18));
+        }
+        TextView label = text(message, 17, loading ? SECONDARY : PRIMARY, !loading);
+        label.setGravity(Gravity.CENTER);
+        state.addView(label, matchWrap());
+        if (retry != null) {
+            spacer(state, dp(22));
+            Button retryButton = primaryButton("重试");
+            retryButton.setOnClickListener(v -> retry.run());
+            LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(dp(180), dp(56));
+            retryParams.gravity = Gravity.CENTER_HORIZONTAL;
+            state.addView(retryButton, retryParams);
+        }
+        return state;
+    }
+
+    private Dialog showManagementPage(String title, View content, String actionLabel, Runnable action) {
+        LinearLayout page = vertical();
+        page.setPadding(dp(18), dp(18), dp(18), dp(12));
+        page.setBackground(softBackground());
+
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        Button close = ghostButton("关闭");
+        close.setTextSize(16);
+        header.addView(close, new LinearLayout.LayoutParams(dp(92), dp(52)));
+        TextView heading = text(title, 23, PRIMARY, true);
+        heading.setGravity(Gravity.CENTER);
+        header.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (action != null && actionLabel != null && !actionLabel.isEmpty()) {
+            Button command = ghostButton(actionLabel);
+            command.setTextSize(15);
+            header.addView(command, new LinearLayout.LayoutParams(dp(104), dp(52)));
+            command.setTag(action);
+        } else {
+            header.addView(new View(this), new LinearLayout.LayoutParams(dp(92), dp(52)));
+        }
+        page.addView(header, matchWrap());
+        spacer(page, dp(14));
+
+        LinearLayout contentFrame = vertical();
+        contentFrame.setPadding(dp(4), 0, dp(4), 0);
+        contentFrame.setBackground(round(Color.argb(225, 255, 255, 255), dp(24), Color.rgb(218, 246, 241), dp(1)));
+        contentFrame.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        page.addView(contentFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Material_Light_NoActionBar);
+        dialog.setContentView(page);
+        close.setOnClickListener(v -> dialog.dismiss());
+        View command = header.getChildAt(2);
+        if (command instanceof Button && command.getTag() instanceof Runnable) {
+            command.setOnClickListener(v -> {
+                ((Runnable) command.getTag()).run();
+                dialog.dismiss();
+            });
+        }
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setStatusBarColor(Color.rgb(249, 251, 246));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            }
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        }
+        return dialog;
+    }
+
+    private void addActionButton(LinearLayout row, String label, final Runnable action) {
+        Button button = outlineButton(label);
+        button.setTextSize(16);
+        button.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(78), 1);
+        params.setMargins(dp(4), dp(6), dp(4), dp(6));
+        row.addView(button, params);
+    }
+
+    private void addReviewButtons(LinearLayout row, Runnable approve, Runnable reject) {
+        LinearLayout actions = horizontal();
+        Button yes = primaryButton("批准");
+        yes.setTextSize(16);
+        yes.setOnClickListener(v -> approve.run());
+        Button no = ghostButton("拒绝");
+        no.setTextColor(Color.rgb(230, 74, 83));
+        no.setOnClickListener(v -> reject.run());
+        actions.addView(yes, new LinearLayout.LayoutParams(0, dp(46), 1));
+        actions.addView(no, new LinearLayout.LayoutParams(0, dp(46), 1));
+        row.addView(actions, matchWrap());
+    }
+
+    private Map<String, Switch> permissionSwitches(LinearLayout parent, JSONObject permissions, boolean editable) {
+        Map<String, Switch> switches = new HashMap<>();
+        addPermissionSwitch(parent, switches, "upload", "允许上传", permissions, editable);
+        addPermissionSwitch(parent, switches, "delete", "允许删除", permissions, editable);
+        addPermissionSwitch(parent, switches, "download", "允许下载", permissions, editable);
+        addPermissionSwitch(parent, switches, "share", "允许分享", permissions, editable);
+        return switches;
+    }
+
+    private void addPermissionSwitch(LinearLayout parent, Map<String, Switch> switches, String key, String label, JSONObject permissions, boolean editable) {
+        Switch control = new Switch(this);
+        control.setText(label);
+        control.setTextSize(18);
+        control.setTextColor(PRIMARY);
+        control.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        control.setPadding(0, dp(6), 0, dp(6));
+        control.setChecked(permissionValue(permissions, key));
+        control.setEnabled(editable);
+        switches.put(key, control);
+        parent.addView(control, matchWrap());
+    }
+
+    private JSONObject permissionsFromSwitches(Map<String, Switch> switches) {
+        JSONObject permissions = new JSONObject();
+        try {
+            permissions.put("upload", switches.containsKey("upload") && switches.get("upload").isChecked());
+            permissions.put("delete", switches.containsKey("delete") && switches.get("delete").isChecked());
+            permissions.put("download", switches.containsKey("download") && switches.get("download").isChecked());
+            permissions.put("share", switches.containsKey("share") && switches.get("share").isChecked());
+        } catch (Exception ignored) {
+        }
+        return permissions;
+    }
+
+    private JSONObject defaultPermissions() {
+        JSONObject permissions = new JSONObject();
+        try {
+            permissions.put("upload", true);
+            permissions.put("delete", true);
+            permissions.put("download", true);
+            permissions.put("share", true);
+        } catch (Exception ignored) {
+        }
+        return permissions;
+    }
+
+    private JSONObject permissionsObject(JSONObject source, String key) {
+        JSONObject permissions = source == null ? null : source.optJSONObject(key);
+        JSONObject normalized = defaultPermissions();
+        if (permissions == null) return normalized;
+        try {
+            normalized.put("upload", permissionValue(permissions, "upload"));
+            normalized.put("delete", permissionValue(permissions, "delete"));
+            normalized.put("download", permissionValue(permissions, "download"));
+            normalized.put("share", permissionValue(permissions, "share"));
+        } catch (Exception ignored) {
+        }
+        return normalized;
+    }
+
+    private boolean permissionAllowed(JSONObject album, String key) {
+        if (canEditMembers(album)) return true;
+        return permissionValue(permissionsObject(album, "currentUserPermissions"), key);
+    }
+
+    private boolean canDeletePhoto(JSONObject album, JSONObject photo) {
+        if (permissionAllowed(album, "delete")) return true;
+        String currentUserId = currentUser == null ? "" : currentUser.optString("id", "");
+        if (!currentUserId.isEmpty() && currentUserId.equals(photo.optString("uploaderUserId", ""))) return true;
+        String nickname = currentUser == null ? "" : currentUser.optString("nickname", "").trim();
+        return !nickname.isEmpty() && nickname.equals(photo.optString("uploader", "").trim());
+    }
+
+    private void syncDefaultUploader() {
+        if (currentUser == null) return;
+        String nickname = currentUser.optString("nickname", "").trim();
+        if (!nickname.isEmpty()) pendingUploader = nickname;
+    }
+
+    private boolean canDeletePhotos(JSONObject album, JSONArray photos) {
+        if (photos == null || photos.length() == 0) return false;
+        for (int i = 0; i < photos.length(); i++) {
+            JSONObject photo = photos.optJSONObject(i);
+            if (photo == null || !canDeletePhoto(album, photo)) return false;
+        }
+        return true;
+    }
+
+    private boolean permissionValue(JSONObject permissions, String key) {
+        return permissions == null || !permissions.has(key) || permissions.optBoolean(key, true);
+    }
+
+    private String permissionSummary(JSONObject permissions) {
+        JSONObject normalized = permissions == null ? defaultPermissions() : permissions;
+        List<String> values = new ArrayList<>();
+        if (permissionValue(normalized, "upload")) values.add("上传");
+        if (permissionValue(normalized, "delete")) values.add("删除");
+        if (permissionValue(normalized, "download")) values.add("下载");
+        if (permissionValue(normalized, "share")) values.add("分享");
+        if (values.isEmpty()) return "无";
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) builder.append("、");
+            builder.append(values.get(i));
+        }
+        return builder.toString();
+    }
+
+    private boolean canEditMembers(JSONObject album) {
+        return album != null && (album.optBoolean("isOwner", false) || "owner".equals(album.optString("currentUserRole")));
+    }
+
+    private boolean isAdmin(JSONObject album) {
+        if (album == null) return false;
+        String role = album.optString("currentUserRole");
+        return album.optBoolean("canAdmin", false) || "owner".equals(role) || "admin".equals(role);
+    }
+
+    private String ownerDisplayName(JSONObject album) {
+        JSONObject owner = album == null ? null : album.optJSONObject("ownerUser");
+        String nickname = owner == null ? "" : owner.optString("nickname", "").trim();
+        if (!nickname.isEmpty()) return nickname;
+        String username = owner == null ? album.optString("ownerUsername", "") : owner.optString("username", "");
+        if (username != null && !username.trim().isEmpty()) return "@" + username.trim();
+        String userId = album == null ? "" : album.optString("ownerUserId", "");
+        return userId.isEmpty() ? "相册创建者" : userId;
+    }
+
+    private String displayUserName(JSONObject user) {
+        if (user == null) return "协作用户";
+        String nickname = user.optString("nickname", "").trim();
+        if (!nickname.isEmpty()) return nickname;
+        String username = user.optString("username", "").trim();
+        if (!username.isEmpty()) return "@" + username;
+        return user.optString("id", "协作用户");
+    }
+
+    private String userIdentity(JSONObject user) {
+        if (user == null) return "申请人 · 协作用户";
+        String nickname = user.optString("nickname", "").trim();
+        String username = user.optString("username", "").trim();
+        if (!nickname.isEmpty() && !username.isEmpty()) return "申请人 · " + nickname + " @" + username;
+        if (!nickname.isEmpty()) return "申请人 · " + nickname;
+        if (!username.isEmpty()) return "申请人 · @" + username;
+        return "申请人 · " + user.optString("id", "协作用户");
+    }
+
+    private LinearLayout approvalTitleRow(String title, long timestamp) {
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(text(title, 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        String formatted = formatTimestamp(timestamp);
+        if (!formatted.isEmpty()) row.addView(text(formatted, 12, SECONDARY, true), matchWrap());
+        return row;
+    }
+
+    private long requestTimestamp(JSONObject request) {
+        if (request == null) return 0;
+        long reviewedAt = request.optLong("reviewedAt", 0);
+        return reviewedAt > 0 ? reviewedAt : request.optLong("createdAt", 0);
+    }
+
+    private static final class ApprovalRecord {
+        final String kind;
+        final JSONObject request;
+
+        ApprovalRecord(String kind, JSONObject request) {
+            this.kind = kind;
+            this.request = request;
+        }
+    }
+
+    private String formatTimestamp(long timestamp) {
+        if (timestamp <= 0) return "";
+        long millis = timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
+        return new SimpleDateFormat("MM/dd HH:mm", Locale.CHINA).format(new Date(millis));
+    }
+
+    private String roleText(String role) {
+        if ("owner".equals(role)) return "创建人";
+        if ("admin".equals(role)) return "管理员";
+        return "成员";
+    }
+
+    private String statusLabel(String status) {
+        if ("pending".equals(status)) return "待审批";
+        if ("approved".equals(status)) return "已批准";
+        if ("rejected".equals(status)) return "已拒绝";
+        if ("cancelled".equals(status)) return "已撤销";
+        return status == null || status.isEmpty() ? "已处理" : status;
+    }
+
+    private JSONObject latestRequest(JSONArray requests) {
+        JSONObject latest = null;
+        int best = -1;
+        for (int i = 0; i < requests.length(); i++) {
+            JSONObject request = requests.optJSONObject(i);
+            if (request == null) continue;
+            if ("pending".equals(request.optString("status"))) return request;
+            int timestamp = Math.max(request.optInt("reviewedAt", 0), request.optInt("createdAt", 0));
+            if (timestamp > best) {
+                best = timestamp;
+                latest = request;
+            }
+        }
+        return latest;
+    }
+
+    private void updateAlbumFromResponse(JSONObject response) {
+        JSONObject updated = response == null ? null : response.optJSONObject("album");
+        if (updated == null) return;
+        selectedAlbumId = updated.optString("id", selectedAlbumId);
+        currentAlbum = updated;
+        JSONArray next = new JSONArray();
+        boolean replaced = false;
+        for (int i = 0; i < albums.length(); i++) {
+            JSONObject album = albums.optJSONObject(i);
+            if (album != null && album.optString("id").equals(updated.optString("id"))) {
+                next.put(updated);
+                replaced = true;
+            } else if (album != null) {
+                next.put(album);
+            }
+        }
+        if (!replaced) next.put(updated);
+        albums = next;
+        cacheAlbums();
+        runOnUiThread(() -> {
+            JSONObject folder = findFolderById(updated, activeFolderId);
+            if ("folder".equals(currentScreen) && folder != null) showFolderDialog(updated, folder);
+            else showAlbumDetail(updated);
         });
     }
 
@@ -1391,6 +4198,7 @@ public class MainActivity extends Activity {
         params.setMargins(0, dp(12), 0, dp(12));
         layout.setLayoutParams(params);
         layout.setBackground(round(Color.argb(238, 255, 255, 255), dp(24), Color.rgb(218, 246, 241), dp(1)));
+        layout.setElevation(dp(2));
         return layout;
     }
 
@@ -1399,12 +4207,13 @@ public class MainActivity extends Activity {
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setPadding(dp(2), dp(2), dp(2), dp(2));
         image.setBackground(round(Color.WHITE, dp(32), Color.WHITE, dp(3)));
+        image.setClipToOutline(true);
         return image;
     }
 
     private void addCenteredBrand(LinearLayout parent, int logoSize, int titleSp, int subtitleSp) {
         ImageView logo = new ImageView(this);
-        logo.setImageResource(getResources().getIdentifier("picme_logo", "drawable", getPackageName()));
+        logo.setImageResource(R.drawable.picme_logo);
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(logoSize, logoSize);
         logoParams.gravity = Gravity.CENTER_HORIZONTAL;
         parent.addView(logo, logoParams);

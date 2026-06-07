@@ -695,6 +695,10 @@ final class SharePhotosStore: ObservableObject {
     }
 
     private func routeNotification(destination: String, albumId: String?, notificationId: String?) {
+        if destination == "messages" {
+            pendingPushRoute = PushNavigationRoute(destination: destination, albumId: nil, notificationId: notificationId)
+            return
+        }
         guard let albumId, !albumId.isEmpty else {
             pendingPushRoute = PushNavigationRoute(destination: "messages", albumId: nil, notificationId: notificationId)
             return
@@ -707,7 +711,7 @@ final class SharePhotosStore: ObservableObject {
         switch type {
         case "album.join_request", "album.permission_request":
             return "join_requests"
-        case "face.my_photos_matched", "album.join_approved":
+        case "face.my_photos_matched":
             return "my_photos"
         default:
             return "messages"
