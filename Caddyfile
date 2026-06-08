@@ -6,7 +6,7 @@ picme.me {
 
 
     handle_path /apk/* {
-        root * /root/apk
+        root * /var/www/apk
         file_server browse
     }
 
