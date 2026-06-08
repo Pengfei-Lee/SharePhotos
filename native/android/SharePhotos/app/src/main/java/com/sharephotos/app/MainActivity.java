@@ -66,6 +66,7 @@ import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.common.BitMatrix;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -105,7 +106,7 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private LinearLayout root;
     private TextView statusText;
-    private Button messageButton;
+    private TextView messageBadge;
     private Dialog messageDialog;
     private Dialog managementDialog;
     private String activeManagementPageTitle = "";
@@ -132,6 +133,8 @@ public class MainActivity extends Activity {
     private String activeFolderId = "";
     private String activeAlbumTab = "my";
     private boolean photoSelectionMode = false;
+    private boolean livePhotoPlaying = false;
+    private PhotoDiskCache diskCache;
     private Set<String> selectedPhotoIds = new HashSet<>();
     private int unreadMessageCount = 0;
     private volatile boolean isUploading = false;
@@ -316,12 +319,28 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         brandParams.setMargins(dp(14), 0, dp(12), 0);
         top.addView(brandBlock, brandParams);
-        messageButton = floatingButton(messageButtonText());
-        messageButton.setTextSize(14);
-        messageButton.setOnClickListener(v -> showMessageCenter());
+        FrameLayout messageBtn = new FrameLayout(this);
+        messageBtn.setBackground(round(Color.argb(235, 255, 255, 255), dp(27), Color.argb(30, 0, 128, 112), dp(1)));
+        messageBtn.setElevation(dp(3));
+        messageBtn.setContentDescription("消息提醒");
+        messageBtn.setOnClickListener(v -> showMessageCenter());
+        ImageView bell = new ImageView(this);
+        bell.setImageResource(R.drawable.ic_bell);
+        messageBtn.addView(bell, new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER));
+        messageBadge = text("", 11, Color.WHITE, true);
+        messageBadge.setGravity(Gravity.CENTER);
+        messageBadge.setMinWidth(dp(18));
+        messageBadge.setMinHeight(dp(18));
+        messageBadge.setPadding(dp(4), 0, dp(4), 0);
+        messageBadge.setBackground(round(Color.rgb(230, 74, 83), dp(9), Color.WHITE, dp(1)));
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        badgeParams.setMargins(0, dp(2), dp(2), 0);
+        messageBtn.addView(messageBadge, badgeParams);
         LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(dp(54), dp(54));
         messageParams.setMargins(0, 0, dp(8), 0);
-        top.addView(messageButton, messageParams);
+        top.addView(messageBtn, messageParams);
+        updateMessageBadge();
         ImageView avatar = capsuleImage();
         avatar.setContentDescription("我的资料");
         avatar.setOnClickListener(v -> showProfileDialog());
@@ -338,9 +357,14 @@ public class MainActivity extends Activity {
 
         renderAlbums();
 
-        Button joinButton = floatingButton("扫码");
-        joinButton.setTextSize(14);
+        FrameLayout joinButton = new FrameLayout(this);
+        joinButton.setBackground(round(Color.argb(240, 255, 255, 255), dp(32), Color.TRANSPARENT, 0));
+        joinButton.setElevation(dp(4));
+        joinButton.setContentDescription("扫码加入相册");
         joinButton.setOnClickListener(v -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString()));
+        ImageView qrIcon = new ImageView(this);
+        qrIcon.setImageResource(R.drawable.ic_qr_scan);
+        joinButton.addView(qrIcon, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
         FrameLayout.LayoutParams joinParams = new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.BOTTOM | Gravity.END);
         joinParams.setMargins(0, 0, dp(24), dp(104));
         frame.addView(joinButton, joinParams);
@@ -471,12 +495,15 @@ public class MainActivity extends Activity {
         TextView date = text("PicMe 相册", 18, PRIMARY, true);
         date.setGravity(Gravity.CENTER);
         header.addView(date, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button share = ghostButton("分享");
+        ImageView share = new ImageView(this);
+        share.setImageResource(R.drawable.ic_share);
+        share.setContentDescription("分享相册");
+        share.setPadding(dp(10), dp(10), dp(10), dp(10));
         share.setOnClickListener(v -> {
             if (permissionAllowed(album, "share")) shareAlbum(album);
             else showPermissionDenied(album, "分享", "share");
         });
-        header.addView(share);
+        header.addView(share, new LinearLayout.LayoutParams(dp(46), dp(46)));
         content.addView(header, matchWrap());
 
         TextView title = text(album.optString("name", "未命名相册"), 38, Color.BLACK, true);
@@ -506,17 +533,17 @@ public class MainActivity extends Activity {
         spacer(content, dp(16));
         LinearLayout actionRow = horizontal();
         actionRow.setGravity(Gravity.CENTER);
-        addActionButton(actionRow, "分享\n相册", () -> {
+        addActionButton(actionRow, "分享相册", R.drawable.ic_share, () -> {
             if (permissionAllowed(album, "share")) shareAlbum(album);
             else showPermissionDenied(album, "分享", "share");
         });
-        addActionButton(actionRow, "协作\n用户", () -> showAlbumMembers(album));
-        addActionButton(actionRow, "协作\n记录", () -> showCollaborationRecords(album));
+        addActionButton(actionRow, "协作用户", R.drawable.ic_people, () -> showAlbumMembers(album));
+        addActionButton(actionRow, "协作记录", R.drawable.ic_history, () -> showCollaborationRecords(album));
         if (!canEditMembers(album)) {
-            addActionButton(actionRow, "申请\n权限", () -> showPermissionRequestDialog(album, ""));
+            addActionButton(actionRow, "申请权限", R.drawable.ic_key, () -> showPermissionRequestDialog(album, ""));
         }
         if (isAdmin(album)) {
-            addActionButton(actionRow, "审批", () -> showApprovalCenter(album));
+            addActionButton(actionRow, "审批", R.drawable.ic_person_add, () -> showApprovalCenter(album));
         }
         content.addView(actionRow, matchWrap());
 
@@ -924,12 +951,12 @@ public class MainActivity extends Activity {
 
         LinearLayout actions = horizontal();
         JSONObject finalActiveFolder = activeFolder;
-        addActionButton(actions, "重命名", () -> showRenameFolderDialog(album, finalActiveFolder));
-        addActionButton(actions, "下载", () -> {
+        addActionButton(actions, "重命名", R.drawable.ic_pencil, () -> showRenameFolderDialog(album, finalActiveFolder));
+        addActionButton(actions, "下载", R.drawable.ic_download, () -> {
             if (permissionAllowed(album, "download")) runWithLegacyWritePermission(() -> downloadFolder(album, finalActiveFolder));
             else showPermissionDenied(album, "下载", "download");
         });
-        addActionButton(actions, "删除", () -> {
+        addActionButton(actions, "删除", R.drawable.ic_trash, () -> {
             if (permissionAllowed(album, "delete")) confirmDeleteFolder(album, finalActiveFolder);
             else showPermissionDenied(album, "删除", "delete");
         });
@@ -1230,42 +1257,98 @@ public class MainActivity extends Activity {
         final int index = Math.max(0, Math.min(startIndex, photos.length() - 1));
         final JSONObject photo = photos.optJSONObject(index);
         if (photo == null) return;
+        // 进入/切换查看器都重建视图，旧的 VideoView 已不存在，复位播放标志，避免卡死后无法再播。
+        livePhotoPlaying = false;
 
+        final boolean isLive = "live_photo".equals(photo.optString("type"));
+        final int blue = Color.rgb(0, 122, 255);
+
+        // 整体与 iOS 一致：白色背景。
         FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(Color.BLACK);
+        frame.setBackgroundColor(Color.WHITE);
         LinearLayout content = vertical();
         content.setGravity(Gravity.CENTER_HORIZONTAL);
         frame.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // 顶部：左“‹ 返回”(蓝色无底)，中间日期+时间，右侧“⋯”更多菜单(保存/删除)。
         LinearLayout header = horizontal();
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(12), dp(18), dp(12), dp(8));
-        Button back = ghostButton("‹ 返回");
+        header.setPadding(dp(16), dp(14), dp(16), dp(10));
+        header.setBackgroundColor(Color.WHITE);
+        Button back = plainTextButton("‹ 返回", blue, 17);
         back.setOnClickListener(v -> showCurrentAlbumOrHome());
         header.addView(back);
-        TextView counter = text((index + 1) + " / " + photos.length(), 16, Color.WHITE, true);
-        counter.setGravity(Gravity.CENTER);
-        header.addView(counter, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button close = ghostButton("关闭");
-        close.setOnClickListener(v -> showCurrentAlbumOrHome());
-        header.addView(close);
+        LinearLayout center = vertical();
+        center.setGravity(Gravity.CENTER);
+        String dateStr = viewerDate(photo);
+        if (dateStr.isEmpty()) {
+            center.addView(text((index + 1) + " / " + photos.length(), 16, PRIMARY, true));
+        } else {
+            center.addView(text(dateStr, 16, PRIMARY, true));
+            center.addView(text(viewerTime(photo), 12, SECONDARY, true));
+        }
+        header.addView(center, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button more = plainTextButton("⋯", blue, 24);
+        more.setOnClickListener(v -> showPhotoViewerMenu(v, photo));
+        header.addView(more);
         content.addView(header, matchWrap());
 
-        ImageView image = new ImageView(this);
+        // 照片区：白底、按比例居中。
+        final FrameLayout imageSlot = new FrameLayout(this);
+        final ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         loadImageInto(photo.optString("previewUrl", photo.optString("imageUrl", bestPhotoURL(photo))), image);
-        content.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        imageSlot.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         addSwipeNavigation(image, photos, index);
+        content.addView(imageSlot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        LinearLayout actions = horizontal();
-        actions.setGravity(Gravity.CENTER);
-        Button previous = ghostButton("上一张");
-        previous.setEnabled(index > 0);
-        previous.setOnClickListener(v -> showPhotoViewer(photos, index - 1));
-        Button next = ghostButton("下一张");
-        next.setEnabled(index < photos.length() - 1);
-        next.setOnClickListener(v -> showPhotoViewer(photos, index + 1));
-        Button save = ghostButton("保存");
+        if (isLive) {
+            // 仿 iOS LIVE 标志：照片左上角深色半透明胶囊（◉ + LIVE，白字），点击就地播放。
+            final TextView liveBadge = text("◉  LIVE", 13, Color.WHITE, true);
+            liveBadge.setGravity(Gravity.CENTER);
+            liveBadge.setPadding(dp(12), dp(7), dp(12), dp(7));
+            liveBadge.setBackground(round(Color.argb(128, 0, 0, 0), dp(16), Color.TRANSPARENT, 0));
+            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.START | Gravity.TOP);
+            badgeParams.setMargins(dp(14), dp(14), 0, 0);
+            liveBadge.setOnClickListener(v -> playLiveVideo(photo, imageSlot, image, liveBadge));
+            imageSlot.addView(liveBadge, badgeParams);
+        }
+
+        // 底部缩略图胶片条：当前张蓝色描边，点击跳转。
+        final HorizontalScrollView strip = new HorizontalScrollView(this);
+        strip.setHorizontalScrollBarEnabled(false);
+        LinearLayout stripRow = horizontal();
+        stripRow.setPadding(dp(12), dp(8), dp(12), dp(8));
+        for (int i = 0; i < photos.length(); i++) {
+            JSONObject p = photos.optJSONObject(i);
+            ImageView thumb = new ImageView(this);
+            thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            boolean selected = (i == index);
+            thumb.setBackground(round(Color.rgb(229, 241, 242), dp(8), selected ? blue : Color.TRANSPARENT, selected ? dp(2) : 0));
+            thumb.setClipToOutline(true);
+            if (p != null) {
+                loadImageInto(p.optString("thumbnailUrl", p.optString("previewUrl", bestPhotoURL(p))), thumb);
+                final int target = i;
+                thumb.setOnClickListener(v -> showPhotoViewer(photos, target));
+            }
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(dp(46), dp(46));
+            tp.setMargins(dp(3), 0, dp(3), 0);
+            stripRow.addView(thumb, tp);
+        }
+        strip.addView(stripRow);
+        content.addView(strip, matchWrap());
+        strip.post(() -> strip.smoothScrollTo(dp(52) * index - dp(140), 0));
+
+        // 底部主操作：单个“保存”按钮（浅灰底、蓝字），与 iOS 一致。
+        Button save = new Button(this);
+        save.setText(isLive ? "⤓  保存 Live Photo" : "⤓  保存照片");
+        save.setTextColor(blue);
+        save.setTextSize(17);
+        save.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        save.setAllCaps(false);
+        save.setBackground(round(Color.rgb(238, 240, 243), dp(18), Color.TRANSPARENT, 0));
         save.setOnClickListener(v -> {
             JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
             if (album != null && !permissionAllowed(album, "download")) {
@@ -1274,30 +1357,65 @@ public class MainActivity extends Activity {
                 runWithLegacyWritePermission(() -> savePhotoResource(photo));
             }
         });
-        Button delete = ghostButton("删除");
-        delete.setTextColor(Color.rgb(230, 74, 83));
-        delete.setOnClickListener(v -> {
-            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
-            if (album != null && canDeletePhoto(album, photo)) {
-                confirmDeletePhoto(album, photo);
-            } else if (album != null) {
-                showPermissionDenied(album, "删除", "delete");
-            }
-        });
-        actions.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
-        actions.addView(save, new LinearLayout.LayoutParams(0, dp(46), 1));
-        actions.addView(delete, new LinearLayout.LayoutParams(0, dp(46), 1));
-        actions.addView(next, new LinearLayout.LayoutParams(0, dp(46), 1));
-        content.addView(actions, matchWrap());
+        LinearLayout.LayoutParams saveParams = matchWrap();
+        saveParams.height = dp(54);
+        saveParams.setMargins(dp(20), dp(8), dp(20), dp(26));
+        content.addView(save, saveParams);
 
-        if ("live_photo".equals(photo.optString("type"))) {
-            Button live = primaryButton("◎  播放 Live Photo");
-            live.setOnClickListener(v -> playLiveVideo(photo, frame));
-            LinearLayout.LayoutParams liveParams = matchWrap();
-            liveParams.setMargins(dp(28), dp(8), dp(28), dp(18));
-            content.addView(live, liveParams);
-        }
         setContentView(frame);
+    }
+
+    private void showPhotoViewerMenu(View anchor, final JSONObject photo) {
+        boolean isLive = "live_photo".equals(photo.optString("type"));
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, anchor);
+        final int idSave = 1;
+        final int idDelete = 2;
+        menu.getMenu().add(0, idSave, 0, isLive ? "保存 Live Photo" : "保存照片");
+        menu.getMenu().add(0, idDelete, 1, "删除");
+        menu.setOnMenuItemClickListener(item -> {
+            JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+            if (item.getItemId() == idDelete) {
+                if (album != null && canDeletePhoto(album, photo)) {
+                    confirmDeletePhoto(album, photo);
+                } else if (album != null) {
+                    showPermissionDenied(album, "删除", "delete");
+                }
+            } else {
+                if (album != null && !permissionAllowed(album, "download")) {
+                    showPermissionDenied(album, "下载", "download");
+                } else {
+                    runWithLegacyWritePermission(() -> savePhotoResource(photo));
+                }
+            }
+            return true;
+        });
+        menu.show();
+    }
+
+    private Button plainTextButton(String label, int color, int sizeSp) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextColor(color);
+        button.setTextSize(sizeSp);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(dp(6), dp(4), dp(6), dp(4));
+        return button;
+    }
+
+    private String viewerDate(JSONObject photo) {
+        long ts = photo.optLong("createdAt", 0L);
+        if (ts <= 0) return "";
+        return new SimpleDateFormat("yyyy年M月d日", Locale.CHINA).format(new Date(ts * 1000L));
+    }
+
+    private String viewerTime(JSONObject photo) {
+        long ts = photo.optLong("createdAt", 0L);
+        if (ts <= 0) return "";
+        return new SimpleDateFormat("HH:mm", Locale.CHINA).format(new Date(ts * 1000L));
     }
 
     private void showCurrentAlbumOrHome() {
@@ -1328,32 +1446,215 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void playLiveVideo(JSONObject photo, FrameLayout frame) {
-        TextView loading = text("正在加载 Live Photo...", 18, Color.WHITE, true);
-        loading.setGravity(Gravity.CENTER);
-        frame.addView(loading, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    private void playLiveVideo(JSONObject photo, final FrameLayout imageSlot, final ImageView stillImage, final View liveBadge) {
+        if (livePhotoPlaying) return;
+        livePhotoPlaying = true;
+        // 仿 iOS Live Photo：点击左上角标志后，在照片原位就地播放短片，
+        // 不显示任何播放器控件（无进度条/时长/播放暂停），播完自动回到静态图。
+        liveBadge.setVisibility(View.GONE);
+
+        // 统一走 PhotoDiskCache：已有本地缓存时不再显示加载态、也不再走网络，做到“首次缓存、之后秒开”。
+        final String liveCacheId = "live:" + photo.optString("id", "");
+        final boolean needDownload = diskCache().peekId(liveCacheId) == null;
+
+        final LinearLayout loading;
+        if (needDownload) {
+            loading = vertical();
+            loading.setGravity(Gravity.CENTER);
+            loading.setPadding(dp(22), dp(18), dp(22), dp(18));
+            loading.setBackground(round(Color.argb(150, 0, 0, 0), dp(16), Color.TRANSPARENT, 0));
+            android.widget.ProgressBar spinner = new android.widget.ProgressBar(this);
+            spinner.getIndeterminateDrawable().setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN);
+            loading.addView(spinner, new LinearLayout.LayoutParams(dp(38), dp(38)));
+            TextView loadingText = text("Live 图加载中", 14, Color.WHITE, true);
+            loadingText.setSingleLine(true);
+            loadingText.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams ltp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            ltp.setMargins(0, dp(10), 0, 0);
+            loading.addView(loadingText, ltp);
+            imageSlot.addView(loading, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        } else {
+            loading = null;
+        }
+
+        final Runnable restore = () -> {
+            if (loading != null && imageSlot.indexOfChild(loading) >= 0) imageSlot.removeView(loading);
+            stillImage.setVisibility(View.VISIBLE);
+            liveBadge.setVisibility(View.VISIBLE);
+            livePhotoPlaying = false;
+        };
+
         new Thread(() -> {
+            final java.io.File file;
             try {
-                String videoUrl = liveVideoURL(photo);
-                if (videoUrl.isEmpty()) throw new IllegalStateException("没有可播放的视频资源");
-                runOnUiThread(() -> {
-                    frame.removeView(loading);
-                    VideoView video = new VideoView(this);
-                    video.setVideoURI(Uri.parse(absoluteURL(videoUrl)));
-                    MediaController controller = new MediaController(this);
-                    controller.setAnchorView(video);
-                    video.setMediaController(controller);
-                    video.setOnPreparedListener(MediaPlayer::start);
-                    frame.addView(video, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                    video.start();
+                // Live 视频可能要先解析签名 URL，再下载；交给磁盘缓存统一管理(同标识并发只下一次)。
+                file = diskCache().fetch(liveCacheId, out -> {
+                    String url = liveVideoURL(photo);
+                    if (url == null || url.isEmpty()) throw new IllegalStateException("没有可播放的视频资源");
+                    downloadToFile(absoluteURL(url), out);
                 });
             } catch (final Exception error) {
-                runOnUiThread(() -> {
-                    frame.removeView(loading);
-                    showError("Live Photo 预览失败", error);
-                });
+                runOnUiThread(() -> { restore.run(); showError("Live Photo 预览失败", error); });
+                return;
             }
+            // 自拍(前置)Live Photo 的视频带镜像变换矩阵，MediaPlayer 会忽略它导致画面水平翻转，
+            // 这里解析出来后手动用 setScaleX(-1) 反镜像，和 iOS 表现保持一致。
+            final boolean mirrored = isVideoMirrored(file);
+            runOnUiThread(() -> startLivePlayback(file, mirrored, imageSlot, stillImage, loading, restore));
         }).start();
+    }
+
+    // 用 TextureView + MediaPlayer 播放：TextureView 是普通视图、内容就绪前完全透明，
+    // 不像 VideoView(SurfaceView) 那样“挖洞”合成，因此点击瞬间不会出现黑屏闪烁。
+    private void startLivePlayback(final java.io.File file, final boolean mirrored, final FrameLayout imageSlot,
+                                   final ImageView stillImage, final LinearLayout loading, final Runnable restore) {
+        final android.view.TextureView texture = new android.view.TextureView(this);
+        texture.setOpaque(false);
+        if (mirrored) texture.setScaleX(-1f); // 反镜像：与 iOS 一致
+        final android.media.MediaPlayer player = new android.media.MediaPlayer();
+        final boolean[] released = {false};
+        final Runnable teardown = () -> {
+            if (!released[0]) {
+                released[0] = true;
+                try { player.stop(); } catch (Exception ignored) {}
+                try { player.release(); } catch (Exception ignored) {}
+            }
+            if (imageSlot.indexOfChild(texture) >= 0) imageSlot.removeView(texture);
+            restore.run();
+        };
+        texture.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int h) {
+                try {
+                    player.setSurface(new android.view.Surface(st));
+                    player.setDataSource(file.getAbsolutePath());
+                    player.setVolume(0f, 0f); // Live Photo 风格：静音
+                    player.setOnPreparedListener(mp -> {
+                        sizeTextureToVideo(texture, imageSlot, mp.getVideoWidth(), mp.getVideoHeight());
+                        mp.start();
+                    });
+                    player.setOnInfoListener((mp, what, extra) -> {
+                        // 首帧真正渲染后，再移除加载态并隐藏静态封面，杜绝黑屏闪烁。
+                        if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                            if (loading != null && imageSlot.indexOfChild(loading) >= 0) imageSlot.removeView(loading);
+                            stillImage.setVisibility(View.GONE);
+                        }
+                        return false;
+                    });
+                    player.setOnCompletionListener(mp -> teardown.run());
+                    player.setOnErrorListener((mp, what, extra) -> { teardown.run(); return true; });
+                    player.prepareAsync();
+                } catch (Exception e) {
+                    teardown.run();
+                }
+            }
+            @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int h) {}
+            @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) { return true; }
+            @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {}
+        });
+        // 放在最底层，静态封面盖在上面；首帧出现前 TextureView 透明，看到的始终是静态图。
+        imageSlot.addView(texture, 0, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+    }
+
+    private void sizeTextureToVideo(android.view.TextureView texture, FrameLayout slot, int vw, int vh) {
+        if (vw <= 0 || vh <= 0) return;
+        int sw = slot.getWidth();
+        int sh = slot.getHeight();
+        if (sw <= 0 || sh <= 0) return;
+        float scale = Math.min(sw / (float) vw, sh / (float) vh);
+        int w = Math.max(1, Math.round(vw * scale));
+        int h = Math.max(1, Math.round(vh * scale));
+        texture.setLayoutParams(new FrameLayout.LayoutParams(w, h, Gravity.CENTER));
+    }
+
+    // 下载指定 URL 到目标文件（供 Live 视频等先解析签名 URL 再下载的场景使用）。
+    private void downloadToFile(String absoluteUrl, java.io.File out) throws Exception {
+        java.net.HttpURLConnection connection = (java.net.HttpURLConnection) new java.net.URL(absoluteUrl).openConnection();
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(30000);
+        connection.setRequestMethod("GET");
+        InputStream input = connection.getInputStream();
+        java.io.FileOutputStream output = new java.io.FileOutputStream(out);
+        try {
+            byte[] buffer = new byte[16384];
+            int n;
+            while ((n = input.read(buffer)) > 0) output.write(buffer, 0, n);
+        } finally {
+            try { output.close(); } catch (Exception ignored) {}
+            try { input.close(); } catch (Exception ignored) {}
+            connection.disconnect();
+        }
+    }
+
+    // 解析 MP4/MOV 视频轨道头(tkhd)的变换矩阵，行列式为负说明含水平镜像(前置自拍)。
+    private boolean isVideoMirrored(java.io.File file) {
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file, "r")) {
+            float[] m = findVideoTkhdMatrix(raf, 0, raf.length());
+            if (m == null) return false;
+            double det = (double) m[0] * m[3] - (double) m[1] * m[2];
+            return det < 0;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    // 在 [start,end) 内遍历 box，递归进入 moov/trak/mdia，找到视频轨道的 tkhd 并返回其 2x2 矩阵 [a,b,c,d]。
+    private float[] findVideoTkhdMatrix(java.io.RandomAccessFile raf, long start, long end) throws java.io.IOException {
+        long pos = start;
+        while (pos + 8 <= end) {
+            raf.seek(pos);
+            long size = raf.readInt() & 0xFFFFFFFFL;
+            int type = raf.readInt();
+            long headerSize = 8;
+            if (size == 1) { size = raf.readLong(); headerSize = 16; }
+            else if (size == 0) { size = end - pos; }
+            if (size < headerSize) break;
+            long contentStart = pos + headerSize;
+            long contentEnd = Math.min(pos + size, end);
+            String t = boxType(type);
+            if ("moov".equals(t) || "trak".equals(t) || "mdia".equals(t)) {
+                float[] r = findVideoTkhdMatrix(raf, contentStart, contentEnd);
+                if (r != null) return r;
+            } else if ("tkhd".equals(t)) {
+                float[] r = parseTkhdMatrix(raf, contentStart);
+                if (r != null) return r; // 仅视频轨(宽高>0)会返回
+            }
+            pos += size;
+        }
+        return null;
+    }
+
+    private float[] parseTkhdMatrix(java.io.RandomAccessFile raf, long start) throws java.io.IOException {
+        raf.seek(start);
+        int versionFlags = raf.readInt();
+        int version = (versionFlags >>> 24) & 0xFF;
+        // creation+modification+trackID+reserved+duration
+        long skip = (version == 1) ? (8 + 8 + 4 + 4 + 8) : (4 + 4 + 4 + 4 + 4);
+        raf.seek(start + 4 + skip);
+        raf.skipBytes(16); // reserved(8)+layer(2)+alternate(2)+volume(2)+reserved(2)
+        int a = raf.readInt();
+        int b = raf.readInt();
+        raf.skipBytes(4);  // u
+        int c = raf.readInt();
+        int d = raf.readInt();
+        raf.skipBytes(4 + 4 + 4 + 4); // v,x,y,w
+        int widthFixed = raf.readInt();
+        int heightFixed = raf.readInt();
+        long width = (widthFixed >>> 16) & 0xFFFF;
+        long height = (heightFixed >>> 16) & 0xFFFF;
+        if (width == 0 || height == 0) return null; // 非视频轨(如音频)宽高为 0
+        return new float[]{a, b, c, d};
+    }
+
+    private String boxType(int type) {
+        return new String(new char[]{
+                (char) ((type >>> 24) & 0xFF),
+                (char) ((type >>> 16) & 0xFF),
+                (char) ((type >>> 8) & 0xFF),
+                (char) (type & 0xFF)
+        });
     }
 
     private String liveVideoURL(JSONObject photo) throws Exception {
@@ -2278,8 +2579,14 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private String messageButtonText() {
-        return unreadMessageCount > 0 ? "消息\n" + (unreadMessageCount > 99 ? "99+" : String.valueOf(unreadMessageCount)) : "消息";
+    private void updateMessageBadge() {
+        if (messageBadge == null) return;
+        if (unreadMessageCount > 0) {
+            messageBadge.setText(unreadMessageCount > 99 ? "99+" : String.valueOf(unreadMessageCount));
+            messageBadge.setVisibility(View.VISIBLE);
+        } else {
+            messageBadge.setVisibility(View.GONE);
+        }
     }
 
     private void loadUnreadMessageCount() {
@@ -2289,7 +2596,7 @@ public class MainActivity extends Activity {
                 JSONObject response = requestJson("GET", "/api/messages/unread-count", null, true, true);
                 unreadMessageCount = response.optInt("unreadCount", 0);
                 runOnUiThread(() -> {
-                    if (messageButton != null) messageButton.setText(messageButtonText());
+                    updateMessageBadge();
                 });
             } catch (Exception ignored) {
             }
@@ -2343,7 +2650,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             }
             runOnUiThread(() -> {
-                if (messageButton != null) messageButton.setText(messageButtonText());
+                updateMessageBadge();
                 if (messageDialog != null && messageDialog.isShowing()) messageDialog.dismiss();
                 if (!messageRequiresAlbum(message)) {
                     showMessageCenter();
@@ -2392,7 +2699,7 @@ public class MainActivity extends Activity {
                 unreadMessageCount = 0;
                 runOnUiThread(() -> {
                     statusText.setText("消息已全部标记为已读");
-                    if (messageButton != null) messageButton.setText(messageButtonText());
+                    updateMessageBadge();
                 });
             } catch (final Exception error) {
                 showError("标记已读失败", error);
@@ -3531,33 +3838,71 @@ public class MainActivity extends Activity {
         return "";
     }
 
+    private PhotoDiskCache diskCache() {
+        if (diskCache == null) diskCache = new PhotoDiskCache(getApplicationContext(), 512L * 1024 * 1024);
+        return diskCache;
+    }
+
+    // 三级缓存：内存(已解码 Bitmap) → 磁盘(原始文件，对齐 iOS) → 网络。
+    // 内存 key 带目标尺寸档位，缩略图/大图各自按需降采样、互不污染。
     private void loadImageInto(String path, ImageView target) {
-        target.setImageDrawable(placeholderDrawable());
         String absolute = absoluteURL(path);
-        if (absolute.isEmpty()) return;
-        String cacheKey = absolute.contains("?") ? absolute.substring(0, absolute.indexOf('?')) : absolute;
-        target.setTag(cacheKey);
-        Bitmap cached = imageCache.get(cacheKey);
+        if (absolute.isEmpty()) {
+            target.setImageDrawable(placeholderDrawable());
+            return;
+        }
+        String idKey = absolute.contains("?") ? absolute.substring(0, absolute.indexOf('?')) : absolute;
+        final int reqPx = requestedSizePx(target);
+        final String memKey = idKey + "#" + reqPx;
+        target.setTag(memKey);
+        Bitmap cached = imageCache.get(memKey);
         if (cached != null) {
             target.setImageBitmap(cached);
             return;
         }
+        target.setImageDrawable(placeholderDrawable());
         new Thread(() -> {
             try {
-                HttpURLConnection connection = (HttpURLConnection) new URL(absolute).openConnection();
-                connection.setRequestMethod("GET");
-                InputStream input = connection.getInputStream();
-                final Bitmap bitmap = BitmapFactory.decodeStream(input);
-                input.close();
+                File file = diskCache().fetch(absolute);
+                final Bitmap bitmap = decodeSampled(file, reqPx);
                 if (bitmap != null) {
-                    imageCache.put(cacheKey, bitmap);
+                    imageCache.put(memKey, bitmap);
                     runOnUiThread(() -> {
-                        if (cacheKey.equals(target.getTag())) target.setImageBitmap(bitmap);
+                        if (memKey.equals(target.getTag())) target.setImageBitmap(bitmap);
                     });
                 }
             } catch (Exception ignored) {
             }
         }).start();
+    }
+
+    /** 估算目标显示像素：优先布局尺寸，其次已测量尺寸，最后兜底屏幕宽；量化到 64 的整数倍以稳定缓存 key。 */
+    private int requestedSizePx(ImageView target) {
+        int px = 0;
+        ViewGroup.LayoutParams lp = target.getLayoutParams();
+        if (lp != null) px = Math.max(lp.width, lp.height);
+        if (px <= 0) px = Math.max(target.getWidth(), target.getHeight());
+        if (px <= 0) px = getResources().getDisplayMetrics().widthPixels;
+        return Math.max(64, ((px + 63) / 64) * 64);
+    }
+
+    private Bitmap decodeSampled(File file, int reqPx) {
+        String filePath = file.getAbsolutePath();
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(filePath, bounds);
+        int longest = Math.max(bounds.outWidth, bounds.outHeight);
+        int sample = 1;
+        // 保留约 2x 余量，避免缩略图发虚。
+        while (longest > 0 && longest / (sample * 2) > reqPx) sample *= 2;
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = Math.max(1, sample);
+        Bitmap decoded = BitmapFactory.decodeFile(filePath, opts);
+        if (decoded == null) {
+            // 文件可能损坏(半截下载等)：删掉缓存让下次重新拉取。
+            file.delete();
+        }
+        return decoded;
     }
 
     private String absoluteURL(String path) {
@@ -3860,10 +4205,20 @@ public class MainActivity extends Activity {
         return dialog;
     }
 
-    private void addActionButton(LinearLayout row, String label, final Runnable action) {
-        Button button = outlineButton(label);
-        button.setTextSize(16);
+    private void addActionButton(LinearLayout row, String label, int iconRes, final Runnable action) {
+        // 仿 iOS：图标在上、文字在下的轻量卡片按钮（square.and.arrow.up / person.2 等）。
+        LinearLayout button = vertical();
+        button.setGravity(Gravity.CENTER);
+        button.setBackground(round(Color.argb(220, 255, 255, 255), dp(18), Color.argb(46, 0, 128, 112), dp(1)));
         button.setOnClickListener(v -> action.run());
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.setMargins(0, 0, 0, dp(6));
+        button.addView(icon, iconParams);
+        TextView caption = text(label, 13, TEAL, true);
+        caption.setGravity(Gravity.CENTER);
+        button.addView(caption, matchWrap());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(78), 1);
         params.setMargins(dp(4), dp(6), dp(4), dp(6));
         row.addView(button, params);
