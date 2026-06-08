@@ -114,6 +114,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
+      - /root/apk:/var/www/apk
 
 volumes:
   caddy_data:
