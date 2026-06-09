@@ -48,6 +48,7 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.widget.VideoView;
 
 import org.json.JSONArray;
@@ -176,10 +177,10 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         restoreCachedSessionData();
         if (hasLocalSession()) {
-            showHome();
-            loadAlbums();
-            loadMe();
-            MessageNotificationJobService.schedule(this);
+            // 先显示中性启动加载页(splash),在后台单线程里顺序校验会话后再决定进主页还是登录页,
+            // 避免"先渲染主页壳再异步校验"导致会话失效时闪现残缺中间态(QA #9)。
+            showSplash();
+            bootstrapSession();
         } else {
             MessageNotificationJobService.cancel(this);
             showLogin();
@@ -314,7 +315,9 @@ public class MainActivity extends Activity {
         TextView picme = text(" PicMe", 28, Color.rgb(97, 134, 220), true);
         brandRow.addView(picme);
         brandBlock.addView(brandRow, matchWrap());
-        TextView slogan = text("自动找到属于你的旅行照片", 18, SECONDARY, true);
+        TextView slogan = text("自动找到属于你的旅行照片", 13, SECONDARY, true);
+        slogan.setMaxLines(1);
+        slogan.setEllipsize(android.text.TextUtils.TruncateAt.END);
         brandBlock.addView(slogan, matchWrap());
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         brandParams.setMargins(dp(14), 0, dp(12), 0);
@@ -411,13 +414,14 @@ public class MainActivity extends Activity {
     private View albumCard(JSONObject album) {
         LinearLayout card = card();
         card.setPadding(dp(18), dp(18), dp(18), dp(18));
-        card.setOnClickListener(v -> {
+        final View.OnClickListener openAlbum = v -> {
             selectedAlbumId = album.optString("id");
             activeAlbumTab = "my";
             clearPhotoSelection();
             showAlbumDetail(album);
             refreshAlbumDetail(album.optString("id"));
-        });
+        };
+        card.setOnClickListener(openAlbum);
         card.setOnLongClickListener(v -> {
             showAlbumContextActions(album);
             return true;
@@ -425,6 +429,21 @@ public class MainActivity extends Activity {
 
         HorizontalScrollView scroller = new HorizontalScrollView(this);
         scroller.setHorizontalScrollBarEnabled(false);
+        // 顶部人物封面横条会拦截触摸用于滚动，setOnClickListener 对它不可靠；
+        // 改用触摸监听：位移很小判定为"轻点"则进相册，返回 false 不消费、保留横条滚动。
+        final float[] scrollerDown = new float[2];
+        scroller.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                scrollerDown[0] = event.getX();
+                scrollerDown[1] = event.getY();
+            } else if (event.getAction() == MotionEvent.ACTION_UP) {
+                if (Math.abs(event.getX() - scrollerDown[0]) < dp(10)
+                        && Math.abs(event.getY() - scrollerDown[1]) < dp(10)) {
+                    openAlbum.onClick(v);
+                }
+            }
+            return false;
+        });
         LinearLayout faces = horizontal();
         JSONArray folders = album.optJSONArray("folders");
         if (folders != null) {
@@ -1297,8 +1316,13 @@ public class MainActivity extends Activity {
         final FrameLayout imageSlot = new FrameLayout(this);
         final ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        loadImageInto(photo.optString("previewUrl", photo.optString("imageUrl", bestPhotoURL(photo))), image);
         imageSlot.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // 大图加载期间显示居中转圈，避免长时间空白；加载完成回调里移除。
+        final ProgressBar imageSpinner = new ProgressBar(this);
+        imageSpinner.getIndeterminateDrawable().setColorFilter(AQUA, android.graphics.PorterDuff.Mode.SRC_IN);
+        imageSlot.addView(imageSpinner, new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER));
+        loadImageInto(photo.optString("previewUrl", photo.optString("imageUrl", bestPhotoURL(photo))), image,
+                () -> { if (imageSlot.indexOfChild(imageSpinner) >= 0) imageSlot.removeView(imageSpinner); });
         addSwipeNavigation(image, photos, index);
         content.addView(imageSlot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
@@ -1673,6 +1697,7 @@ public class MainActivity extends Activity {
             try {
                 savePhotoResourceSync(photo);
                 runOnUiThread(() -> statusText.setText("已保存到系统相册"));
+                toast("已保存到系统相册");
             } catch (final Exception error) {
                 showError("保存失败", error);
             }
@@ -1694,7 +1719,10 @@ public class MainActivity extends Activity {
             }
             JSONObject video = manifest.optJSONObject("video");
             if (video != null) {
-                saveUrlToMediaStore(video.optString("url", ""), video.optString("filename", "picme-live-" + System.currentTimeMillis() + ".mov"), video.optString("mimeType", "video/quicktime"));
+                // Live Photo 的动态视频与静态图同名（仅扩展名不同），方便在系统相册里配对识别。
+                String base = filename.contains(".") ? filename.substring(0, filename.lastIndexOf('.')) : filename;
+                String videoName = base + ".mov";
+                saveUrlToMediaStore(video.optString("url", ""), videoName, video.optString("mimeType", "video/quicktime"));
             }
         }
         if (url.isEmpty()) throw new IllegalStateException("没有可保存的原图资源");
@@ -1712,11 +1740,13 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> statusText.setText("正在保存第 " + index + "/" + photos.length() + " 张"));
                     savePhotoResourceSync(photo);
                 }
+                final int savedCount = photos.length();
                 runOnUiThread(() -> {
                     clearPhotoSelection();
-                    statusText.setText("已保存 " + photos.length() + " 张照片");
+                    statusText.setText("已保存 " + savedCount + " 张照片");
                     refreshCurrentAlbumView();
                 });
+                toast("已保存 " + savedCount + " 张照片到系统相册");
             } catch (final Exception error) {
                 showError("保存失败", error);
             }
@@ -1749,6 +1779,7 @@ public class MainActivity extends Activity {
                     statusText.setText("所选照片包已保存");
                     refreshCurrentAlbumView();
                 });
+                toast("所选照片包已保存到系统相册");
             } catch (final Exception error) {
                 showError("下载失败", error);
             }
@@ -1809,18 +1840,29 @@ public class MainActivity extends Activity {
         connection.setRequestMethod("GET");
         int code = connection.getResponseCode();
         if (code < 200 || code >= 300) throw new IllegalStateException(readAll(connection.getErrorStream(), "下载失败：" + code));
+        boolean isImage = mimeType != null && mimeType.startsWith("image/");
+        boolean isVideo = mimeType != null && mimeType.startsWith("video/");
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
         values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH, (mimeType != null && mimeType.startsWith("image/")) ? Environment.DIRECTORY_PICTURES + "/PicMe" : Environment.DIRECTORY_DOWNLOADS + "/PicMe");
+            // 图片→Pictures/PicMe，视频→Movies/PicMe（与图片一样落在系统相册可见目录，
+            // 而不是之前的 Download，避免 Live Photo 的动态视频跑到下载里、相册看不到）。
+            String relativePath = isImage ? Environment.DIRECTORY_PICTURES + "/PicMe"
+                    : isVideo ? Environment.DIRECTORY_MOVIES + "/PicMe"
+                    : Environment.DIRECTORY_DOWNLOADS + "/PicMe";
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath);
             values.put(MediaStore.MediaColumns.IS_PENDING, 1);
         }
         Uri collection;
-        if (mimeType != null && mimeType.startsWith("image/")) {
+        if (isImage) {
             collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
                     ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        } else if (isVideo) {
+            collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
         } else {
             collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
                     ? MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -2138,18 +2180,19 @@ public class MainActivity extends Activity {
         inviteCodeInput = field("相册码或分享链接", false);
         inviteCodeInput.setText(inviteCodeFrom(preset));
         panel.addView(inviteCodeInput, matchWrap());
-        spacer(panel, dp(8));
-        LinearLayout actions = horizontal();
+        spacer(panel, dp(16));
         Button camera = outlineButton("扫码加入相册");
         camera.setOnClickListener(v -> captureJoinQRCode());
-        Button picker = outlineButton("从相册选择二维码");
+        LinearLayout.LayoutParams cameraParams = matchWrap();
+        cameraParams.height = dp(54);
+        panel.addView(camera, cameraParams);
+        spacer(panel, dp(12));
+        Button picker = outlineButton("从相册中选择");
         picker.setOnClickListener(v -> pickJoinQRCodeImage());
-        actions.addView(camera, new LinearLayout.LayoutParams(0, dp(52), 1));
-        LinearLayout.LayoutParams pickerParams = new LinearLayout.LayoutParams(0, dp(52), 1);
-        pickerParams.setMargins(dp(8), 0, 0, 0);
-        actions.addView(picker, pickerParams);
-        panel.addView(actions, matchWrap());
-        spacer(panel, dp(20));
+        LinearLayout.LayoutParams pickerParams = matchWrap();
+        pickerParams.height = dp(54);
+        panel.addView(picker, pickerParams);
+        spacer(panel, dp(24));
         Button join = primaryButton("申请加入");
         join.setOnClickListener(v -> requestJoinFromInput());
         LinearLayout.LayoutParams joinParams = matchWrap();
@@ -2352,16 +2395,73 @@ public class MainActivity extends Activity {
         if (!accessToken.isEmpty()) new Thread(() -> logoutServer(accessToken)).start();
     }
 
-    private void loadMe() {
+    // 中性启动加载页:仅 logo + 品牌 + 转圈,不渲染任何依赖会话的主页/登录壳,
+    // 校验期间作为占位,避免闪现残缺中间态(QA #9)。
+    private void showSplash() {
+        currentScreen = "splash";
+        LinearLayout container = vertical();
+        container.setGravity(Gravity.CENTER);
+        container.setBackground(softBackground());
+        container.setPadding(dp(28), dp(28), dp(28), dp(28));
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.picme_logo);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(82), dp(82));
+        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+        container.addView(logo, logoParams);
+        spacer(container, dp(22));
+
+        LinearLayout brand = horizontal();
+        brand.setGravity(Gravity.CENTER);
+        brand.addView(text("识我", 26, PRIMARY, true));
+        brand.addView(text(" PicMe", 26, Color.rgb(98, 132, 220), true));
+        container.addView(brand, matchWrap());
+        spacer(container, dp(30));
+
+        ProgressBar spinner = new ProgressBar(this);
+        spinner.getIndeterminateDrawable().setColorFilter(AQUA, android.graphics.PorterDuff.Mode.SRC_IN);
+        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        spinnerParams.gravity = Gravity.CENTER_HORIZONTAL;
+        container.addView(spinner, spinnerParams);
+        setContentView(container);
+    }
+
+    // 冷启动会话校验:单线程顺序请求 /api/me → /api/albums(只触发一次 token 刷新,消除并发竞态),
+    // 校验通过才切主页;401 时 requestJson 内部已调用 expireSession() 干净切登录页;
+    // 其它网络错误则用缓存数据降级进主页,避免卡在 splash。
+    private void bootstrapSession() {
         new Thread(() -> {
             try {
-                JSONObject response = requestJson("GET", "/api/me", null, true, true);
-                currentUser = response.optJSONObject("user");
+                JSONObject meResponse = requestJson("GET", "/api/me", null, true, true);
+                currentUser = meResponse.optJSONObject("user");
                 syncDefaultUploader();
                 cacheCurrentUser();
-                runOnUiThread(this::enableMessageNotifications);
+
+                JSONObject albumResponse = requestJson("GET", "/api/albums", null, true, true);
+                JSONArray refreshed = albumResponse.optJSONArray("albums");
+                albums = refreshed == null ? new JSONArray() : refreshed;
+                cacheAlbums();
+                if (albums.length() > 0 && selectedAlbumId.isEmpty()) {
+                    JSONObject first = albums.optJSONObject(0);
+                    if (first != null) selectedAlbumId = first.optString("id");
+                }
+
+                runOnUiThread(() -> {
+                    showHome();
+                    enableMessageNotifications();
+                });
+                MessageNotificationJobService.schedule(this);
                 if (currentUser != null && isAvatarRecognitionPending(currentUser)) pollAvatarRecognition();
-            } catch (Exception ignored) {
+            } catch (Exception error) {
+                // requestJson 在 401 时已 expireSession()(清会话并切到登录页),此时 hasLocalSession()==false,无需处理。
+                // 其它错误(网络不可达等)会话仍在:用缓存数据进主页,实现离线降级,避免停在 splash。
+                runOnUiThread(() -> {
+                    if (hasLocalSession()) {
+                        showHome();
+                        enableMessageNotifications();
+                        MessageNotificationJobService.schedule(this);
+                    }
+                });
             }
         }).start();
     }
@@ -2630,7 +2730,7 @@ public class MainActivity extends Activity {
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.addView(text(unreadPrefix + message.optString("title", "站内消息"), 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         String createdAt = formatTimestamp(message.optLong("createdAt", 0));
-        if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), matchWrap());
+        if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), trailingWrap());
         row.addView(titleRow, matchWrap());
         String body = message.optString("body", "");
         if (!body.isEmpty()) row.addView(text(body, 14, SECONDARY, false), matchWrap());
@@ -2905,7 +3005,7 @@ public class MainActivity extends Activity {
     private void addReviewerDetails(LinearLayout row, JSONObject request) {
         JSONObject reviewer = request.optJSONObject("reviewedByUser");
         if (reviewer == null) return;
-        row.addView(text("处理人 · " + userIdentity(reviewer), 13, SECONDARY, true), matchWrap());
+        row.addView(text("处理人 · " + userNameOnly(reviewer), 13, SECONDARY, true), matchWrap());
     }
 
     private void renderRecordsDialog(String title, JSONArray records, String emptyText) {
@@ -2931,7 +3031,7 @@ public class MainActivity extends Activity {
             titleRow.setGravity(Gravity.CENTER_VERTICAL);
             titleRow.addView(text(record.optString("title", "协作动态"), 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             String createdAt = formatTimestamp(record.optLong("createdAt", 0));
-            if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), matchWrap());
+            if (!createdAt.isEmpty()) titleRow.addView(text(createdAt, 12, SECONDARY, true), trailingWrap());
             row.addView(titleRow, matchWrap());
             String message = record.optString("message", "");
             if (!message.isEmpty()) row.addView(text(message, 14, SECONDARY, false), matchWrap());
@@ -3846,9 +3946,15 @@ public class MainActivity extends Activity {
     // 三级缓存：内存(已解码 Bitmap) → 磁盘(原始文件，对齐 iOS) → 网络。
     // 内存 key 带目标尺寸档位，缩略图/大图各自按需降采样、互不污染。
     private void loadImageInto(String path, ImageView target) {
+        loadImageInto(path, target, null);
+    }
+
+    // onComplete 在图片就绪/失败后于 UI 线程回调（缓存命中或加载结束都会调用），供调用方隐藏 loading。
+    private void loadImageInto(String path, ImageView target, final Runnable onComplete) {
         String absolute = absoluteURL(path);
         if (absolute.isEmpty()) {
             target.setImageDrawable(placeholderDrawable());
+            if (onComplete != null) onComplete.run();
             return;
         }
         String idKey = absolute.contains("?") ? absolute.substring(0, absolute.indexOf('?')) : absolute;
@@ -3858,21 +3964,23 @@ public class MainActivity extends Activity {
         Bitmap cached = imageCache.get(memKey);
         if (cached != null) {
             target.setImageBitmap(cached);
+            if (onComplete != null) onComplete.run();
             return;
         }
         target.setImageDrawable(placeholderDrawable());
         new Thread(() -> {
+            Bitmap bitmap = null;
             try {
                 File file = diskCache().fetch(absolute);
-                final Bitmap bitmap = decodeSampled(file, reqPx);
-                if (bitmap != null) {
-                    imageCache.put(memKey, bitmap);
-                    runOnUiThread(() -> {
-                        if (memKey.equals(target.getTag())) target.setImageBitmap(bitmap);
-                    });
-                }
+                bitmap = decodeSampled(file, reqPx);
+                if (bitmap != null) imageCache.put(memKey, bitmap);
             } catch (Exception ignored) {
             }
+            final Bitmap result = bitmap;
+            runOnUiThread(() -> {
+                if (result != null && memKey.equals(target.getTag())) target.setImageBitmap(result);
+                if (onComplete != null) onComplete.run();
+            });
         }).start();
     }
 
@@ -4375,13 +4483,18 @@ public class MainActivity extends Activity {
     }
 
     private String userIdentity(JSONObject user) {
-        if (user == null) return "申请人 · 协作用户";
+        return "申请人 · " + userNameOnly(user);
+    }
+
+    // 仅返回用户显示名（昵称 @账号），不带角色前缀，供"处理人/申请人"等不同角色复用。
+    private String userNameOnly(JSONObject user) {
+        if (user == null) return "协作用户";
         String nickname = user.optString("nickname", "").trim();
         String username = user.optString("username", "").trim();
-        if (!nickname.isEmpty() && !username.isEmpty()) return "申请人 · " + nickname + " @" + username;
-        if (!nickname.isEmpty()) return "申请人 · " + nickname;
-        if (!username.isEmpty()) return "申请人 · @" + username;
-        return "申请人 · " + user.optString("id", "协作用户");
+        if (!nickname.isEmpty() && !username.isEmpty()) return nickname + " @" + username;
+        if (!nickname.isEmpty()) return nickname;
+        if (!username.isEmpty()) return "@" + username;
+        return user.optString("id", "协作用户");
     }
 
     private LinearLayout approvalTitleRow(String title, long timestamp) {
@@ -4389,7 +4502,7 @@ public class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.addView(text(title, 18, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         String formatted = formatTimestamp(timestamp);
-        if (!formatted.isEmpty()) row.addView(text(formatted, 12, SECONDARY, true), matchWrap());
+        if (!formatted.isEmpty()) row.addView(text(formatted, 12, SECONDARY, true), trailingWrap());
         return row;
     }
 
@@ -4631,6 +4744,19 @@ public class MainActivity extends Activity {
 
     private LinearLayout.LayoutParams matchWrap() {
         return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    // 全局可见的轻提示（子页面没有 statusText，用 Toast 确保保存/下载等操作有反馈）。
+    private void toast(final String message) {
+        runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
+    }
+
+    // 水平行里靠右的次要文字（如时间）：用 WRAP_CONTENT 宽度，避免占满整行把带 weight 的标题挤成 0 宽。
+    private LinearLayout.LayoutParams trailingWrap() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(dp(8), 0, 0, 0);
+        return params;
     }
 
     private void spacer(int height) {
