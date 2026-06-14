@@ -708,6 +708,17 @@ def sqlite_init_store():
             CREATE INDEX IF NOT EXISTS idx_photos_album_created
                 ON photos(album_id, created_at);
 
+            CREATE TABLE IF NOT EXISTS photo_favorites (
+                album_id TEXT NOT NULL,
+                photo_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                created_at INTEGER,
+                PRIMARY KEY (album_id, photo_id, user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_photo_favorites_user
+                ON photo_favorites(album_id, user_id);
+
             CREATE TABLE IF NOT EXISTS folders (
                 album_id TEXT NOT NULL,
                 id TEXT NOT NULL,
@@ -1484,6 +1495,44 @@ def add_album_member(album_id, user_id, role="member", approved_by="", permissio
                     """,
                     (album_id, user_id, role, now, now, approved_by or user_id, permission_payload),
                 )
+
+
+def photo_favorite_ids(album_id, user_id):
+    """返回该用户在指定相册里收藏（喜欢）的 photo_id 集合。json 存储模式下降级为空集。"""
+    if not album_id or not user_id or not sqlite_enabled():
+        return set()
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        rows = conn.execute(
+            "SELECT photo_id FROM photo_favorites WHERE album_id = ? AND user_id = ?",
+            (album_id, user_id),
+        ).fetchall()
+    return {row["photo_id"] for row in rows}
+
+
+def toggle_photo_favorite(album_id, photo_id, user_id):
+    """切换收藏状态，返回切换后的 favorited 布尔值。json 模式下不持久化，返回 False。"""
+    if not album_id or not photo_id or not user_id or not sqlite_enabled():
+        return False
+    sqlite_init_store()
+    now = int(time.time())
+    with sqlite_connect() as conn:
+        with conn:
+            existing = conn.execute(
+                "SELECT 1 FROM photo_favorites WHERE album_id = ? AND photo_id = ? AND user_id = ?",
+                (album_id, photo_id, user_id),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "DELETE FROM photo_favorites WHERE album_id = ? AND photo_id = ? AND user_id = ?",
+                    (album_id, photo_id, user_id),
+                )
+                return False
+            conn.execute(
+                "INSERT INTO photo_favorites(album_id, photo_id, user_id, created_at) VALUES(?, ?, ?, ?)",
+                (album_id, photo_id, user_id, now),
+            )
+            return True
 
 
 def is_album_owner(album, user_id):
@@ -3180,6 +3229,7 @@ def public_album(album, current_user=None, origin=""):
             item["name"] = "其他"
         visible["folders"].append(item)
     folder_names = {folder["id"]: folder["name"] for folder in visible["folders"]}
+    favorite_ids = photo_favorite_ids(album.get("id"), current_user.get("id")) if current_user else set()
     visible["photos"] = []
     for photo in album.get("photos", []):
         item = dict(photo)
@@ -3217,6 +3267,7 @@ def public_album(album, current_user=None, origin=""):
             ]
             if item.get("folderId") in folder_names:
                 item["folderName"] = folder_names[item["folderId"]]
+        item["favorited"] = item.get("id") in favorite_ids
         visible["photos"].append(item)
     apply_my_photo_recommendation(visible, album, current_user)
     return visible
@@ -5307,6 +5358,12 @@ class AppHandler(BaseHTTPRequestHandler):
             if not self.require_album_member(match.group(1)):
                 return
             return self.reclassify_photo_request(match.group(1), match.group(2))
+        match = re.match(r"^/api/albums/([^/]+)/photos/([^/]+)/favorite$", path)
+        if match:
+            current_user = self.require_album_member(match.group(1))
+            if not current_user:
+                return
+            return self.toggle_photo_favorite_request(match.group(1), match.group(2), current_user)
         return self.send_error_json("Not found", 404)
 
     def do_DELETE(self):
@@ -6773,6 +6830,35 @@ class AppHandler(BaseHTTPRequestHandler):
             extra={"event": "photo.move"},
         )
         return self.send_json({"album": public_album(album, self.current_user(), self.request_origin())})
+
+    def toggle_photo_favorite_request(self, album_id, photo_id, current_user):
+        # 切换/设置「喜欢」。body 可选 {"favorited": bool}（幂等设置）；缺省则切换。
+        payload, error = self.read_json_body()
+        if error:
+            payload = {}
+        user_id = current_user.get("id")
+        with LOCK:
+            db = load_db()
+            album = find_album(db, album_id)
+            if not album:
+                return self.send_error_json("Album not found", 404)
+            photo_exists = any(photo.get("id") == photo_id for photo in album.get("photos", []))
+        if not photo_exists:
+            return self.send_error_json("Photo not found", 404)
+        desired = payload.get("favorited")
+        if isinstance(desired, bool):
+            current = photo_id in photo_favorite_ids(album_id, user_id)
+            favorited = current if desired == current else toggle_photo_favorite(album_id, photo_id, user_id)
+        else:
+            favorited = toggle_photo_favorite(album_id, photo_id, user_id)
+        LOGGER.info(
+            "album_id=%s photo_id=%s favorited=%s",
+            album_id,
+            photo_id,
+            favorited,
+            extra={"event": "photo.favorite"},
+        )
+        return self.send_json({"favorited": favorited, "photoId": photo_id})
 
     def reclassify_photo_request(self, album_id, photo_id):
         with LOCK:

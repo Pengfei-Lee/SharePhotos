@@ -12,3 +12,15 @@ project.pbxproj
 
 remote-sharephotos/
 *.sh
+.understand-anything
+
+# Android 构建中间产物
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+.DS_Store
+native/android/SharePhotos/.gradle
