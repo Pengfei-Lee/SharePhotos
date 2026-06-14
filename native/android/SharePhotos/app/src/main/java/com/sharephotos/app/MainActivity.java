@@ -141,6 +141,7 @@ public class MainActivity extends Activity {
     private String activeAlbumTab = "people";
     private String myPhotosSubTab = "photos"; // 我的照片页：photos | albums
     private boolean myPhotosFavOnly = false;  // 我的照片页：仅看喜欢
+    private String transferFilter = "all";    // 传输页：all | upload | download
     private boolean photoSelectionMode = false;
     private boolean livePhotoPlaying = false;
     private PhotoDiskCache diskCache;
@@ -604,15 +605,33 @@ public class MainActivity extends Activity {
         return card;
     }
 
-    // 「传输」页（对齐设计稿）：展示当前上传任务进度。Android 上传为前台单任务、下载即时保存，
-    // 故无后台下载任务列表；无任务时显示空态。
+    // 「传输」页（对齐设计稿）：筛选 pills + 进行中分区。Android 上传为前台单任务、下载即时保存，
+    // 故无后台下载任务列表（"下载"筛选下为空）；无任务时显示空态。
     private void showTransferPage() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout panel = vertical();
         panel.setPadding(dp(18), dp(16), dp(18), dp(28));
         scroll.addView(panel);
 
-        if (isUploading) {
+        LinearLayout filters = horizontal();
+        filters.addView(transferFilterPill("全部", "all"));
+        filters.addView(transferFilterPill("上传", "upload"));
+        filters.addView(transferFilterPill("下载", "download"));
+        panel.addView(filters, matchWrap());
+        spacer(panel, dp(12));
+
+        boolean showUpload = isUploading && !"download".equals(transferFilter);
+        if (showUpload) {
+            LinearLayout secHead = horizontal();
+            secHead.setGravity(Gravity.CENTER_VERTICAL);
+            secHead.addView(text("进行中", 16, PRIMARY, true),
+                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            TextView cnt = text(" 1", 13, ACCENT, true);
+            secHead.addView(cnt, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            LinearLayout.LayoutParams secHeadP = matchWrap();
+            secHeadP.setMargins(0, 0, 0, dp(10));
+            panel.addView(secHead, secHeadP);
+
             JSONObject album = findAlbumById(activeUploadAlbumId);
             String name = album != null ? album.optString("name", "相册") : "相册";
             LinearLayout cardv = vertical();
@@ -645,10 +664,11 @@ public class MainActivity extends Activity {
             ic.setColorFilter(ACCENT);
             empty.addView(ic, new LinearLayout.LayoutParams(dp(48), dp(48)));
             spacer(empty, dp(16));
-            TextView t1 = text("暂无传输任务", 18, PRIMARY, true);
+            boolean dl = "download".equals(transferFilter);
+            TextView t1 = text(dl ? "暂无下载任务" : "暂无传输任务", 18, PRIMARY, true);
             t1.setGravity(Gravity.CENTER);
             empty.addView(t1, matchWrap());
-            TextView t2 = text("上传照片时，任务会在这里后台进行，你可以随时回来查看", 14, SECONDARY, false);
+            TextView t2 = text(dl ? "下载的照片会直接保存到系统相册" : "上传照片时，任务会在这里后台进行，你可以随时回来查看", 14, SECONDARY, false);
             t2.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams t2p = matchWrap();
             t2p.setMargins(0, dp(8), 0, 0);
@@ -656,6 +676,18 @@ public class MainActivity extends Activity {
             panel.addView(empty, matchWrap());
         }
         showManagedAlbumPage("传输", scroll);
+    }
+
+    private View transferFilterPill(String label, final String key) {
+        boolean on = transferFilter.equals(key);
+        TextView pill = text(label, 13, on ? Color.WHITE : PRIMARY, on);
+        pill.setPadding(dp(15), dp(7), dp(15), dp(7));
+        pill.setBackground(on ? accentGradient(dp(16)) : round(Color.argb(13, 0x0F, 0x11, 0x15), dp(16), Color.TRANSPARENT, 0));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMargins(0, 0, dp(8), 0);
+        pill.setLayoutParams(p);
+        pill.setOnClickListener(v -> { transferFilter = key; showTransferPage(); });
+        return pill;
     }
 
     private void renderAlbums() {
@@ -1409,17 +1441,13 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         panel.addView(statsCard, matchWrap());
 
-        // 资料组：编辑昵称 / 更换头像 / 我的照片推荐（人脸状态）。
-        LinearLayout profileGroup = settingsGroup();
-        addSettingsRow(profileGroup, R.drawable.ic_pencil, "编辑昵称",
-                currentUser == null ? "" : currentUser.optString("nickname", ""), true, false, false, this::promptEditNickname);
-        addSettingsRow(profileGroup, R.drawable.ic_person_add, "更换头像", "", true, true, false, this::pickAvatar);
-        panel.addView(profileGroup, matchWrap());
-
-        // 设置组：消息通知。
-        LinearLayout settingsGroup = settingsGroup();
-        addSettingsRow(settingsGroup, R.drawable.ic_bell, "开启消息通知", "", true, true, false, this::enableMessageNotifications);
-        panel.addView(settingsGroup, matchWrap());
+        // 设置分类（对齐设计稿 ProfileScreen 四大类，点进二级页）。
+        LinearLayout catGroup = settingsGroup();
+        addSettingsRow(catGroup, R.drawable.ic_key, "账户与安全", "", true, false, false, () -> showProfileCategory("account"));
+        addSettingsRow(catGroup, R.drawable.ic_user, "隐私与人脸识别", "", true, false, false, () -> showProfileCategory("privacy"));
+        addSettingsRow(catGroup, R.drawable.ic_bell, "通用", "", true, false, false, () -> showProfileCategory("general"));
+        addSettingsRow(catGroup, R.drawable.ic_chat, "帮助与关于", "", true, true, false, () -> showProfileCategory("about"));
+        panel.addView(catGroup, matchWrap());
 
         // 退出登录。
         LinearLayout logoutGroup = settingsGroup();
@@ -1430,6 +1458,45 @@ public class MainActivity extends Activity {
         panel.addView(logoutGroup, matchWrap());
 
         showManagedAlbumPage("我的", scroll);
+    }
+
+    // 个人资料二级分类页（对齐设计稿 ProfileCategoryScreen）。只放 Android 真实可用项。
+    private void showProfileCategory(String cat) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(16), dp(18), dp(28));
+        scroll.addView(panel);
+        String title;
+        LinearLayout g = settingsGroup();
+        boolean hasFace = currentUser != null && currentUser.optBoolean("hasFaceProfile");
+        if ("account".equals(cat)) {
+            title = "账户与安全";
+            addSettingsRow(g, R.drawable.ic_pencil, "编辑昵称",
+                    currentUser == null ? "" : currentUser.optString("nickname", ""), true, false, false, this::promptEditNickname);
+            addSettingsRow(g, R.drawable.ic_user, "登录账号",
+                    currentUser == null ? "-" : "@" + currentUser.optString("username", "-"), false, true, false, null);
+        } else if ("privacy".equals(cat)) {
+            title = "隐私与人脸识别";
+            addSettingsRow(g, R.drawable.ic_person_add, "更换头像 / 人脸照", "", true, false, false, this::pickAvatar);
+            addSettingsRow(g, R.drawable.ic_sparkle, "我的照片推荐", hasFace ? "已识别" : "待上传", false, true, false, null);
+        } else if ("general".equals(cat)) {
+            title = "通用";
+            addSettingsRow(g, R.drawable.ic_bell, "开启消息通知", "", true, false, false, this::enableMessageNotifications);
+            addSettingsRow(g, R.drawable.ic_image, "清理缓存", "", true, true, false, this::clearAppCache);
+        } else {
+            title = "帮助与关于";
+            String ver = "";
+            try { ver = "v" + getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) {}
+            addSettingsRow(g, R.drawable.ic_chat, "关于 PicMe", ver, false, true, false, null);
+        }
+        panel.addView(g, matchWrap());
+        showManagedAlbumPage(title, scroll);
+    }
+
+    private void clearAppCache() {
+        imageCache.evictAll();
+        try { diskCache().clear(); } catch (Exception ignored) {}
+        toast("缓存已清理");
     }
 
     // 设计稿 PGroup：白色圆角卡容器。
