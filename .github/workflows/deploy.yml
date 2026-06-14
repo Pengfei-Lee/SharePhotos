@@ -16,6 +16,9 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: root
           key: ${{ secrets.SERVER_SSH_KEY }}
+          # 服务器内存小，docker 缓存失效时需从源码编译 insightface/stringzilla 等重包，
+          # 默认 10 分钟命令超时会被杀（见 2026-06-14 部署失败）。放宽到 30 分钟。
+          command_timeout: 30m
           script: |
             cd ~/SharePhotos
             git fetch origin master
