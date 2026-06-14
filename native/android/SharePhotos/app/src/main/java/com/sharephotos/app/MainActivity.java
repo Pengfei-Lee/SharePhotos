@@ -139,6 +139,8 @@ public class MainActivity extends Activity {
     private JSONObject currentAlbum;
     private String activeFolderId = "";
     private String activeAlbumTab = "people";
+    private String myPhotosSubTab = "photos"; // 我的照片页：photos | albums
+    private boolean myPhotosFavOnly = false;  // 我的照片页：仅看喜欢
     private boolean photoSelectionMode = false;
     private boolean livePhotoPlaying = false;
     private PhotoDiskCache diskCache;
@@ -230,6 +232,8 @@ public class MainActivity extends Activity {
             else showHome();
         } else if ("album".equals(currentScreen)) {
             showHome();
+        } else if ("myphotos".equals(currentScreen)) {
+            showHome();
         } else {
             finish();
         }
@@ -309,7 +313,7 @@ public class MainActivity extends Activity {
         scroll.addView(root);
         frame.addView(scroll);
 
-        // 顶部仅保留品牌；消息/我的入口下沉到底部 Tab 栏（对齐设计稿底部导航）。
+        // 顶部：品牌 + 右上角扫码/通知（对齐设计稿首页右上角铃铛）。
         LinearLayout top = horizontal();
         top.setGravity(Gravity.CENTER_VERTICAL);
         ImageView logo = new ImageView(this);
@@ -328,6 +332,40 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         brandParams.setMargins(dp(14), 0, 0, 0);
         top.addView(brandBlock, brandParams);
+
+        // 扫码加入（保留 Android 的扫码入口）。
+        ImageView scanBtn = new ImageView(this);
+        scanBtn.setImageResource(R.drawable.ic_qr);
+        scanBtn.setColorFilter(PRIMARY);
+        scanBtn.setBackground(round(Color.WHITE, dp(21), HAIRLINE, dp(1)));
+        scanBtn.setPadding(dp(9), dp(9), dp(9), dp(9));
+        scanBtn.setContentDescription("扫码加入相册");
+        scanBtn.setOnClickListener(v -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString()));
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        scanParams.setMargins(0, 0, dp(10), 0);
+        top.addView(scanBtn, scanParams);
+
+        // 通知铃铛（消息入口，带未读角标）。
+        FrameLayout bellBtn = new FrameLayout(this);
+        bellBtn.setBackground(round(Color.WHITE, dp(21), HAIRLINE, dp(1)));
+        bellBtn.setContentDescription("消息");
+        bellBtn.setOnClickListener(v -> showMessageCenter());
+        ImageView bell = new ImageView(this);
+        bell.setImageResource(R.drawable.ic_bell);
+        bell.setColorFilter(PRIMARY);
+        bellBtn.addView(bell, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
+        messageBadge = text("", 10, Color.WHITE, true);
+        messageBadge.setGravity(Gravity.CENTER);
+        messageBadge.setMinWidth(dp(16));
+        messageBadge.setMinHeight(dp(16));
+        messageBadge.setPadding(dp(4), 0, dp(4), 0);
+        messageBadge.setBackground(round(RED, dp(8), Color.WHITE, dp(1)));
+        FrameLayout.LayoutParams mbParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        mbParams.setMargins(0, dp(1), dp(1), 0);
+        bellBtn.addView(messageBadge, mbParams);
+        top.addView(bellBtn, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
         root.addView(top, matchWrap());
         spacer(dp(24));
 
@@ -354,8 +392,7 @@ public class MainActivity extends Activity {
         loadUnreadMessageCount();
     }
 
-    // 底部玻璃 Tab 栏（对齐设计稿底部导航）。设计稿的「我的照片/传输」在 Android 无独立功能，
-    // 映射为真实高频入口：相册 / 扫码加入 / [+]创建 / 消息 / 我的。
+    // 底部玻璃 Tab 栏（对齐设计稿底部导航）：相册 / 我的照片 / [+]创建 / 传输 / 我的。
     private View bottomTabBar() {
         LinearLayout bar = horizontal();
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -364,8 +401,7 @@ public class MainActivity extends Activity {
         bar.setPadding(dp(6), dp(8), dp(6), dp(8));
 
         bar.addView(tabItem("相册", R.drawable.ic_image, true, null), tabItemParams());
-        bar.addView(tabItem("扫码", R.drawable.ic_qr_scan, false,
-                () -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString())), tabItemParams());
+        bar.addView(tabItem("我的照片", R.drawable.ic_grid, false, this::showMyPhotosPage), tabItemParams());
 
         // 中间渐变 [+] 创建按钮（凸出）。
         FrameLayout plus = new FrameLayout(this);
@@ -381,7 +417,7 @@ public class MainActivity extends Activity {
         plusParams.setMargins(dp(6), 0, dp(6), 0);
         bar.addView(plus, plusParams);
 
-        bar.addView(messageTabItem(), tabItemParams());
+        bar.addView(tabItem("传输", R.drawable.ic_transfer, false, this::showTransferPage), tabItemParams());
         bar.addView(tabItem("我的", R.drawable.ic_user, false, this::showProfileDialog), tabItemParams());
         return bar;
     }
@@ -414,37 +450,212 @@ public class MainActivity extends Activity {
         return col;
     }
 
-    // 消息 Tab（复用成员变量 messageBadge 显示未读角标）。
-    private View messageTabItem() {
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setOnClickListener(v -> showMessageCenter());
-        LinearLayout col = vertical();
-        col.setGravity(Gravity.CENTER);
-        col.setPadding(0, dp(6), 0, dp(4));
-        ImageView bellIcon = new ImageView(this);
-        bellIcon.setImageResource(R.drawable.ic_bell);
-        bellIcon.setColorFilter(SECONDARY);
-        LinearLayout.LayoutParams bellParams = new LinearLayout.LayoutParams(dp(24), dp(24));
-        bellParams.setMargins(0, 0, 0, dp(2));
-        col.addView(bellIcon, bellParams);
-        TextView t = text("消息", 13, SECONDARY, false);
-        t.setGravity(Gravity.CENTER);
-        col.addView(t, matchWrap());
-        wrap.addView(col, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    // 「我的照片」聚合页（对齐设计稿底部 Tab）：列出你被识别到照片的相册，点进对应相册的「我的」视图。
+    // Android 查看器按相册作用域，故按相册聚合而非跨相册扁平网格，避免下载/收藏上下文错乱。
+    // 「我的照片」全屏页（对齐设计稿 Tab）：照片(扁平跨相册网格)/相册 子 tab + 全部/喜欢 筛选。
+    private void showMyPhotosPage() {
+        currentScreen = "myphotos";
+        clearPhotoSelection();
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(softBackground());
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = vertical();
+        content.setPadding(dp(18), dp(20), dp(18), dp(28));
+        scroll.addView(content);
+        frame.addView(scroll);
 
-        messageBadge = text("", 10, Color.WHITE, true);
-        messageBadge.setGravity(Gravity.CENTER);
-        messageBadge.setMinWidth(dp(16));
-        messageBadge.setMinHeight(dp(16));
-        messageBadge.setPadding(dp(4), 0, dp(4), 0);
-        messageBadge.setBackground(round(RED, dp(8), Color.WHITE, dp(1)));
-        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        badgeParams.setMargins(dp(18), 0, 0, 0);
-        wrap.addView(messageBadge, badgeParams);
-        return wrap;
+        LinearLayout header = horizontal();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView back = new ImageView(this);
+        back.setImageResource(R.drawable.ic_back);
+        back.setColorFilter(ACCENT);
+        back.setPadding(dp(2), dp(8), dp(10), dp(8));
+        back.setOnClickListener(v -> showHome());
+        header.addView(back, new LinearLayout.LayoutParams(dp(38), dp(40)));
+        header.addView(text("我的照片", 22, PRIMARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        content.addView(header, matchWrap());
+
+        // 聚合所有相册里"我的照片"（每张已带 albumId，供查看器解析所属相册）。
+        JSONArray allMine = new JSONArray();
+        int albumsWithMe = 0;
+        for (int i = 0; i < albums.length(); i++) {
+            JSONObject a = albums.optJSONObject(i);
+            if (a == null) continue;
+            JSONArray mine = myPhotos(a);
+            if (mine.length() > 0) {
+                albumsWithMe++;
+                for (int j = 0; j < mine.length(); j++) allMine.put(mine.optJSONObject(j));
+            }
+        }
+        TextView sub = text("你出现在 " + allMine.length() + " 张照片 · 横跨 " + albumsWithMe + " 个相册", 13, SECONDARY, false);
+        sub.setPadding(dp(2), 0, 0, dp(2));
+        content.addView(sub, matchWrap());
+
+        LinearLayout subTabs = horizontal();
+        subTabs.addView(myPhotosSubTabItem("照片", "photos"));
+        subTabs.addView(myPhotosSubTabItem("相册", "albums"));
+        LinearLayout.LayoutParams stParams = matchWrap();
+        stParams.setMargins(0, dp(8), 0, 0);
+        content.addView(subTabs, stParams);
+        View sep = new View(this);
+        sep.setBackgroundColor(HAIRLINE);
+        content.addView(sep, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        spacer(content, dp(12));
+
+        if ("albums".equals(myPhotosSubTab)) {
+            if (albumsWithMe == 0) {
+                content.addView(myPhotosEmptyHint(), matchWrap());
+            } else {
+                for (int i = 0; i < albums.length(); i++) {
+                    JSONObject a = albums.optJSONObject(i);
+                    if (a != null && myPhotoCount(a) > 0) content.addView(myPhotoAlbumCard(a), matchWrap());
+                }
+            }
+        } else {
+            LinearLayout filters = horizontal();
+            filters.addView(myPhotosFilterPill("全部", false));
+            filters.addView(myPhotosFilterPill("喜欢", true));
+            content.addView(filters, matchWrap());
+            spacer(content, dp(10));
+            JSONArray shown = allMine;
+            if (myPhotosFavOnly) {
+                shown = new JSONArray();
+                for (int i = 0; i < allMine.length(); i++) {
+                    JSONObject p = allMine.optJSONObject(i);
+                    if (p != null && p.optBoolean("favorited", false)) shown.put(p);
+                }
+            }
+            if (shown.length() == 0) content.addView(myPhotosEmptyHint(), matchWrap());
+            else content.addView(photoGrid(shown, 300), matchWrap());
+        }
+        setContentView(frame);
+    }
+
+    private View myPhotosSubTabItem(String label, final String key) {
+        boolean on = key.equals(myPhotosSubTab);
+        LinearLayout col = vertical();
+        col.setPadding(0, dp(6), dp(24), 0);
+        col.addView(text(label, 15, on ? PRIMARY : SECONDARY, on),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        spacer(col, dp(8));
+        View ul = new View(this);
+        if (on) ul.setBackground(accentGradient(dp(2)));
+        col.addView(ul, new LinearLayout.LayoutParams(dp(28), dp(3)));
+        col.setOnClickListener(v -> { myPhotosSubTab = key; showMyPhotosPage(); });
+        return col;
+    }
+
+    private View myPhotosFilterPill(String label, final boolean favVal) {
+        boolean on = (myPhotosFavOnly == favVal);
+        TextView pill = text(label, 13, on ? Color.WHITE : PRIMARY, on);
+        pill.setPadding(dp(15), dp(7), dp(15), dp(7));
+        pill.setBackground(on ? accentGradient(dp(16)) : round(Color.argb(13, 0x0F, 0x11, 0x15), dp(16), Color.TRANSPARENT, 0));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMargins(0, 0, dp(8), 0);
+        pill.setLayoutParams(p);
+        pill.setOnClickListener(v -> { myPhotosFavOnly = favVal; showMyPhotosPage(); });
+        return pill;
+    }
+
+    private View myPhotosEmptyHint() {
+        TextView hint = text(myPhotosFavOnly ? "还没有喜欢的照片" : "在「我的」上传一张清晰正脸照后，系统会自动在共享相册里找到拍到你的照片。", 14, SECONDARY, false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(dp(20), dp(40), dp(20), dp(20));
+        return hint;
+    }
+
+    private View myPhotoAlbumCard(final JSONObject album) {
+        LinearLayout card = horizontal();
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        card.setElevation(dp(2));
+        LinearLayout.LayoutParams cardParams = matchWrap();
+        cardParams.setMargins(0, dp(10), 0, 0);
+        card.setLayoutParams(cardParams);
+
+        ImageView cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.setBackground(round(Color.rgb(0xE6, 0xEA, 0xF2), dp(12), Color.TRANSPARENT, 0));
+        cover.setClipToOutline(true);
+        JSONArray mine = myPhotos(album);
+        if (mine.length() > 0) loadImageInto(bestPhotoURL(mine.optJSONObject(0)), cover);
+        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(dp(56), dp(56));
+        coverParams.setMargins(0, 0, dp(12), 0);
+        card.addView(cover, coverParams);
+
+        LinearLayout col = vertical();
+        col.addView(text(album.optString("name", "相册"), 15, PRIMARY, true), matchWrap());
+        col.addView(text(myPhotoCount(album) + " 张照片有你", 13, ACCENT, false), matchWrap());
+        card.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        ImageView chev = new ImageView(this);
+        chev.setImageResource(R.drawable.ic_chevron);
+        chev.setColorFilter(Color.rgb(0xC7, 0xCD, 0xD6));
+        card.addView(chev, new LinearLayout.LayoutParams(dp(16), dp(16)));
+
+        card.setOnClickListener(v -> {
+            if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
+            selectedAlbumId = album.optString("id");
+            activeAlbumTab = "my";
+            clearPhotoSelection();
+            showAlbumDetail(album);
+        });
+        return card;
+    }
+
+    // 「传输」页（对齐设计稿）：展示当前上传任务进度。Android 上传为前台单任务、下载即时保存，
+    // 故无后台下载任务列表；无任务时显示空态。
+    private void showTransferPage() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout panel = vertical();
+        panel.setPadding(dp(18), dp(16), dp(18), dp(28));
+        scroll.addView(panel);
+
+        if (isUploading) {
+            JSONObject album = findAlbumById(activeUploadAlbumId);
+            String name = album != null ? album.optString("name", "相册") : "相册";
+            LinearLayout cardv = vertical();
+            cardv.setPadding(dp(14), dp(14), dp(14), dp(14));
+            cardv.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+            cardv.setElevation(dp(2));
+            cardv.addView(text("正在上传到「" + name + "」", 15, PRIMARY, true), matchWrap());
+            String sub = uploadProgressText == null || uploadProgressText.isEmpty()
+                    ? (uploadUploadedCount + " / " + uploadSelectedCount + " 张 · AI 识别同步进行")
+                    : uploadProgressText;
+            TextView subView = text(sub, 13, SECONDARY, false);
+            subView.setPadding(0, dp(2), 0, dp(10));
+            cardv.addView(subView, matchWrap());
+            // 进度条（两段加权填充）。
+            int pct = Math.max(0, Math.min(100, uploadProgressPercent()));
+            LinearLayout track = horizontal();
+            track.setBackground(round(Color.argb(18, 0x0F, 0x11, 0x15), dp(4), Color.TRANSPARENT, 0));
+            View fill = new View(this);
+            fill.setBackground(accentGradient(dp(4)));
+            track.addView(fill, new LinearLayout.LayoutParams(0, dp(8), Math.max(1, pct)));
+            track.addView(new View(this), new LinearLayout.LayoutParams(0, dp(8), Math.max(0, 100 - pct)));
+            panel.addView(track, matchWrap());
+            panel.addView(cardv, matchWrap());
+        } else {
+            LinearLayout empty = vertical();
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(24), dp(70), dp(24), dp(40));
+            ImageView ic = new ImageView(this);
+            ic.setImageResource(R.drawable.ic_transfer);
+            ic.setColorFilter(ACCENT);
+            empty.addView(ic, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            spacer(empty, dp(16));
+            TextView t1 = text("暂无传输任务", 18, PRIMARY, true);
+            t1.setGravity(Gravity.CENTER);
+            empty.addView(t1, matchWrap());
+            TextView t2 = text("上传照片时，任务会在这里后台进行，你可以随时回来查看", 14, SECONDARY, false);
+            t2.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams t2p = matchWrap();
+            t2p.setMargins(0, dp(8), 0, 0);
+            empty.addView(t2, t2p);
+            panel.addView(empty, matchWrap());
+        }
+        showManagedAlbumPage("传输", scroll);
     }
 
     private void renderAlbums() {
@@ -467,6 +678,53 @@ public class MainActivity extends Activity {
             empty.addView(hint, matchWrap());
             root.addView(empty, matchWrap());
             return;
+        }
+        // 首页副标题（N 个相册 · 最近新增 M 张）+ 顶部新照片提醒。
+        int sumNeu = 0;
+        JSONObject newPhotoAlbum = null;
+        for (int i = 0; i < albums.length(); i++) {
+            JSONObject a = albums.optJSONObject(i);
+            if (a == null) continue;
+            sumNeu += a.optInt("neu", 0);
+            if (newPhotoAlbum == null && a.optInt("newMine", 0) > 0) newPhotoAlbum = a;
+        }
+        if (statusText != null) {
+            statusText.setText(albums.length() + " 个相册" + (sumNeu > 0 ? " · 最近新增 " + sumNeu + " 张照片" : ""));
+        }
+        if (newPhotoAlbum != null) {
+            final JSONObject alertAlbum = newPhotoAlbum;
+            int nm = alertAlbum.optInt("newMine", 0);
+            int nu = alertAlbum.optInt("neu", 0);
+            LinearLayout alert = horizontal();
+            alert.setGravity(Gravity.CENTER_VERTICAL);
+            alert.setPadding(dp(14), dp(13), dp(14), dp(13));
+            alert.setBackground(accentGradient(dp(18)));
+            alert.setElevation(dp(4));
+            ImageView spark = new ImageView(this);
+            spark.setImageResource(R.drawable.ic_sparkle);
+            spark.setColorFilter(Color.WHITE);
+            LinearLayout.LayoutParams sparkP = new LinearLayout.LayoutParams(dp(22), dp(22));
+            sparkP.setMargins(0, 0, dp(12), 0);
+            alert.addView(spark, sparkP);
+            LinearLayout textCol = vertical();
+            textCol.addView(text("发现 " + nm + " 张新照片有你", 15, Color.WHITE, true), matchWrap());
+            textCol.addView(text("「" + alertAlbum.optString("name", "相册") + "」新增 " + nu + " 张 · 点击查看",
+                    12, Color.argb(220, 255, 255, 255), false), matchWrap());
+            alert.addView(textCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            ImageView arr = new ImageView(this);
+            arr.setImageResource(R.drawable.ic_chevron);
+            arr.setColorFilter(Color.WHITE);
+            alert.addView(arr, new LinearLayout.LayoutParams(dp(18), dp(18)));
+            alert.setOnClickListener(v -> {
+                selectedAlbumId = alertAlbum.optString("id");
+                activeAlbumTab = "my";
+                clearPhotoSelection();
+                showAlbumDetail(alertAlbum);
+                refreshAlbumDetail(alertAlbum.optString("id"));
+            });
+            LinearLayout.LayoutParams alertP = matchWrap();
+            alertP.setMargins(0, 0, 0, dp(16));
+            root.addView(alert, alertP);
         }
         TextView section = text("全部相册", 17, PRIMARY, true);
         root.addView(section, matchWrap());
@@ -529,6 +787,27 @@ public class MainActivity extends Activity {
         cover.addView(coverImg, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // 封面右上角「✦ +N」新增角标（自上次查看以来的新照片，后端 neu 字段）。
+        int neu = album.optInt("neu", 0);
+        if (neu > 0) {
+            LinearLayout neuBadge = horizontal();
+            neuBadge.setGravity(Gravity.CENTER_VERTICAL);
+            neuBadge.setPadding(dp(7), dp(3), dp(8), dp(3));
+            neuBadge.setBackground(round(RED, dp(10), Color.TRANSPARENT, 0));
+            ImageView spk = new ImageView(this);
+            spk.setImageResource(R.drawable.ic_sparkle);
+            spk.setColorFilter(Color.WHITE);
+            LinearLayout.LayoutParams spkParams = new LinearLayout.LayoutParams(dp(11), dp(11));
+            spkParams.setMargins(0, 0, dp(3), 0);
+            neuBadge.addView(spk, spkParams);
+            neuBadge.addView(text("+" + neu, 11, Color.WHITE, true),
+                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            FrameLayout.LayoutParams neuParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+            neuParams.setMargins(0, dp(8), dp(8), 0);
+            cover.addView(neuBadge, neuParams);
+        }
+
         LinearLayout faces = horizontal();
         JSONArray folders = album.optJSONArray("folders");
         if (folders != null) {
@@ -570,12 +849,36 @@ public class MainActivity extends Activity {
         name.setMaxLines(1);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         body.addView(name, matchWrap());
-        String meta = safeArray(album, "photos").length() + " 张 · "
-                + safeArray(album, "contributors").length() + " 人";
-        TextView metaView = text(meta, 12, SECONDARY, false);
-        LinearLayout.LayoutParams metaParams = matchWrap();
-        metaParams.setMargins(0, dp(6), 0, 0);
-        body.addView(metaView, metaParams);
+        // 图标化统计（对齐设计稿）：📷 总数 · 👤 我的照片数。
+        LinearLayout statRow = horizontal();
+        statRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView icImg = new ImageView(this);
+        icImg.setImageResource(R.drawable.ic_image);
+        icImg.setColorFilter(SECONDARY);
+        LinearLayout.LayoutParams icImgParams = new LinearLayout.LayoutParams(dp(14), dp(14));
+        icImgParams.setMargins(0, 0, dp(4), 0);
+        statRow.addView(icImg, icImgParams);
+        statRow.addView(text(String.valueOf(safeArray(album, "photos").length()), 12, SECONDARY, false),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageView icMine = new ImageView(this);
+        icMine.setImageResource(R.drawable.ic_user);
+        icMine.setColorFilter(SECONDARY);
+        LinearLayout.LayoutParams icMineParams = new LinearLayout.LayoutParams(dp(14), dp(14));
+        icMineParams.setMargins(dp(12), 0, dp(4), 0);
+        statRow.addView(icMine, icMineParams);
+        statRow.addView(text(String.valueOf(myPhotoCount(album)), 12, SECONDARY, false),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams statRowParams = matchWrap();
+        statRowParams.setMargins(0, dp(7), 0, 0);
+        body.addView(statRow, statRowParams);
+        // 「N 张新照片有你」/「新增 N 张」（后端 newMine/neu）。
+        int newMine = album.optInt("newMine", 0);
+        if (newMine > 0 || neu > 0) {
+            TextView newLine = text(newMine > 0 ? (newMine + " 张新照片有你") : ("新增 " + neu + " 张"), 12, ACCENT, true);
+            LinearLayout.LayoutParams newLineParams = matchWrap();
+            newLineParams.setMargins(0, dp(7), 0, 0);
+            body.addView(newLine, newLineParams);
+        }
         card.addView(body, matchWrap());
         return card;
     }
@@ -603,40 +906,78 @@ public class MainActivity extends Activity {
         frame.setBackground(softBackground());
         ScrollView scroll = new ScrollView(this);
         LinearLayout content = vertical();
-        content.setPadding(dp(22), dp(56), dp(22), dp(118));
+        content.setPadding(dp(16), dp(44), dp(16), dp(118));
         scroll.addView(content);
         frame.addView(scroll);
 
-        LinearLayout header = horizontal();
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView back = new ImageView(this);
-        back.setImageResource(R.drawable.ic_back);
-        back.setColorFilter(ACCENT);
-        back.setPadding(dp(10), dp(10), dp(10), dp(10));
-        back.setOnClickListener(v -> showHome());
-        header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        TextView date = text("PicMe 相册", 18, PRIMARY, true);
-        date.setGravity(Gravity.CENTER);
-        header.addView(date, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        ImageView share = new ImageView(this);
-        share.setImageResource(R.drawable.ic_share);
-        share.setContentDescription("分享相册");
-        share.setPadding(dp(10), dp(10), dp(10), dp(10));
-        share.setOnClickListener(v -> {
+        // 深色 hero 封面（对齐设计稿）：封面图 + 暗色遮罩 + 玻璃返回/分享/更多 + 白色标题/成员/计数叠加。
+        FrameLayout hero = new FrameLayout(this);
+        hero.setClipToOutline(true);
+        hero.setBackground(round(Color.rgb(0x2A, 0x2C, 0x31), dp(20), Color.TRANSPARENT, 0));
+        ImageView heroCover = new ImageView(this);
+        heroCover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        JSONArray heroPhotos = album.optJSONArray("photos");
+        if (heroPhotos != null && heroPhotos.length() > 0) {
+            JSONObject first = heroPhotos.optJSONObject(0);
+            if (first != null) loadImageInto(bestPhotoURL(first), heroCover);
+        }
+        hero.addView(heroCover, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        View scrim = new View(this);
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(90, 0, 0, 0), Color.argb(30, 0, 0, 0), Color.argb(180, 0, 0, 0)}));
+        hero.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout heroTop = horizontal();
+        heroTop.setGravity(Gravity.CENTER_VERTICAL);
+        heroTop.setPadding(dp(10), dp(10), dp(10), 0);
+        heroTop.addView(glassIconButton(R.drawable.ic_back, () -> showHome()), new LinearLayout.LayoutParams(dp(38), dp(38)));
+        heroTop.addView(new View(this), new LinearLayout.LayoutParams(0, dp(1), 1));
+        ImageView heroShare = glassIconButton(R.drawable.ic_share, () -> {
             if (permissionAllowed(album, "share")) shareAlbum(album);
             else showPermissionDenied(album, "分享", "share");
         });
-        header.addView(share, new LinearLayout.LayoutParams(dp(46), dp(46)));
-        content.addView(header, matchWrap());
+        LinearLayout.LayoutParams heroShareLP = new LinearLayout.LayoutParams(dp(38), dp(38));
+        heroShareLP.setMargins(0, 0, dp(8), 0);
+        heroTop.addView(heroShare, heroShareLP);
+        heroTop.addView(glassIconButton(R.drawable.ic_more, () -> showAlbumContextActions(album)), new LinearLayout.LayoutParams(dp(38), dp(38)));
+        hero.addView(heroTop, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
-        TextView title = text(album.optString("name", "未命名相册"), 28, PRIMARY, true);
-        content.addView(title, matchWrap());
-        spacer(content, dp(14));
-        LinearLayout stats = horizontal();
-        stats.addView(statPill(safeArray(album, "photos").length() + " 张朋友视角"));
-        stats.addView(statPill(safeArray(album, "folders").length() + " 个小相册"));
-        stats.addView(statPill(safeArray(album, "contributors").length() + " 位参与者"));
-        content.addView(stats, matchWrap());
+        LinearLayout heroBottom = vertical();
+        heroBottom.setPadding(dp(16), 0, dp(16), dp(14));
+        TextView heroTitle = text(album.optString("name", "未命名相册"), 24, Color.WHITE, true);
+        heroBottom.addView(heroTitle, matchWrap());
+        LinearLayout heroMeta = horizontal();
+        heroMeta.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams heroMetaLP = matchWrap();
+        heroMetaLP.setMargins(0, dp(8), 0, 0);
+        JSONArray heroFolders = album.optJSONArray("folders");
+        if (heroFolders != null) {
+            for (int i = 0; i < Math.min(4, heroFolders.length()); i++) {
+                JSONObject folder = heroFolders.optJSONObject(i);
+                if (folder == null) continue;
+                ImageView face = new ImageView(this);
+                face.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                face.setBackground(round(Color.rgb(0xD8, 0xDE, 0xE8), dp(11), Color.WHITE, dp(2)));
+                face.setClipToOutline(true);
+                String fc = folder.optString("coverUrl", "");
+                if (fc.isEmpty()) fc = firstPhotoCover(album, folder);
+                loadImageInto(fc, face);
+                LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(dp(22), dp(22));
+                if (i > 0) fp.setMargins(dp(-7), 0, 0, 0);
+                heroMeta.addView(face, fp);
+            }
+        }
+        TextView heroCounts = text(safeArray(album, "contributors").length() + " 人参与 · " + safeArray(album, "photos").length() + " 张照片",
+                13, Color.argb(230, 255, 255, 255), false);
+        LinearLayout.LayoutParams hcLP = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        hcLP.setMargins(dp(8), 0, 0, 0);
+        heroMeta.addView(heroCounts, hcLP);
+        heroBottom.addView(heroMeta, heroMetaLP);
+        hero.addView(heroBottom, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+
+        LinearLayout.LayoutParams heroLP = matchWrap();
+        heroLP.height = dp(210);
+        content.addView(hero, heroLP);
 
         // 「你出现在 N 张照片」提醒条（对齐设计稿核心卖点"找到我"）：有匹配照片时出现，点击切到「我的」。
         int myCount = myPhotoCount(album);
@@ -670,8 +1011,8 @@ public class MainActivity extends Activity {
 
         addTabRow(content, album);
         if ("people".equals(activeAlbumTab)) {
-            addSectionTitle(content, "人物小相册", safeArray(album, "folders").length() + " 个可下载小相册");
-            content.addView(folderGrid(album), matchWrap());
+            spacer(content, dp(10));
+            content.addView(personGrid(album), matchWrap());
         } else if ("group".equals(activeAlbumTab)) {
             JSONArray groups = groupPhotos(album);
             addSectionTitle(content, "合照", groups.length() + " 张多人同框照片");
@@ -1372,6 +1713,60 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    // 人物圆形头像网格（对齐设计稿相册详情「人物」tab）：圆形头像 + 名字 + 张数，每行 3 个，点进人物小相册。
+    private LinearLayout personGrid(JSONObject album) {
+        LinearLayout wrapper = vertical();
+        JSONArray folders = album.optJSONArray("folders");
+        if (folders == null || folders.length() == 0) {
+            TextView empty = text("还没有识别出人物，上传更多照片后台会自动聚类。", 14, SECONDARY, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(20), dp(30), dp(20), dp(30));
+            wrapper.addView(empty, matchWrap());
+            return wrapper;
+        }
+        LinearLayout row = null;
+        int shown = 0;
+        for (int i = 0; i < folders.length(); i++) {
+            JSONObject folder = folders.optJSONObject(i);
+            if (folder == null) continue;
+            if (shown % 3 == 0) {
+                row = horizontal();
+                LinearLayout.LayoutParams rowParams = matchWrap();
+                rowParams.setMargins(0, dp(6), 0, dp(6));
+                wrapper.addView(row, rowParams);
+            }
+            LinearLayout col = vertical();
+            col.setGravity(Gravity.CENTER);
+            col.setPadding(dp(4), dp(8), dp(4), dp(8));
+            ImageView avatar = new ImageView(this);
+            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            avatar.setBackground(round(Color.rgb(0xE0, 0xD2, 0xE8), dp(36), Color.WHITE, dp(2)));
+            avatar.setClipToOutline(true);
+            String cover = folder.optString("coverUrl", "");
+            if (cover.isEmpty()) cover = firstPhotoCover(album, folder);
+            loadImageInto(cover, avatar);
+            col.addView(avatar, new LinearLayout.LayoutParams(dp(72), dp(72)));
+            TextView name = text(folder.optString("name", "人物"), 13, PRIMARY, true);
+            name.setGravity(Gravity.CENTER);
+            name.setMaxLines(1);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams nameParams = matchWrap();
+            nameParams.setMargins(0, dp(8), 0, 0);
+            col.addView(name, nameParams);
+            TextView cnt = text(safeArray(folder, "photoIds").length() + " 张", 11, SECONDARY, false);
+            cnt.setGravity(Gravity.CENTER);
+            col.addView(cnt, matchWrap());
+            final JSONObject f = folder;
+            col.setOnClickListener(v -> showFolderDialog(album, f));
+            row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            shown++;
+        }
+        if (shown % 3 != 0 && row != null) {
+            for (int k = shown % 3; k < 3; k++) row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        }
+        return wrapper;
+    }
+
     private LinearLayout folderGrid(JSONObject album) {
         LinearLayout wrapper = vertical();
         JSONArray folders = album.optJSONArray("folders");
@@ -1528,6 +1923,17 @@ public class MainActivity extends Activity {
                     badgeParams.setMargins(dp(8), 0, 0, dp(8));
                     cell.addView(badge, badgeParams);
                 }
+                // 已喜欢标记（对齐设计稿：收藏的照片右下角心形）。
+                if (!photoSelectionMode && photo.optBoolean("favorited", false)) {
+                    ImageView heart = new ImageView(this);
+                    heart.setImageResource(R.drawable.ic_heart);
+                    heart.setColorFilter(Color.WHITE);
+                    heart.setBackground(round(Color.argb(120, 0, 0, 0), dp(13), Color.TRANSPARENT, 0));
+                    heart.setPadding(dp(5), dp(5), dp(5), dp(5));
+                    FrameLayout.LayoutParams heartParams = new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.END | Gravity.BOTTOM);
+                    heartParams.setMargins(0, 0, dp(6), dp(6));
+                    cell.addView(heart, heartParams);
+                }
                 final int photoIndex = i;
                 cell.setOnClickListener(v -> {
                     JSONObject tapped = photos.optJSONObject(photoIndex);
@@ -1561,6 +1967,13 @@ public class MainActivity extends Activity {
         final int index = Math.max(0, Math.min(startIndex, photos.length() - 1));
         final JSONObject photo = photos.optJSONObject(index);
         if (photo == null) return;
+        // 跨相册查看（如「我的照片」聚合网格）：按照片自带的 albumId 解析所属相册，
+        // 使下载权限/收藏等以正确的相册为上下文。
+        String viewerAlbumId = photo.optString("albumId", "");
+        if (!viewerAlbumId.isEmpty()) {
+            JSONObject viewerAlbum = findAlbumById(viewerAlbumId);
+            if (viewerAlbum != null) { currentAlbum = viewerAlbum; selectedAlbumId = viewerAlbumId; }
+        }
         // 进入/切换查看器都重建视图，旧的 VideoView 已不存在，复位播放标志，避免卡死后无法再播。
         livePhotoPlaying = false;
 
@@ -1682,11 +2095,46 @@ public class MainActivity extends Activity {
             }
         });
         actions.addView(saveCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        LinearLayout peopleCol = viewerAction(R.drawable.ic_people, "人物", PRIMARY, SECONDARY);
+        peopleCol.setOnClickListener(v -> showPhotoPeople(photo));
+        actions.addView(peopleCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        final LinearLayout moreCol = viewerAction(R.drawable.ic_more, "更多", PRIMARY, SECONDARY);
+        moreCol.setOnClickListener(v -> showPhotoViewerMenu(moreCol, photo));
+        actions.addView(moreCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
         LinearLayout.LayoutParams actionsParams = matchWrap();
         actionsParams.setMargins(dp(20), dp(6), dp(20), dp(24));
         content.addView(actions, actionsParams);
 
         setContentView(frame);
+    }
+
+    // 查看器「人物」：列出该照片识别到的人物，点击进入对应人物小相册。
+    private void showPhotoPeople(final JSONObject photo) {
+        final JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+        JSONArray names = photo.optJSONArray("folderNames");
+        final java.util.List<String> people = new java.util.ArrayList<>();
+        if (names != null) {
+            for (int i = 0; i < names.length(); i++) {
+                String n = names.optString(i, "");
+                if (!n.isEmpty() && !people.contains(n)) people.add(n);
+            }
+        }
+        if (people.isEmpty()) { toast("这张照片暂未识别到人物"); return; }
+        new AlertDialog.Builder(this)
+                .setTitle("照片中的人物")
+                .setItems(people.toArray(new String[0]), (d, w) -> {
+                    if (album == null) return;
+                    JSONArray folders = safeArray(album, "folders");
+                    for (int i = 0; i < folders.length(); i++) {
+                        JSONObject f = folders.optJSONObject(i);
+                        if (f != null && people.get(w).equals(f.optString("name"))) { showFolderDialog(album, f); return; }
+                    }
+                })
+                .setNegativeButton("关闭", null)
+                .show();
     }
 
     private void showPhotoViewerMenu(View anchor, final JSONObject photo) {
@@ -1797,6 +2245,7 @@ public class MainActivity extends Activity {
     }
 
     private void showCurrentAlbumOrHome() {
+        if ("myphotos".equals(photoReturnScreen)) { showMyPhotosPage(); return; }
         JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
         JSONObject folder = album == null ? null : findFolderById(album, activeFolderId);
         if (album != null && "folder".equals(photoReturnScreen) && folder != null) showFolderDialog(album, folder);
@@ -5226,6 +5675,17 @@ public class MainActivity extends Activity {
     // 用高透明度白底 + 细描边 + 阴影近似 iOS 26 的玻璃质感。
     private GradientDrawable glass(int radius) {
         return round(Color.argb(0xD8, 255, 255, 255), radius, Color.argb(0x70, 255, 255, 255), dp(1));
+    }
+
+    // 深色 hero 上的玻璃圆形图标按钮（半透明白底 + 白色图标）。
+    private ImageView glassIconButton(int iconRes, final Runnable onClick) {
+        ImageView b = new ImageView(this);
+        b.setImageResource(iconRes);
+        b.setColorFilter(Color.WHITE);
+        b.setBackground(round(Color.argb(64, 255, 255, 255), dp(19), Color.argb(90, 255, 255, 255), dp(1)));
+        b.setPadding(dp(9), dp(9), dp(9), dp(9));
+        if (onClick != null) b.setOnClickListener(v -> onClick.run());
+        return b;
     }
 
     private GradientDrawable round(int color, int radius, int strokeColor, int strokeWidth) {
