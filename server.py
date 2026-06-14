@@ -719,6 +719,13 @@ def sqlite_init_store():
             CREATE INDEX IF NOT EXISTS idx_photo_favorites_user
                 ON photo_favorites(album_id, user_id);
 
+            CREATE TABLE IF NOT EXISTS album_views (
+                album_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                seen_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (album_id, user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS folders (
                 album_id TEXT NOT NULL,
                 id TEXT NOT NULL,
@@ -1533,6 +1540,44 @@ def toggle_photo_favorite(album_id, photo_id, user_id):
                 (album_id, photo_id, user_id, now),
             )
             return True
+
+
+def album_last_seen(album_id, user_id):
+    """用户上次查看该相册的时间戳。无记录时回退到入册时间（避免历史照片全被算"新增"）。"""
+    if not album_id or not user_id or not sqlite_enabled():
+        return 0
+    sqlite_init_store()
+    with sqlite_connect() as conn:
+        row = conn.execute(
+            "SELECT seen_at FROM album_views WHERE album_id = ? AND user_id = ?",
+            (album_id, user_id),
+        ).fetchone()
+        if row and row["seen_at"]:
+            return int(row["seen_at"])
+        member = conn.execute(
+            "SELECT joined_at, created_at FROM album_members WHERE album_id = ? AND user_id = ?",
+            (album_id, user_id),
+        ).fetchone()
+        if member:
+            return int(member["joined_at"] or member["created_at"] or 0)
+    return 0
+
+
+def mark_album_seen(album_id, user_id):
+    """记录用户已查看该相册（用于"自上次查看以来新增"计算）。"""
+    if not album_id or not user_id or not sqlite_enabled():
+        return
+    sqlite_init_store()
+    now = int(time.time())
+    with sqlite_connect() as conn:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO album_views(album_id, user_id, seen_at) VALUES(?, ?, ?)
+                ON CONFLICT(album_id, user_id) DO UPDATE SET seen_at = excluded.seen_at
+                """,
+                (album_id, user_id, now),
+            )
 
 
 def is_album_owner(album, user_id):
@@ -3270,6 +3315,19 @@ def public_album(album, current_user=None, origin=""):
         item["favorited"] = item.get("id") in favorite_ids
         visible["photos"].append(item)
     apply_my_photo_recommendation(visible, album, current_user)
+    # 自上次查看以来的新增（neu）与新识别到我的（newMine）。
+    neu = 0
+    new_mine = 0
+    if current_user:
+        last_seen = album_last_seen(album.get("id"), current_user.get("id"))
+        my_ids = set(visible.get("myPhotoIds") or [])
+        for p in album.get("photos", []):
+            if int(p.get("createdAt") or 0) > last_seen:
+                neu += 1
+                if p.get("id") in my_ids:
+                    new_mine += 1
+    visible["neu"] = neu
+    visible["newMine"] = new_mine
     return visible
 
 
@@ -5138,7 +5196,10 @@ class AppHandler(BaseHTTPRequestHandler):
                     enqueue_album_match_job(album.get("id"), current_user.get("id"))
             if not album:
                 return self.send_error_json("Album not found", 404)
-            return self.send_json({"album": public_album(album, current_user, self.request_origin())})
+            payload = {"album": public_album(album, current_user, self.request_origin())}
+            # 打开相册即标记已查看：下次 neu/newMine 从此刻起算。
+            mark_album_seen(match.group(1), current_user.get("id"))
+            return self.send_json(payload)
         match = re.match(r"^/api/albums/([^/]+)/activities$", path)
         if match:
             if not self.require_album_member(match.group(1)):
