@@ -98,10 +98,16 @@ public class MainActivity extends Activity {
     private static final String PREFS = "picme-auth";
     private static final String CACHE_ALBUMS = "cache.albums";
     private static final String CACHE_USER = "cache.user";
-    private static final int TEAL = Color.rgb(0, 128, 112);
-    private static final int AQUA = Color.rgb(28, 194, 199);
-    private static final int PRIMARY = Color.rgb(7, 22, 30);
-    private static final int SECONDARY = Color.rgb(120, 134, 140);
+    // 设计令牌：对齐 PicMe 设计稿 ds.jsx（iOS 26 液态玻璃风，蓝→紫主色）。
+    private static final int ACCENT = Color.rgb(0x4F, 0x7C, 0xFF);   // 主蓝（实色强调）
+    private static final int ACCENT2 = Color.rgb(0x6A, 0x5C, 0xFF);  // 主紫（渐变终点）
+    private static final int GREEN = Color.rgb(0x22, 0xC5, 0x5E);
+    private static final int ORANGE = Color.rgb(0xF5, 0x9E, 0x0B);
+    private static final int RED = Color.rgb(0xFF, 0x47, 0x57);
+    private static final int PRIMARY = Color.rgb(0x0F, 0x11, 0x15);    // ink 主文字
+    private static final int SECONDARY = Color.rgb(0x8E, 0x9A, 0xA3);  // gray 次要文字
+    private static final int APP_BG = Color.rgb(0xF2, 0xF4, 0xF7);     // 中性背景
+    private static final int HAIRLINE = Color.argb(20, 0x0F, 0x11, 0x15); // 发丝边框 ≈0.08 黑
     private static final long TRANSIENT_STATUS_MS = 4000L;
 
     private SharedPreferences prefs;
@@ -132,7 +138,7 @@ public class MainActivity extends Activity {
     private String photoReturnScreen = "album";
     private JSONObject currentAlbum;
     private String activeFolderId = "";
-    private String activeAlbumTab = "my";
+    private String activeAlbumTab = "people";
     private boolean photoSelectionMode = false;
     private boolean livePhotoPlaying = false;
     private PhotoDiskCache diskCache;
@@ -251,7 +257,7 @@ public class MainActivity extends Activity {
         spacer(dp(22));
 
         if (hasLoginNotice) {
-            TextView notice = text(loginNoticeText.trim(), 16, TEAL, true);
+            TextView notice = text(loginNoticeText.trim(), 16, ACCENT, true);
             notice.setPadding(dp(14), dp(12), dp(14), dp(12));
             notice.setBackground(round(Color.argb(242, 255, 255, 255), dp(18), Color.rgb(205, 244, 244), dp(2)));
             LinearLayout.LayoutParams noticeParams = matchWrap();
@@ -259,12 +265,12 @@ public class MainActivity extends Activity {
             root.addView(notice, noticeParams);
         }
 
-        usernameInput = field("  登录账号", false);
-        passwordInput = field("  密码", true);
-        root.addView(usernameInput, fieldParams());
-        root.addView(passwordInput, fieldParams());
+        usernameInput = field("登录账号", false);
+        passwordInput = field("密码", true);
+        root.addView(field(usernameInput, R.drawable.ic_user), fieldParams());
+        root.addView(field(passwordInput, R.drawable.ic_lock), fieldParams());
 
-        TextView forgot = text("忘记密码？", 17, AQUA, true);
+        TextView forgot = text("忘记密码？", 17, ACCENT, true);
         forgot.setGravity(Gravity.END);
         LinearLayout.LayoutParams forgotParams = matchWrap();
         forgotParams.setMargins(0, 0, dp(4), dp(34));
@@ -303,6 +309,7 @@ public class MainActivity extends Activity {
         scroll.addView(root);
         frame.addView(scroll);
 
+        // 顶部仅保留品牌；消息/我的入口下沉到底部 Tab 栏（对齐设计稿底部导航）。
         LinearLayout top = horizontal();
         top.setGravity(Gravity.CENTER_VERTICAL);
         ImageView logo = new ImageView(this);
@@ -312,47 +319,23 @@ public class MainActivity extends Activity {
         LinearLayout brandRow = horizontal();
         brandRow.setGravity(Gravity.CENTER_VERTICAL);
         brandRow.addView(text("识我", 28, PRIMARY, true));
-        TextView picme = text(" PicMe", 28, Color.rgb(97, 134, 220), true);
-        brandRow.addView(picme);
+        brandRow.addView(text(" PicMe", 28, ACCENT, true));
         brandBlock.addView(brandRow, matchWrap());
         TextView slogan = text("自动找到属于你的旅行照片", 13, SECONDARY, true);
         slogan.setMaxLines(1);
         slogan.setEllipsize(android.text.TextUtils.TruncateAt.END);
         brandBlock.addView(slogan, matchWrap());
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        brandParams.setMargins(dp(14), 0, dp(12), 0);
+        brandParams.setMargins(dp(14), 0, 0, 0);
         top.addView(brandBlock, brandParams);
-        FrameLayout messageBtn = new FrameLayout(this);
-        messageBtn.setBackground(round(Color.argb(235, 255, 255, 255), dp(27), Color.argb(30, 0, 128, 112), dp(1)));
-        messageBtn.setElevation(dp(3));
-        messageBtn.setContentDescription("消息提醒");
-        messageBtn.setOnClickListener(v -> showMessageCenter());
-        ImageView bell = new ImageView(this);
-        bell.setImageResource(R.drawable.ic_bell);
-        messageBtn.addView(bell, new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER));
-        messageBadge = text("", 11, Color.WHITE, true);
-        messageBadge.setGravity(Gravity.CENTER);
-        messageBadge.setMinWidth(dp(18));
-        messageBadge.setMinHeight(dp(18));
-        messageBadge.setPadding(dp(4), 0, dp(4), 0);
-        messageBadge.setBackground(round(Color.rgb(230, 74, 83), dp(9), Color.WHITE, dp(1)));
-        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
-        badgeParams.setMargins(0, dp(2), dp(2), 0);
-        messageBtn.addView(messageBadge, badgeParams);
-        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(dp(54), dp(54));
-        messageParams.setMargins(0, 0, dp(8), 0);
-        top.addView(messageBtn, messageParams);
-        updateMessageBadge();
-        ImageView avatar = capsuleImage();
-        avatar.setContentDescription("我的资料");
-        avatar.setOnClickListener(v -> showProfileDialog());
-        loadImageInto(currentUser == null ? "" : currentUser.optString("avatarUrl", ""), avatar);
-        top.addView(avatar, new LinearLayout.LayoutParams(dp(54), dp(54)));
         root.addView(top, matchWrap());
         spacer(dp(24));
 
-        TextView title = text("相册", 38, Color.BLACK, true);
+        // 个性化问候（对齐设计稿首页「晚上好，{昵称}」）。
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        String greet = hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
+        String nick = currentUser == null ? "" : currentUser.optString("nickname", "");
+        TextView title = text(nick.isEmpty() ? greet : greet + "，" + nick, 28, PRIMARY, true);
         root.addView(title, matchWrap());
         statusText = text("正在同步你的相册", 15, SECONDARY, false);
         root.addView(statusText, matchWrap());
@@ -360,26 +343,108 @@ public class MainActivity extends Activity {
 
         renderAlbums();
 
-        FrameLayout joinButton = new FrameLayout(this);
-        joinButton.setBackground(round(Color.argb(240, 255, 255, 255), dp(32), Color.TRANSPARENT, 0));
-        joinButton.setElevation(dp(4));
-        joinButton.setContentDescription("扫码加入相册");
-        joinButton.setOnClickListener(v -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString()));
-        ImageView qrIcon = new ImageView(this);
-        qrIcon.setImageResource(R.drawable.ic_qr_scan);
-        joinButton.addView(qrIcon, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
-        FrameLayout.LayoutParams joinParams = new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.BOTTOM | Gravity.END);
-        joinParams.setMargins(0, 0, dp(24), dp(104));
-        frame.addView(joinButton, joinParams);
-
-        Button createButton = primaryButton("+  创建新相册");
-        createButton.setOnClickListener(v -> showCreateAlbumDialog());
-        FrameLayout.LayoutParams createParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64), Gravity.BOTTOM);
-        createParams.setMargins(dp(28), 0, dp(28), dp(22));
-        frame.addView(createButton, createParams);
+        View tabBar = bottomTabBar();
+        FrameLayout.LayoutParams tabParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        tabParams.setMargins(dp(14), 0, dp(14), dp(18));
+        frame.addView(tabBar, tabParams);
+        updateMessageBadge();
 
         setContentView(frame);
         loadUnreadMessageCount();
+    }
+
+    // 底部玻璃 Tab 栏（对齐设计稿底部导航）。设计稿的「我的照片/传输」在 Android 无独立功能，
+    // 映射为真实高频入口：相册 / 扫码加入 / [+]创建 / 消息 / 我的。
+    private View bottomTabBar() {
+        LinearLayout bar = horizontal();
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackground(glass(dp(28)));
+        bar.setElevation(dp(10));
+        bar.setPadding(dp(6), dp(8), dp(6), dp(8));
+
+        bar.addView(tabItem("相册", R.drawable.ic_image, true, null), tabItemParams());
+        bar.addView(tabItem("扫码", R.drawable.ic_qr_scan, false,
+                () -> showJoinDialog(inviteCodeInput == null ? "" : inviteCodeInput.getText().toString())), tabItemParams());
+
+        // 中间渐变 [+] 创建按钮（凸出）。
+        FrameLayout plus = new FrameLayout(this);
+        plus.setBackground(accentGradient(dp(18)));
+        plus.setElevation(dp(6));
+        plus.setContentDescription("创建新相册");
+        plus.setOnClickListener(v -> showCreateAlbumDialog());
+        ImageView plusIcon = new ImageView(this);
+        plusIcon.setImageResource(R.drawable.ic_plus);
+        plusIcon.setColorFilter(Color.WHITE);
+        plus.addView(plusIcon, new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER));
+        LinearLayout.LayoutParams plusParams = new LinearLayout.LayoutParams(dp(52), dp(52));
+        plusParams.setMargins(dp(6), 0, dp(6), 0);
+        bar.addView(plus, plusParams);
+
+        bar.addView(messageTabItem(), tabItemParams());
+        bar.addView(tabItem("我的", R.drawable.ic_user, false, this::showProfileDialog), tabItemParams());
+        return bar;
+    }
+
+    private LinearLayout.LayoutParams tabItemParams() {
+        return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    }
+
+    private View tabItem(String label, boolean active, final Runnable onClick) {
+        return tabItem(label, 0, active, onClick);
+    }
+
+    // 带 24dp 矢量图标的底部 Tab（选中 ACCENT、未选 SECONDARY）。iconRes<=0 时退化为纯文字。
+    private View tabItem(String label, int iconRes, boolean active, final Runnable onClick) {
+        LinearLayout col = vertical();
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(0, dp(6), 0, dp(4));
+        if (iconRes > 0) {
+            ImageView ic = new ImageView(this);
+            ic.setImageResource(iconRes);
+            ic.setColorFilter(active ? ACCENT : SECONDARY);
+            LinearLayout.LayoutParams icp = new LinearLayout.LayoutParams(dp(24), dp(24));
+            icp.setMargins(0, 0, 0, dp(2));
+            col.addView(ic, icp);
+        }
+        TextView t = text(label, 13, active ? ACCENT : SECONDARY, active);
+        t.setGravity(Gravity.CENTER);
+        col.addView(t, matchWrap());
+        if (onClick != null) col.setOnClickListener(v -> onClick.run());
+        return col;
+    }
+
+    // 消息 Tab（复用成员变量 messageBadge 显示未读角标）。
+    private View messageTabItem() {
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setOnClickListener(v -> showMessageCenter());
+        LinearLayout col = vertical();
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(0, dp(6), 0, dp(4));
+        ImageView bellIcon = new ImageView(this);
+        bellIcon.setImageResource(R.drawable.ic_bell);
+        bellIcon.setColorFilter(SECONDARY);
+        LinearLayout.LayoutParams bellParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        bellParams.setMargins(0, 0, 0, dp(2));
+        col.addView(bellIcon, bellParams);
+        TextView t = text("消息", 13, SECONDARY, false);
+        t.setGravity(Gravity.CENTER);
+        col.addView(t, matchWrap());
+        wrap.addView(col, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        messageBadge = text("", 10, Color.WHITE, true);
+        messageBadge.setGravity(Gravity.CENTER);
+        messageBadge.setMinWidth(dp(16));
+        messageBadge.setMinHeight(dp(16));
+        messageBadge.setPadding(dp(4), 0, dp(4), 0);
+        messageBadge.setBackground(round(RED, dp(8), Color.WHITE, dp(1)));
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        badgeParams.setMargins(dp(18), 0, 0, 0);
+        wrap.addView(messageBadge, badgeParams);
+        return wrap;
     }
 
     private void renderAlbums() {
@@ -391,7 +456,7 @@ public class MainActivity extends Activity {
             LinearLayout empty = card();
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(24), dp(52), dp(24), dp(52));
-            TextView icon = text("▧", 54, AQUA, true);
+            TextView icon = text("▧", 54, ACCENT, true);
             icon.setGravity(Gravity.CENTER);
             TextView title = text("暂无相册", 28, PRIMARY, true);
             title.setGravity(Gravity.CENTER);
@@ -403,20 +468,42 @@ public class MainActivity extends Activity {
             root.addView(empty, matchWrap());
             return;
         }
-        TextView count = text(albums.length() + " 个一级相册", 19, SECONDARY, true);
-        root.addView(count, matchWrap());
+        TextView section = text("全部相册", 17, PRIMARY, true);
+        root.addView(section, matchWrap());
+        spacer(root, dp(12));
+        // 两列网格：每两个相册一行，列内卡片宽 0 + weight 1，列间留 12dp 间距。
+        LinearLayout row = null;
         for (int i = 0; i < albums.length(); i++) {
             JSONObject album = albums.optJSONObject(i);
-            if (album != null) root.addView(albumCard(album), matchWrap());
+            if (album == null) continue;
+            if (i % 2 == 0) {
+                row = horizontal();
+                LinearLayout.LayoutParams rowParams = matchWrap();
+                rowParams.setMargins(0, 0, 0, dp(12));
+                root.addView(row, rowParams);
+            }
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            cardParams.setMargins(i % 2 == 0 ? 0 : dp(6), 0, i % 2 == 0 ? dp(6) : 0, 0);
+            row.addView(albumCard(album), cardParams);
+        }
+        // 奇数个相册时补一个等宽占位，保持左列对齐。
+        if (albums.length() % 2 == 1 && row != null) {
+            LinearLayout.LayoutParams fillerParams = new LinearLayout.LayoutParams(0, 1, 1);
+            fillerParams.setMargins(dp(6), 0, 0, 0);
+            row.addView(new View(this), fillerParams);
         }
     }
 
+    // 网格相册卡（对齐设计稿首页两列网格）：封面 + 成员头像叠加 + 标题 + 统计。
+    // 返回半宽卡，外层 LayoutParams（宽 0 + weight）由 renderAlbums 设置。
     private View albumCard(JSONObject album) {
-        LinearLayout card = card();
-        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        LinearLayout card = vertical();
+        card.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        card.setElevation(dp(3));
+        card.setClipToOutline(true);
         final View.OnClickListener openAlbum = v -> {
             selectedAlbumId = album.optString("id");
-            activeAlbumTab = "my";
+            activeAlbumTab = "people";
             clearPhotoSelection();
             showAlbumDetail(album);
             refreshAlbumDetail(album.optString("id"));
@@ -427,54 +514,69 @@ public class MainActivity extends Activity {
             return true;
         });
 
-        HorizontalScrollView scroller = new HorizontalScrollView(this);
-        scroller.setHorizontalScrollBarEnabled(false);
-        // 顶部人物封面横条会拦截触摸用于滚动，setOnClickListener 对它不可靠；
-        // 改用触摸监听：位移很小判定为"轻点"则进相册，返回 false 不消费、保留横条滚动。
-        final float[] scrollerDown = new float[2];
-        scroller.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                scrollerDown[0] = event.getX();
-                scrollerDown[1] = event.getY();
-            } else if (event.getAction() == MotionEvent.ACTION_UP) {
-                if (Math.abs(event.getX() - scrollerDown[0]) < dp(10)
-                        && Math.abs(event.getY() - scrollerDown[1]) < dp(10)) {
-                    openAlbum.onClick(v);
-                }
-            }
-            return false;
-        });
+        // 封面（约 4:3，固定高度以适配 weight 布局），底部叠加成员头像。
+        FrameLayout cover = new FrameLayout(this);
+        ImageView coverImg = new ImageView(this);
+        coverImg.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        coverImg.setBackgroundColor(Color.rgb(0xE6, 0xEA, 0xF2));
+        JSONArray coverPhotos = album.optJSONArray("photos");
+        String albumCover = "";
+        if (coverPhotos != null && coverPhotos.length() > 0) {
+            JSONObject firstPhoto = coverPhotos.optJSONObject(0);
+            if (firstPhoto != null) albumCover = bestPhotoURL(firstPhoto);
+        }
+        loadImageInto(albumCover, coverImg);
+        cover.addView(coverImg, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         LinearLayout faces = horizontal();
         JSONArray folders = album.optJSONArray("folders");
         if (folders != null) {
-            for (int i = 0; i < Math.min(6, folders.length()); i++) {
+            for (int i = 0; i < Math.min(3, folders.length()); i++) {
                 JSONObject folder = folders.optJSONObject(i);
                 if (folder == null) continue;
-                LinearLayout item = vertical();
-                item.setGravity(Gravity.CENTER);
-                ImageView image = capsuleImage();
-                String cover = folder.optString("coverUrl", "");
-                if (cover.isEmpty()) cover = firstPhotoCover(album, folder);
-                loadImageInto(cover, image);
-                LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(64), dp(88));
-                imageParams.setMargins(0, 0, dp(14), 0);
-                item.addView(image, imageParams);
-                TextView name = text(folder.optString("name", "人物"), 14, SECONDARY, true);
-                name.setGravity(Gravity.CENTER);
-                item.addView(name, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
-                faces.addView(item);
+                ImageView face = new ImageView(this);
+                face.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                face.setBackground(round(Color.rgb(0xD8, 0xDE, 0xE8), dp(11), Color.WHITE, dp(2)));
+                face.setClipToOutline(true);
+                String fc = folder.optString("coverUrl", "");
+                if (fc.isEmpty()) fc = firstPhotoCover(album, folder);
+                loadImageInto(fc, face);
+                LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(dp(22), dp(22));
+                if (i > 0) fp.setMargins(dp(-7), 0, 0, 0);
+                faces.addView(face, fp);
+            }
+            // 人物多于 3 个时，叠加一个「+N」溢出圈（对齐设计稿封面头像簇）。
+            int overflow = folders.length() - 3;
+            if (overflow > 0) {
+                TextView more = text("+" + overflow, 9, Color.WHITE, true);
+                more.setGravity(Gravity.CENTER);
+                more.setBackground(round(Color.argb(160, 0x0F, 0x11, 0x15), dp(11), Color.WHITE, dp(2)));
+                LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(22), dp(22));
+                mp.setMargins(dp(-7), 0, 0, 0);
+                faces.addView(more, mp);
             }
         }
-        scroller.addView(faces);
-        card.addView(scroller, matchWrap());
-        spacer(card, dp(18));
+        FrameLayout.LayoutParams facesParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.START);
+        facesParams.setMargins(dp(8), 0, 0, dp(8));
+        cover.addView(faces, facesParams);
+        card.addView(cover, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(118)));
 
-        TextView name = text(album.optString("name", "未命名相册"), 30, Color.BLACK, true);
-        card.addView(name, matchWrap());
-        String meta = safeArray(album, "photos").length() + " 张朋友视角 · " + safeArray(album, "contributors").length() + " 位参与者";
-        TextView metaView = text(meta, 17, SECONDARY, true);
-        metaView.setPadding(0, dp(10), 0, 0);
-        card.addView(metaView, matchWrap());
+        LinearLayout body = vertical();
+        body.setPadding(dp(11), dp(9), dp(11), dp(12));
+        TextView name = text(album.optString("name", "未命名相册"), 15, PRIMARY, true);
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        body.addView(name, matchWrap());
+        String meta = safeArray(album, "photos").length() + " 张 · "
+                + safeArray(album, "contributors").length() + " 人";
+        TextView metaView = text(meta, 12, SECONDARY, false);
+        LinearLayout.LayoutParams metaParams = matchWrap();
+        metaParams.setMargins(0, dp(6), 0, 0);
+        body.addView(metaView, metaParams);
+        card.addView(body, matchWrap());
         return card;
     }
 
@@ -507,10 +609,12 @@ public class MainActivity extends Activity {
 
         LinearLayout header = horizontal();
         header.setGravity(Gravity.CENTER_VERTICAL);
-        Button back = ghostButton("‹ 返回");
-        back.setTextSize(20);
+        ImageView back = new ImageView(this);
+        back.setImageResource(R.drawable.ic_back);
+        back.setColorFilter(ACCENT);
+        back.setPadding(dp(10), dp(10), dp(10), dp(10));
         back.setOnClickListener(v -> showHome());
-        header.addView(back);
+        header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
         TextView date = text("PicMe 相册", 18, PRIMARY, true);
         date.setGravity(Gravity.CENTER);
         header.addView(date, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -525,7 +629,7 @@ public class MainActivity extends Activity {
         header.addView(share, new LinearLayout.LayoutParams(dp(46), dp(46)));
         content.addView(header, matchWrap());
 
-        TextView title = text(album.optString("name", "未命名相册"), 38, Color.BLACK, true);
+        TextView title = text(album.optString("name", "未命名相册"), 28, PRIMARY, true);
         content.addView(title, matchWrap());
         spacer(content, dp(14));
         LinearLayout stats = horizontal();
@@ -534,10 +638,45 @@ public class MainActivity extends Activity {
         stats.addView(statPill(safeArray(album, "contributors").length() + " 位参与者"));
         content.addView(stats, matchWrap());
 
+        // 「你出现在 N 张照片」提醒条（对齐设计稿核心卖点"找到我"）：有匹配照片时出现，点击切到「我的」。
+        int myCount = myPhotoCount(album);
+        if (myCount > 0) {
+            LinearLayout banner = horizontal();
+            banner.setGravity(Gravity.CENTER_VERTICAL);
+            banner.setPadding(dp(14), dp(12), dp(14), dp(12));
+            banner.setBackground(accentGradient(dp(16)));
+            banner.setElevation(dp(3));
+            ImageView spark = new ImageView(this);
+            spark.setImageResource(R.drawable.ic_sparkle);
+            spark.setColorFilter(Color.WHITE);
+            LinearLayout.LayoutParams sparkParams = new LinearLayout.LayoutParams(dp(20), dp(20));
+            sparkParams.setMargins(0, 0, dp(10), 0);
+            banner.addView(spark, sparkParams);
+            banner.addView(text("你出现在 " + myCount + " 张照片里", 15, Color.WHITE, true),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            ImageView arrow = new ImageView(this);
+            arrow.setImageResource(R.drawable.ic_chevron);
+            arrow.setColorFilter(Color.WHITE);
+            banner.addView(arrow, new LinearLayout.LayoutParams(dp(16), dp(16)));
+            banner.setOnClickListener(v -> {
+                activeAlbumTab = "my";
+                clearPhotoSelection();
+                showAlbumDetail(album);
+            });
+            LinearLayout.LayoutParams bannerParams = matchWrap();
+            bannerParams.setMargins(0, dp(16), 0, 0);
+            content.addView(banner, bannerParams);
+        }
+
         addTabRow(content, album);
         if ("people".equals(activeAlbumTab)) {
             addSectionTitle(content, "人物小相册", safeArray(album, "folders").length() + " 个可下载小相册");
             content.addView(folderGrid(album), matchWrap());
+        } else if ("group".equals(activeAlbumTab)) {
+            JSONArray groups = groupPhotos(album);
+            addSectionTitle(content, "合照", groups.length() + " 张多人同框照片");
+            addPhotoSelectionToolbar(content, album, groups);
+            content.addView(photoGrid(groups, 60), matchWrap());
         } else if ("all".equals(activeAlbumTab)) {
             addSectionTitle(content, "全部照片", "缩略图优先，原图按需下载");
             addPhotoSelectionToolbar(content, album, safeArray(album, "photos"));
@@ -573,7 +712,7 @@ public class MainActivity extends Activity {
         }
 
         Button destructive = ghostButton(canEditMembers(album) ? "删除整个相册" : "退出这个相册");
-        destructive.setTextColor(Color.rgb(230, 74, 83));
+        destructive.setTextColor(RED);
         destructive.setOnClickListener(v -> confirmDeleteOrLeaveAlbum(album));
         LinearLayout.LayoutParams destructiveParams = matchWrap();
         destructiveParams.setMargins(0, dp(12), 0, dp(10));
@@ -595,7 +734,7 @@ public class MainActivity extends Activity {
         LinearLayout control = vertical();
         control.setGravity(Gravity.CENTER_VERTICAL);
         control.setPadding(dp(20), uploadingHere ? dp(12) : 0, dp(20), uploadingHere ? dp(12) : 0);
-        control.setBackground(round(TEAL, dp(28), TEAL, 0));
+        control.setBackground(round(ACCENT, dp(28), ACCENT, 0));
         control.setElevation(dp(5));
         control.setClickable(true);
         control.setOnClickListener(v -> {
@@ -738,177 +877,323 @@ public class MainActivity extends Activity {
         panel.setBackground(softBackground());
         scroll.addView(panel, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setMinimumHeight(getResources().getDisplayMetrics().heightPixels);
+
+        // 返回（左上）。
         LinearLayout header = horizontal();
-        header.setGravity(Gravity.CENTER_VERTICAL);
         Button back = ghostButton("‹ 返回");
         back.setOnClickListener(v -> showLogin());
-        header.addView(back, new LinearLayout.LayoutParams(dp(104), dp(52)));
-        TextView pageTitle = text("创建新账号", 22, PRIMARY, true);
-        pageTitle.setGravity(Gravity.CENTER);
-        header.addView(pageTitle, new LinearLayout.LayoutParams(0, dp(52), 1));
-        header.addView(new View(this), new LinearLayout.LayoutParams(dp(104), dp(52)));
+        header.addView(back, new LinearLayout.LayoutParams(dp(104), dp(48)));
+        header.addView(new View(this), new LinearLayout.LayoutParams(0, dp(48), 1));
         panel.addView(header, matchWrap());
+
+        // 品牌 + 卖点标题（对齐设计稿 Step1：先获得产品价值认知，再注册）。
+        spacer(panel, dp(18));
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.picme_logo);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(66), dp(66));
+        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+        panel.addView(logo, logoParams);
+        spacer(panel, dp(16));
+        LinearLayout brand = horizontal();
+        brand.setGravity(Gravity.CENTER);
+        brand.addView(text("识我", 28, PRIMARY, true));
+        brand.addView(text(" PicMe", 28, ACCENT, true));
+        panel.addView(brand, matchWrap());
+        spacer(panel, dp(18));
+        TextView title = text("找到别人拍到你的照片", 23, PRIMARY, true);
+        title.setGravity(Gravity.CENTER);
+        panel.addView(title, matchWrap());
+        TextView subtitle = text("AI 自动整理聚会、旅行、家庭相册中的照片", 14, SECONDARY, false);
+        subtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subtitleParams = matchWrap();
+        subtitleParams.setMargins(0, dp(8), 0, 0);
+        panel.addView(subtitle, subtitleParams);
+        spacer(panel, dp(22));
+
+        // 价值引导（对齐设计稿 Step2 三张特性卡，压成一行紧凑卡片）。
+        LinearLayout featureRow = horizontal();
+        featureRow.addView(registerFeature(R.drawable.ic_people, "自动识别人物"),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        featureRow.addView(registerFeature(R.drawable.ic_grid, "自动归类照片"),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        featureRow.addView(registerFeature(R.drawable.ic_sparkle, "发现别人拍到你"),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        panel.addView(featureRow, matchWrap());
         spacer(panel, dp(24));
 
-        panel.addView(text("推荐上传头像", 21, PRIMARY, true), matchWrap());
-        panel.addView(text("上传清晰的头像，有助于我们更准确地识别你并匹配专属照片。", 14, SECONDARY, false), matchWrap());
+        // 轻量表单（不超过设计稿推荐的精简字段；不再强制头像）。
         registerAvatarUri = null;
-        registerAvatarPreview = capsuleImage();
-        registerAvatarPreview.setContentDescription("选择头像");
-        registerAvatarPreview.setImageResource(android.R.drawable.ic_menu_camera);
-        registerAvatarPreview.setColorFilter(AQUA);
-        registerAvatarPreview.setOnClickListener(v -> pickRegisterAvatar());
-        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(132), dp(132));
-        avatarParams.gravity = Gravity.CENTER_HORIZONTAL;
-        avatarParams.setMargins(0, dp(14), 0, dp(10));
-        panel.addView(registerAvatarPreview, avatarParams);
-        Button chooseAvatar = ghostButton("选择头像（推荐）");
-        chooseAvatar.setOnClickListener(v -> pickRegisterAvatar());
-        panel.addView(chooseAvatar, matchWrap());
+        registerAvatarPreview = null;
+        registerConfirmPasswordInput = null;
+        registerNicknameInput = field("昵称（显示在相册中）", false);
+        registerUsernameInput = field("登录账号", false);
+        registerPasswordInput = field("密码", true);
+        panel.addView(field(registerNicknameInput, R.drawable.ic_user), fieldParams());
+        panel.addView(field(registerUsernameInput, R.drawable.ic_user), fieldParams());
+        panel.addView(field(registerPasswordInput, R.drawable.ic_lock), fieldParams());
 
-        registerNicknameInput = field("  昵称（显示在相册中）", false);
-        registerUsernameInput = field("  登录账号", false);
-        registerPasswordInput = field("  密码", true);
-        registerConfirmPasswordInput = field("  确认密码", true);
-        panel.addView(registerNicknameInput, fieldParams());
-        panel.addView(registerUsernameInput, fieldParams());
-        panel.addView(text("登录账号为 1-20 位字母、数字或下划线", 13, SECONDARY, false), matchWrap());
-        panel.addView(registerPasswordInput, fieldParams());
-        panel.addView(text("密码为 6-20 位，可使用数字、字母和英文符号", 13, SECONDARY, false), matchWrap());
-        panel.addView(registerConfirmPasswordInput, fieldParams());
-
-        Button create = primaryButton("注册");
+        Button create = primaryButton("立即开始");
         create.setOnClickListener(v -> register());
         LinearLayout.LayoutParams createParams = matchWrap();
-        createParams.height = dp(60);
-        createParams.setMargins(0, dp(12), 0, 0);
+        createParams.height = dp(58);
+        createParams.setMargins(0, dp(8), 0, 0);
         panel.addView(create, createParams);
+
+        // 先注册、后引导上传人脸（对齐设计稿原则，避免实名认证压迫感）。
+        TextView faceHint = text("注册后可在「我的」上传一张正脸照，系统会在共享相册中自动找到拍到你的照片", 12, SECONDARY, false);
+        faceHint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams faceHintParams = matchWrap();
+        faceHintParams.setMargins(dp(10), dp(14), dp(10), 0);
+        panel.addView(faceHint, faceHintParams);
 
         Button login = ghostButton("已有账号？立即登录");
         login.setOnClickListener(v -> showLogin());
-        panel.addView(login, matchWrap());
+        LinearLayout.LayoutParams loginParams = matchWrap();
+        loginParams.setMargins(0, dp(8), 0, 0);
+        panel.addView(login, loginParams);
         statusText = text("", 14, SECONDARY, false);
         statusText.setGravity(Gravity.CENTER);
-        statusText.setPadding(0, dp(12), 0, 0);
+        statusText.setPadding(0, dp(10), 0, 0);
         panel.addView(statusText, matchWrap());
         setContentView(scroll);
     }
 
-    private void pickRegisterAvatar() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        startActivityForResult(intent, REQUEST_PICK_REGISTER_AVATAR);
-    }
-
+    // 分段下划线 tab（对齐设计稿 Segmented）：选中态文字加深、底部渐变短下划线。
     private void addTabRow(LinearLayout content, JSONObject album) {
         LinearLayout tabs = horizontal();
-        tabs.setGravity(Gravity.CENTER);
-        String[] labels = {
-                "我的照片\n" + myPhotoCount(album),
-                "人物小相册\n" + safeArray(album, "folders").length(),
-                "全部照片\n" + safeArray(album, "photos").length()
+        String[] labels = {"人物", "合照", "全部"};
+        int[] counts = {
+                safeArray(album, "folders").length(),
+                groupPhotos(album).length(),
+                safeArray(album, "photos").length()
         };
-        String[] keys = {"my", "people", "all"};
-        for (int i = 0; i < labels.length; i++) {
+        String[] keys = {"people", "group", "all"};
+        for (int i = 0; i < keys.length; i++) {
             final String key = keys[i];
             boolean selected = key.equals(activeAlbumTab);
-            TextView tab = text(labels[i], 16, selected ? Color.WHITE : PRIMARY, true);
-            tab.setGravity(Gravity.CENTER);
-            tab.setPadding(dp(8), dp(12), dp(8), dp(12));
-            tab.setBackground(round(selected ? TEAL : Color.WHITE, dp(14), Color.rgb(218, 246, 241), dp(1)));
-            tab.setOnClickListener(v -> {
+            LinearLayout col = vertical();
+            col.setGravity(Gravity.CENTER_HORIZONTAL);
+            col.setPadding(0, dp(10), 0, 0);
+
+            LinearLayout labelRow = horizontal();
+            labelRow.setGravity(Gravity.CENTER_VERTICAL);
+            labelRow.addView(text(labels[i], 15, selected ? PRIMARY : SECONDARY, selected));
+            labelRow.addView(text("  " + counts[i], 13, selected ? ACCENT : SECONDARY, selected));
+            col.addView(labelRow, matchWrap());
+
+            spacer(col, dp(8));
+            View underline = new View(this);
+            if (selected) underline.setBackground(accentGradient(dp(2)));
+            LinearLayout.LayoutParams ulParams = new LinearLayout.LayoutParams(dp(30), dp(3));
+            ulParams.gravity = Gravity.CENTER_HORIZONTAL;
+            col.addView(underline, ulParams);
+
+            col.setOnClickListener(v -> {
                 activeAlbumTab = key;
                 clearPhotoSelection();
                 showAlbumDetail(album);
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(72), 1);
-            params.setMargins(i == 0 ? 0 : dp(6), dp(18), i == labels.length - 1 ? 0 : dp(6), dp(10));
-            tabs.addView(tab, params);
+            tabs.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         }
-        content.addView(tabs, matchWrap());
+        LinearLayout.LayoutParams tabsParams = matchWrap();
+        tabsParams.setMargins(0, dp(18), 0, 0);
+        content.addView(tabs, tabsParams);
+        View separator = new View(this);
+        separator.setBackgroundColor(HAIRLINE);
+        content.addView(separator, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
     }
 
+    // 个人资料页（对齐设计稿 ProfileScreen）：资料头卡 + 分组设置列表（图标方块行）。
+    // 设计稿的「账户与安全/隐私/通用」等二级分类在 Android 后端暂无对应功能，
+    // 故只填真实可用项（编辑昵称/换头像/人脸状态/消息通知/退出），不造死菜单。
     private void showProfileDialog() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout panel = vertical();
-        panel.setPadding(dp(20), dp(14), dp(20), dp(28));
+        panel.setPadding(dp(18), dp(18), dp(18), dp(28));
         scroll.addView(panel);
 
-        panel.addView(text("上传清晰的人脸头像后，PicMe 会更准确地推荐属于你的照片", 16, SECONDARY, true), matchWrap());
-        spacer(panel, dp(22));
+        // 资料头卡：渐变环头像 + 昵称 + 账号 + 人脸状态胶囊。
+        LinearLayout headerCard = horizontal();
+        headerCard.setGravity(Gravity.CENTER_VERTICAL);
+        headerCard.setPadding(dp(16), dp(16), dp(16), dp(16));
+        headerCard.setBackground(round(Color.WHITE, dp(20), HAIRLINE, dp(1)));
+        headerCard.setElevation(dp(2));
 
+        FrameLayout avatarRing = new FrameLayout(this);
+        avatarRing.setBackground(accentGradient(dp(40)));
+        avatarRing.setPadding(dp(3), dp(3), dp(3), dp(3));
         ImageView avatar = capsuleImage();
         avatar.setContentDescription("更换头像");
         loadImageInto(currentUser == null ? "" : currentUser.optString("avatarUrl", ""), avatar);
         avatar.setOnClickListener(v -> pickAvatar());
-        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(148), dp(148));
-        avatarParams.gravity = Gravity.CENTER_HORIZONTAL;
-        panel.addView(avatar, avatarParams);
+        avatarRing.addView(avatar, new FrameLayout.LayoutParams(dp(60), dp(60)));
+        headerCard.addView(avatarRing, new LinearLayout.LayoutParams(dp(66), dp(66)));
 
-        TextView title = text(currentUser == null ? "我的资料" : currentUser.optString("nickname", "我的资料"), 25, PRIMARY, true);
-        title.setGravity(Gravity.CENTER);
-        panel.addView(title, matchWrap());
-        TextView faceStatus = text(avatarRecognitionStatusText(), 14, currentUser != null && currentUser.optBoolean("hasFaceProfile") ? TEAL : SECONDARY, true);
-        faceStatus.setGravity(Gravity.CENTER);
-        panel.addView(faceStatus, matchWrap());
-        spacer(panel, dp(18));
+        LinearLayout nameBlock = vertical();
+        nameBlock.addView(text(currentUser == null ? "我的资料" : currentUser.optString("nickname", "我的资料"), 20, PRIMARY, true), matchWrap());
+        nameBlock.addView(text(currentUser == null ? "-" : "@" + currentUser.optString("username", "-"), 13, SECONDARY, false), matchWrap());
+        TextView faceChip = text(avatarRecognitionStatusText(), 11, ACCENT, true);
+        faceChip.setPadding(dp(10), dp(3), dp(10), dp(3));
+        faceChip.setBackground(round(Color.argb(22, 0x4F, 0x7C, 0xFF), dp(11), Color.TRANSPARENT, 0));
+        LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        chipParams.setMargins(0, dp(7), 0, 0);
+        nameBlock.addView(faceChip, chipParams);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        nameParams.setMargins(dp(14), 0, 0, 0);
+        headerCard.addView(nameBlock, nameParams);
+        panel.addView(headerCard, matchWrap());
 
-        panel.addView(profileInfoRow("昵称", currentUser == null ? "-" : currentUser.optString("nickname", "-")), matchWrap());
-        panel.addView(profileInfoRow("登录账号", currentUser == null ? "-" : "@" + currentUser.optString("username", "-")), matchWrap());
-        panel.addView(profileInfoRow("我的照片推荐", avatarRecognitionStatusText()), matchWrap());
-        spacer(panel, dp(18));
+        // 快捷统计卡（对齐设计稿 ProfileScreen）：我的照片 | 参与相册（用已加载数据，无需后端）。
+        int myPhotoTotal = 0;
+        for (int i = 0; i < albums.length(); i++) {
+            JSONObject a = albums.optJSONObject(i);
+            if (a != null) myPhotoTotal += myPhotoCount(a);
+        }
+        LinearLayout statsCard = horizontal();
+        statsCard.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        statsCard.setElevation(dp(2));
+        statsCard.setPadding(0, dp(14), 0, dp(14));
+        LinearLayout.LayoutParams statsCardParams = matchWrap();
+        statsCardParams.setMargins(0, dp(12), 0, 0);
+        statsCard.setLayoutParams(statsCardParams);
+        statsCard.addView(profileStatCol(String.valueOf(myPhotoTotal), "我的照片"),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        View statDivider = new View(this);
+        statDivider.setBackgroundColor(HAIRLINE);
+        statsCard.addView(statDivider, new LinearLayout.LayoutParams(dp(1), dp(36)));
+        statsCard.addView(profileStatCol(String.valueOf(albums.length()), "参与相册"),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        panel.addView(statsCard, matchWrap());
 
-        EditText nickname = field("昵称", false);
-        if (currentUser != null) nickname.setText(currentUser.optString("nickname", ""));
-        panel.addView(nickname, matchWrap());
+        // 资料组：编辑昵称 / 更换头像 / 我的照片推荐（人脸状态）。
+        LinearLayout profileGroup = settingsGroup();
+        addSettingsRow(profileGroup, R.drawable.ic_pencil, "编辑昵称",
+                currentUser == null ? "" : currentUser.optString("nickname", ""), true, false, false, this::promptEditNickname);
+        addSettingsRow(profileGroup, R.drawable.ic_person_add, "更换头像", "", true, true, false, this::pickAvatar);
+        panel.addView(profileGroup, matchWrap());
 
-        Button saveNickname = primaryButton("保存昵称");
-        saveNickname.setOnClickListener(v -> updateNickname(nickname.getText().toString()));
-        LinearLayout.LayoutParams saveParams = matchWrap();
-        saveParams.height = dp(58);
-        panel.addView(saveNickname, saveParams);
+        // 设置组：消息通知。
+        LinearLayout settingsGroup = settingsGroup();
+        addSettingsRow(settingsGroup, R.drawable.ic_bell, "开启消息通知", "", true, true, false, this::enableMessageNotifications);
+        panel.addView(settingsGroup, matchWrap());
 
-        Button uploadAvatar = outlineButton("更换头像");
-        uploadAvatar.setOnClickListener(v -> pickAvatar());
-        LinearLayout.LayoutParams uploadParams = matchWrap();
-        uploadParams.height = dp(58);
-        uploadParams.setMargins(0, dp(12), 0, 0);
-        panel.addView(uploadAvatar, uploadParams);
-
-        Button logoutButton = ghostButton("退出登录");
-        logoutButton.setTextColor(Color.rgb(230, 74, 83));
-        LinearLayout.LayoutParams logoutParams = matchWrap();
-        logoutParams.height = dp(58);
-        logoutParams.setMargins(0, dp(28), 0, 0);
-        panel.addView(logoutButton, logoutParams);
-        logoutButton.setOnClickListener(v -> {
+        // 退出登录。
+        LinearLayout logoutGroup = settingsGroup();
+        addSettingsRow(logoutGroup, R.drawable.ic_key, "退出登录", "", false, true, true, () -> {
             if (managementDialog != null && managementDialog.isShowing()) managementDialog.dismiss();
             logout();
         });
-        showManagedAlbumPage("我的资料", scroll);
+        panel.addView(logoutGroup, matchWrap());
+
+        showManagedAlbumPage("我的", scroll);
     }
 
-    private View profileInfoRow(String label, String value) {
+    // 设计稿 PGroup：白色圆角卡容器。
+    private LinearLayout settingsGroup() {
+        LinearLayout group = vertical();
+        group.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        group.setElevation(dp(2));
+        LinearLayout.LayoutParams params = matchWrap();
+        params.setMargins(0, dp(12), 0, 0);
+        group.setLayoutParams(params);
+        return group;
+    }
+
+    // 注册页价值引导小卡：淡色圆形图标 + 短标签，居中。
+    private LinearLayout registerFeature(int iconRes, String label) {
+        LinearLayout col = vertical();
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(dp(4), 0, dp(4), 0);
+        FrameLayout iconWrap = new FrameLayout(this);
+        iconWrap.setBackground(round(Color.argb(22, 0x4F, 0x7C, 0xFF), dp(22), Color.TRANSPARENT, 0));
+        ImageView ic = new ImageView(this);
+        ic.setImageResource(iconRes);
+        ic.setColorFilter(ACCENT);
+        iconWrap.addView(ic, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
+        col.addView(iconWrap, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        TextView lab = text(label, 11, SECONDARY, false);
+        lab.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams labParams = matchWrap();
+        labParams.setMargins(0, dp(7), 0, 0);
+        col.addView(lab, labParams);
+        return col;
+    }
+
+    // 个人资料快捷统计列：大数字 + 小标签，居中。
+    private LinearLayout profileStatCol(String number, String label) {
+        LinearLayout col = vertical();
+        col.setGravity(Gravity.CENTER);
+        TextView num = text(number, 22, PRIMARY, true);
+        num.setGravity(Gravity.CENTER);
+        col.addView(num, matchWrap());
+        TextView lab = text(label, 12, SECONDARY, false);
+        lab.setGravity(Gravity.CENTER);
+        col.addView(lab, matchWrap());
+        return col;
+    }
+
+    // 设计稿 PRow：图标淡色方块 + 标签 + 值/箭头；非末行带缩进分隔线。
+    private void addSettingsRow(LinearLayout group, int iconRes, String label, String value,
+                                boolean showArrow, boolean last, boolean danger, Runnable onClick) {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(14), dp(16), dp(14));
-        row.setBackground(round(Color.argb(238, 255, 255, 255), dp(16), Color.rgb(218, 246, 241), dp(1)));
-        row.addView(text(label, 15, SECONDARY, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView content = text(value == null || value.isEmpty() ? "-" : value, 16, PRIMARY, true);
-        content.setGravity(Gravity.END);
-        row.addView(content, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams params = matchWrap();
-        params.setMargins(0, dp(6), 0, dp(6));
-        row.setLayoutParams(params);
-        return row;
+        row.setPadding(dp(14), dp(13), dp(14), dp(13));
+
+        FrameLayout iconBox = new FrameLayout(this);
+        iconBox.setBackground(round(danger ? Color.argb(26, 0xFF, 0x47, 0x57) : Color.argb(22, 0x4F, 0x7C, 0xFF), dp(9), Color.TRANSPARENT, 0));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        if (danger) icon.setColorFilter(RED);
+        iconBox.addView(icon, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(32), dp(32));
+        iconParams.setMargins(0, 0, dp(12), 0);
+        row.addView(iconBox, iconParams);
+
+        row.addView(text(label, 15, danger ? RED : PRIMARY, danger),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (value != null && !value.isEmpty()) row.addView(text(value, 13, SECONDARY, false), trailingWrap());
+        if (showArrow) {
+            ImageView chevron = new ImageView(this);
+            chevron.setImageResource(R.drawable.ic_chevron);
+            chevron.setColorFilter(0xFFC7CDD6);
+            LinearLayout.LayoutParams chevronParams = new LinearLayout.LayoutParams(dp(16), dp(16));
+            chevronParams.setMargins(dp(8), 0, 0, 0);
+            row.addView(chevron, chevronParams);
+        }
+        if (onClick != null) row.setOnClickListener(v -> onClick.run());
+        group.addView(row, matchWrap());
+
+        if (!last) {
+            View sep = new View(this);
+            sep.setBackgroundColor(HAIRLINE);
+            LinearLayout.LayoutParams sepParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+            sepParams.setMargins(dp(58), 0, 0, 0);
+            group.addView(sep, sepParams);
+        }
+    }
+
+    private void promptEditNickname() {
+        final EditText input = new EditText(this);
+        input.setHint("昵称");
+        input.setSingleLine(true);
+        input.setTextColor(PRIMARY);
+        if (currentUser != null) input.setText(currentUser.optString("nickname", ""));
+        new AlertDialog.Builder(this)
+                .setTitle("修改昵称")
+                .setView(input)
+                .setPositiveButton("保存", (d, w) -> updateNickname(input.getText().toString()))
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private TextView statPill(String value) {
         TextView pill = text(value, 14, PRIMARY, true);
         pill.setGravity(Gravity.CENTER);
         pill.setPadding(dp(12), dp(10), dp(12), dp(10));
-        pill.setBackground(round(Color.WHITE, dp(18), Color.TRANSPARENT, 0));
+        pill.setBackground(round(Color.WHITE, dp(18), HAIRLINE, dp(1)));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         params.setMargins(0, dp(8), dp(8), dp(8));
         pill.setLayoutParams(params);
@@ -917,9 +1202,9 @@ public class MainActivity extends Activity {
 
     private void addSectionTitle(LinearLayout content, String title, String subtitle) {
         spacer(content, dp(18));
-        TextView header = text(title, 26, Color.BLACK, true);
+        TextView header = text(title, 22, PRIMARY, true);
         content.addView(header, matchWrap());
-        TextView sub = text(subtitle, 15, SECONDARY, true);
+        TextView sub = text(subtitle, 14, SECONDARY, true);
         content.addView(sub, matchWrap());
     }
 
@@ -964,7 +1249,7 @@ public class MainActivity extends Activity {
         switcher.addView(folderButtons);
         panel.addView(switcher, matchWrap());
 
-        panel.addView(text(activeFolder.optString("name", "小相册"), 34, Color.BLACK, true), matchWrap());
+        panel.addView(text(activeFolder.optString("name", "小相册"), 22, PRIMARY, true), matchWrap());
         JSONArray visiblePhotos = folderPhotos(album, activeFolder);
         panel.addView(text(visiblePhotos.length() + " 张照片", 20, SECONDARY, true), matchWrap());
 
@@ -1225,12 +1510,12 @@ public class MainActivity extends Activity {
                 if (photoSelectionMode) {
                     if (selected) {
                         View veil = new View(this);
-                        veil.setBackgroundColor(Color.argb(80, 28, 194, 199));
+                        veil.setBackgroundColor(Color.argb(80, 0x4F, 0x7C, 0xFF));
                         cell.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                     }
                     TextView check = text(selected ? "✓" : "", 20, Color.WHITE, true);
                     check.setGravity(Gravity.CENTER);
-                    check.setBackground(round(selected ? AQUA : Color.argb(115, 0, 0, 0), dp(18), Color.WHITE, dp(2)));
+                    check.setBackground(round(selected ? ACCENT : Color.argb(115, 0, 0, 0), dp(18), Color.WHITE, dp(2)));
                     FrameLayout.LayoutParams checkParams = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END | Gravity.TOP);
                     checkParams.setMargins(0, dp(8), dp(8), 0);
                     cell.addView(check, checkParams);
@@ -1280,7 +1565,7 @@ public class MainActivity extends Activity {
         livePhotoPlaying = false;
 
         final boolean isLive = "live_photo".equals(photo.optString("type"));
-        final int blue = Color.rgb(0, 122, 255);
+        final int blue = ACCENT;
 
         // 整体与 iOS 一致：白色背景。
         FrameLayout frame = new FrameLayout(this);
@@ -1294,9 +1579,12 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(16), dp(14), dp(16), dp(10));
         header.setBackgroundColor(Color.WHITE);
-        Button back = plainTextButton("‹ 返回", blue, 17);
+        ImageView back = new ImageView(this);
+        back.setImageResource(R.drawable.ic_back);
+        back.setColorFilter(blue);
+        back.setPadding(dp(8), dp(8), dp(8), dp(8));
         back.setOnClickListener(v -> showCurrentAlbumOrHome());
-        header.addView(back);
+        header.addView(back, new LinearLayout.LayoutParams(dp(38), dp(38)));
         LinearLayout center = vertical();
         center.setGravity(Gravity.CENTER);
         String dateStr = viewerDate(photo);
@@ -1307,9 +1595,12 @@ public class MainActivity extends Activity {
             center.addView(text(viewerTime(photo), 12, SECONDARY, true));
         }
         header.addView(center, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button more = plainTextButton("⋯", blue, 24);
+        ImageView more = new ImageView(this);
+        more.setImageResource(R.drawable.ic_more);
+        more.setColorFilter(blue);
+        more.setPadding(dp(8), dp(8), dp(8), dp(8));
         more.setOnClickListener(v -> showPhotoViewerMenu(v, photo));
-        header.addView(more);
+        header.addView(more, new LinearLayout.LayoutParams(dp(38), dp(38)));
         content.addView(header, matchWrap());
 
         // 照片区：白底、按比例居中。
@@ -1319,7 +1610,7 @@ public class MainActivity extends Activity {
         imageSlot.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         // 大图加载期间显示居中转圈，避免长时间空白；加载完成回调里移除。
         final ProgressBar imageSpinner = new ProgressBar(this);
-        imageSpinner.getIndeterminateDrawable().setColorFilter(AQUA, android.graphics.PorterDuff.Mode.SRC_IN);
+        imageSpinner.getIndeterminateDrawable().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
         imageSlot.addView(imageSpinner, new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER));
         loadImageInto(photo.optString("previewUrl", photo.optString("imageUrl", bestPhotoURL(photo))), image,
                 () -> { if (imageSlot.indexOfChild(imageSpinner) >= 0) imageSlot.removeView(imageSpinner); });
@@ -1344,20 +1635,26 @@ public class MainActivity extends Activity {
         final HorizontalScrollView strip = new HorizontalScrollView(this);
         strip.setHorizontalScrollBarEnabled(false);
         LinearLayout stripRow = horizontal();
+        stripRow.setGravity(Gravity.CENTER_VERTICAL);
         stripRow.setPadding(dp(12), dp(8), dp(12), dp(8));
         for (int i = 0; i < photos.length(); i++) {
             JSONObject p = photos.optJSONObject(i);
             ImageView thumb = new ImageView(this);
             thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
             boolean selected = (i == index);
-            thumb.setBackground(round(Color.rgb(229, 241, 242), dp(8), selected ? blue : Color.TRANSPARENT, selected ? dp(2) : 0));
+            thumb.setBackground(round(Color.rgb(0xE6, 0xEA, 0xF2), dp(8), selected ? blue : Color.TRANSPARENT, selected ? dp(2) : 0));
             thumb.setClipToOutline(true);
             if (p != null) {
                 loadImageInto(p.optString("thumbnailUrl", p.optString("previewUrl", bestPhotoURL(p))), thumb);
                 final int target = i;
                 thumb.setOnClickListener(v -> showPhotoViewer(photos, target));
             }
-            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(dp(46), dp(46));
+            // 当前张放大、其余缩小并变暗（对齐设计稿胶片条强调）。
+            if (!selected) thumb.setAlpha(0.5f);
+            LinearLayout.LayoutParams tp = selected
+                    ? new LinearLayout.LayoutParams(dp(54), dp(54))
+                    : new LinearLayout.LayoutParams(dp(40), dp(46));
+            tp.gravity = Gravity.CENTER_VERTICAL;
             tp.setMargins(dp(3), 0, dp(3), 0);
             stripRow.addView(thumb, tp);
         }
@@ -1366,14 +1663,17 @@ public class MainActivity extends Activity {
         strip.post(() -> strip.smoothScrollTo(dp(52) * index - dp(140), 0));
 
         // 底部主操作：单个“保存”按钮（浅灰底、蓝字），与 iOS 一致。
-        Button save = new Button(this);
-        save.setText(isLive ? "⤓  保存 Live Photo" : "⤓  保存照片");
-        save.setTextColor(blue);
-        save.setTextSize(17);
-        save.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        save.setAllCaps(false);
-        save.setBackground(round(Color.rgb(238, 240, 243), dp(18), Color.TRANSPARENT, 0));
-        save.setOnClickListener(v -> {
+        // 底部操作行：喜欢 + 保存（对齐设计稿查看器底部操作）。
+        boolean liked = photo.optBoolean("favorited", false);
+        LinearLayout actions = horizontal();
+        actions.setGravity(Gravity.CENTER);
+        final LinearLayout favCol = viewerAction(R.drawable.ic_heart, liked ? "已喜欢" : "喜欢",
+                liked ? RED : PRIMARY, liked ? RED : SECONDARY);
+        favCol.setOnClickListener(v -> toggleFavorite(photo, favCol));
+        actions.addView(favCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        LinearLayout saveCol = viewerAction(R.drawable.ic_download, isLive ? "保存 Live" : "保存", PRIMARY, SECONDARY);
+        saveCol.setOnClickListener(v -> {
             JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
             if (album != null && !permissionAllowed(album, "download")) {
                 showPermissionDenied(album, "下载", "download");
@@ -1381,10 +1681,10 @@ public class MainActivity extends Activity {
                 runWithLegacyWritePermission(() -> savePhotoResource(photo));
             }
         });
-        LinearLayout.LayoutParams saveParams = matchWrap();
-        saveParams.height = dp(54);
-        saveParams.setMargins(dp(20), dp(8), dp(20), dp(26));
-        content.addView(save, saveParams);
+        actions.addView(saveCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams actionsParams = matchWrap();
+        actionsParams.setMargins(dp(20), dp(6), dp(20), dp(24));
+        content.addView(actions, actionsParams);
 
         setContentView(frame);
     }
@@ -1428,6 +1728,60 @@ public class MainActivity extends Activity {
         button.setMinimumWidth(0);
         button.setPadding(dp(6), dp(4), dp(6), dp(4));
         return button;
+    }
+
+    // 查看器底部操作列：图标 + 标签，垂直居中。
+    private LinearLayout viewerAction(int iconRes, String label, int iconColor, int labelColor) {
+        LinearLayout col = vertical();
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(0, dp(8), 0, dp(8));
+        ImageView ic = new ImageView(this);
+        ic.setImageResource(iconRes);
+        ic.setColorFilter(iconColor);
+        col.addView(ic, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView lab = text(label, 11, labelColor, false);
+        lab.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams labParams = matchWrap();
+        labParams.setMargins(0, dp(4), 0, 0);
+        col.addView(lab, labParams);
+        return col;
+    }
+
+    private void updateViewerAction(LinearLayout col, String label, int iconColor, int labelColor) {
+        if (col == null || col.getChildCount() < 2) return;
+        ((ImageView) col.getChildAt(0)).setColorFilter(iconColor);
+        TextView lab = (TextView) col.getChildAt(1);
+        lab.setText(label);
+        lab.setTextColor(labelColor);
+    }
+
+    // 切换「喜欢」：先乐观更新 UI 再调后端;端点未部署/失败则回滚并提示（优雅降级）。
+    private void toggleFavorite(final JSONObject photo, final LinearLayout favCol) {
+        final JSONObject album = currentAlbum != null ? currentAlbum : findAlbumById(selectedAlbumId);
+        if (album == null) return;
+        final boolean newState = !photo.optBoolean("favorited", false);
+        try { photo.put("favorited", newState); } catch (org.json.JSONException ignored) {}
+        updateViewerAction(favCol, newState ? "已喜欢" : "喜欢", newState ? RED : PRIMARY, newState ? RED : SECONDARY);
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("favorited", newState);
+                JSONObject resp = requestJson("POST",
+                        "/api/albums/" + album.optString("id") + "/photos/" + photo.optString("id") + "/favorite",
+                        body, true, true);
+                final boolean confirmed = resp.optBoolean("favorited", newState);
+                runOnUiThread(() -> {
+                    try { photo.put("favorited", confirmed); } catch (org.json.JSONException ignored) {}
+                    updateViewerAction(favCol, confirmed ? "已喜欢" : "喜欢", confirmed ? RED : PRIMARY, confirmed ? RED : SECONDARY);
+                });
+            } catch (final Exception error) {
+                runOnUiThread(() -> {
+                    try { photo.put("favorited", !newState); } catch (org.json.JSONException ignored) {}
+                    updateViewerAction(favCol, !newState ? "已喜欢" : "喜欢", !newState ? RED : PRIMARY, !newState ? RED : SECONDARY);
+                    toast("喜欢失败，请稍后重试");
+                });
+            }
+        }).start();
     }
 
     private String viewerDate(JSONObject photo) {
@@ -1974,27 +2328,35 @@ public class MainActivity extends Activity {
 
         String shareUrl = invite.optString("shareUrl", "");
         String code = invite.optString("code", "");
-        ImageView qr = new ImageView(this);
-        qr.setContentDescription("相册分享二维码");
-        try {
-            qr.setImageBitmap(generateQRCode(shareUrl, 720));
-            qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            qr.setBackground(round(Color.WHITE, dp(16), Color.rgb(218, 246, 241), dp(1)));
-            panel.addView(qr, new LinearLayout.LayoutParams(dp(250), dp(250)));
-        } catch (Exception error) {
-            panel.addView(text("二维码生成失败，可复制链接分享", 14, SECONDARY, true), matchWrap());
-        }
 
-        TextView codeView = text(code, 30, AQUA, true);
-        codeView.setGravity(Gravity.CENTER);
-        codeView.setPadding(0, dp(12), 0, dp(4));
-        codeView.setOnClickListener(v -> copyText("相册码", code));
-        panel.addView(codeView, matchWrap());
-        TextView linkView = text(shareUrl, 13, SECONDARY, true);
-        linkView.setGravity(Gravity.CENTER);
-        linkView.setOnClickListener(v -> copyText("分享链接", shareUrl));
-        panel.addView(linkView, matchWrap());
-        panel.addView(text("点按相册码或链接即可复制", 12, SECONDARY, false), matchWrap());
+        // 二维码大白卡（优先展示，对齐设计稿）
+        LinearLayout qrCard = vertical();
+        qrCard.setGravity(Gravity.CENTER_HORIZONTAL);
+        qrCard.setPadding(dp(20), dp(24), dp(20), dp(20));
+        qrCard.setBackground(round(Color.WHITE, dp(22), HAIRLINE, dp(1)));
+        qrCard.setElevation(dp(3));
+        try {
+            ImageView qr = new ImageView(this);
+            qr.setContentDescription("相册分享二维码");
+            qr.setImageBitmap(qrWithCenterLogo(generateQRCode(shareUrl, 720)));
+            qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            qrCard.addView(qr, new LinearLayout.LayoutParams(dp(200), dp(200)));
+        } catch (Exception error) {
+            qrCard.addView(text("二维码生成失败，可复制链接分享", 14, SECONDARY, true), matchWrap());
+        }
+        TextView qrTitle = text("扫码加入「" + album.optString("name", "共享相册") + "」", 16, PRIMARY, true);
+        qrTitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams qrTitleParams = matchWrap();
+        qrTitleParams.setMargins(0, dp(14), 0, 0);
+        qrCard.addView(qrTitle, qrTitleParams);
+        TextView qrSub = text("扫二维码或打开链接即可申请加入", 13, SECONDARY, false);
+        qrSub.setGravity(Gravity.CENTER);
+        qrCard.addView(qrSub, matchWrap());
+        panel.addView(qrCard, matchWrap());
+
+        // 相册码 / 分享链接：整行点击复制
+        panel.addView(copyFieldRow("相册码", code));
+        panel.addView(copyFieldRow("分享链接", shareUrl));
 
         spacer(panel, dp(12));
         panel.addView(text("通过此链接加入的默认权限", 20, PRIMARY, true), matchWrap());
@@ -2011,7 +2373,7 @@ public class MainActivity extends Activity {
         panel.addView(share, shareParams);
 
         Button reset = ghostButton("重置相册码");
-        reset.setTextColor(Color.rgb(230, 74, 83));
+        reset.setTextColor(RED);
         reset.setOnClickListener(v -> confirmResetInvite(album, permissionsFromSwitches(switches)));
         panel.addView(reset, matchWrap());
 
@@ -2075,8 +2437,49 @@ public class MainActivity extends Activity {
         statusText.setText(label + "已复制");
     }
 
+    // 设计稿分享页复制行：标签 + 值 + 右侧复制胶囊；整行点击复制并 toast 提示。
+    private View copyFieldRow(String label, final String value) {
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(10), dp(8), dp(10));
+        row.setBackground(round(Color.WHITE, dp(12), HAIRLINE, dp(1)));
+        LinearLayout.LayoutParams rowParams = matchWrap();
+        rowParams.setMargins(0, dp(10), 0, 0);
+        row.setLayoutParams(rowParams);
+
+        ImageView leadIcon = new ImageView(this);
+        leadIcon.setImageResource(R.drawable.ic_link);
+        leadIcon.setColorFilter(ACCENT);
+        LinearLayout.LayoutParams leadParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        leadParams.setMargins(0, 0, dp(10), 0);
+        row.addView(leadIcon, leadParams);
+
+        LinearLayout textCol = vertical();
+        textCol.addView(text(label, 11, SECONDARY, false), matchWrap());
+        TextView val = text(value == null || value.isEmpty() ? "-" : value, 14, PRIMARY, true);
+        val.setMaxLines(1);
+        val.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        textCol.addView(val, matchWrap());
+        row.addView(textCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView copy = text("复制", 13, ACCENT, true);
+        copy.setPadding(dp(14), dp(7), dp(14), dp(7));
+        copy.setBackground(round(Color.argb(22, 0x4F, 0x7C, 0xFF), dp(8), Color.TRANSPARENT, 0));
+        row.addView(copy, trailingWrap());
+
+        row.setOnClickListener(v -> {
+            copyText(label, value);
+            toast(label + "已复制");
+        });
+        return row;
+    }
+
     private Bitmap generateQRCode(String value, int size) throws WriterException {
-        BitMatrix matrix = new MultiFormatWriter().encode(value, BarcodeFormat.QR_CODE, size, size);
+        // 用高纠错等级(H,~30% 可恢复)，使中心叠加 logo 后仍可扫描。
+        java.util.Map<com.google.zxing.EncodeHintType, Object> hints = new java.util.HashMap<>();
+        hints.put(com.google.zxing.EncodeHintType.ERROR_CORRECTION, com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.H);
+        hints.put(com.google.zxing.EncodeHintType.MARGIN, 1);
+        BitMatrix matrix = new MultiFormatWriter().encode(value, BarcodeFormat.QR_CODE, size, size, hints);
         int[] pixels = new int[size * size];
         for (int y = 0; y < size; y++) {
             int offset = y * size;
@@ -2087,6 +2490,31 @@ public class MainActivity extends Activity {
         Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
         return bitmap;
+    }
+
+    // 在二维码中心叠加 PicMe logo（白色圆角底托）。logo 仅占 ~20% 面积，配合 ECC-H 不影响扫描。
+    private Bitmap qrWithCenterLogo(Bitmap qr) {
+        try {
+            Bitmap logo = android.graphics.BitmapFactory.decodeResource(getResources(), R.drawable.picme_logo);
+            if (logo == null) return qr;
+            Bitmap out = qr.copy(Bitmap.Config.ARGB_8888, true);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(out);
+            int s = out.getWidth();
+            int badge = Math.round(s * 0.22f);   // 白底托大小
+            int logoSize = Math.round(s * 0.17f);
+            float cx = s / 2f, cy = s / 2f;
+            android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(Color.WHITE);
+            android.graphics.RectF bg = new android.graphics.RectF(cx - badge / 2f, cy - badge / 2f, cx + badge / 2f, cy + badge / 2f);
+            canvas.drawRoundRect(bg, badge * 0.28f, badge * 0.28f, paint);
+            android.graphics.Rect dst = new android.graphics.Rect(
+                    Math.round(cx - logoSize / 2f), Math.round(cy - logoSize / 2f),
+                    Math.round(cx + logoSize / 2f), Math.round(cy + logoSize / 2f));
+            canvas.drawBitmap(logo, null, dst, new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+            return out;
+        } catch (Throwable t) {
+            return qr;   // 任何异常都回退到无 logo 的原始二维码，保证可扫描
+        }
     }
 
     private int myPhotoCount(JSONObject album) {
@@ -2104,6 +2532,31 @@ public class MainActivity extends Activity {
         for (int i = 0; i < photos.length(); i++) {
             JSONObject photo = photos.optJSONObject(i);
             if (photo != null && ids.contains(photo.optString("id"))) result.put(photo);
+        }
+        return result;
+    }
+
+    // 合照 = 出现在 ≥2 个人物子相册里的照片（被识别出多张人脸）。纯客户端从现有 folders/photoIds 计算，无需后端。
+    private JSONArray groupPhotos(JSONObject album) {
+        JSONArray folders = safeArray(album, "folders");
+        Map<String, Integer> counts = new HashMap<>();
+        for (int i = 0; i < folders.length(); i++) {
+            JSONObject folder = folders.optJSONObject(i);
+            if (folder == null) continue;
+            JSONArray ids = safeArray(folder, "photoIds");
+            for (int j = 0; j < ids.length(); j++) {
+                String id = ids.optString(j);
+                Integer c = counts.get(id);
+                counts.put(id, (c == null ? 0 : c) + 1);
+            }
+        }
+        JSONArray result = new JSONArray();
+        JSONArray photos = safeArray(album, "photos");
+        for (int i = 0; i < photos.length(); i++) {
+            JSONObject photo = photos.optJSONObject(i);
+            if (photo == null) continue;
+            Integer c = counts.get(photo.optString("id"));
+            if (c != null && c >= 2) result.put(photo);
         }
         return result;
     }
@@ -2338,7 +2791,8 @@ public class MainActivity extends Activity {
         final String username = registerUsernameInput == null ? "" : registerUsernameInput.getText().toString().trim();
         final String nickname = registerNicknameInput == null ? "" : registerNicknameInput.getText().toString().trim();
         final String password = registerPasswordInput == null ? "" : registerPasswordInput.getText().toString();
-        final String confirmPassword = registerConfirmPasswordInput == null ? "" : registerConfirmPasswordInput.getText().toString();
+        // 轻量化注册页不再有确认密码字段；字段缺失时跳过一致性校验。
+        final String confirmPassword = registerConfirmPasswordInput == null ? password : registerConfirmPasswordInput.getText().toString();
         final Uri avatarUri = registerAvatarUri;
         if (nickname.isEmpty()) {
             showTransientStatus("昵称不能为空");
@@ -2414,12 +2868,12 @@ public class MainActivity extends Activity {
         LinearLayout brand = horizontal();
         brand.setGravity(Gravity.CENTER);
         brand.addView(text("识我", 26, PRIMARY, true));
-        brand.addView(text(" PicMe", 26, Color.rgb(98, 132, 220), true));
+        brand.addView(text(" PicMe", 26, ACCENT, true));
         container.addView(brand, matchWrap());
         spacer(container, dp(30));
 
         ProgressBar spinner = new ProgressBar(this);
-        spinner.getIndeterminateDrawable().setColorFilter(AQUA, android.graphics.PorterDuff.Mode.SRC_IN);
+        spinner.getIndeterminateDrawable().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
         LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(dp(40), dp(40));
         spinnerParams.gravity = Gravity.CENTER_HORIZONTAL;
         container.addView(spinner, spinnerParams);
@@ -2735,7 +3189,7 @@ public class MainActivity extends Activity {
         String body = message.optString("body", "");
         if (!body.isEmpty()) row.addView(text(body, 14, SECONDARY, false), matchWrap());
         String albumName = message.optString("albumName", "");
-        if (!albumName.isEmpty()) row.addView(text("相册 · " + albumName, 13, TEAL, true), matchWrap());
+        if (!albumName.isEmpty()) row.addView(text("相册 · " + albumName, 13, ACCENT, true), matchWrap());
         row.setOnClickListener(v -> openMessage(message));
         return row;
     }
@@ -2855,7 +3309,7 @@ public class MainActivity extends Activity {
         top.addView(permissions, new LinearLayout.LayoutParams(dp(82), dp(42)));
         if (canEditMembers(album) && !"owner".equals(member.optString("role"))) {
             Button remove = ghostButton("移除");
-            remove.setTextColor(Color.rgb(230, 74, 83));
+            remove.setTextColor(RED);
             remove.setOnClickListener(v -> confirmRemoveMember(album, member));
             top.addView(remove, new LinearLayout.LayoutParams(dp(82), dp(42)));
         }
@@ -2970,7 +3424,7 @@ public class MainActivity extends Activity {
             row.setPadding(dp(14), dp(12), dp(14), dp(12));
             row.addView(approvalTitleRow("加入申请" + statusLabel(request.optString("status")), requestTimestamp(request)), matchWrap());
             row.addView(text("申请加入相册", 15, SECONDARY, false), matchWrap());
-            row.addView(text(userIdentity(user), 14, TEAL, true), matchWrap());
+            row.addView(text(userIdentity(user), 14, ACCENT, true), matchWrap());
             if (!pending) addReviewerDetails(row, request);
             if (pending) addReviewButtons(row, () -> reviewJoin(album, request, true), () -> reviewJoin(album, request, false));
             panel.addView(row, matchWrap());
@@ -2991,9 +3445,9 @@ public class MainActivity extends Activity {
             LinearLayout row = card();
             row.setPadding(dp(14), dp(12), dp(14), dp(12));
             row.addView(approvalTitleRow("权限申请" + statusLabel(request.optString("status")), requestTimestamp(request)), matchWrap());
-            row.addView(text("申请：" + permissionSummary(request.optJSONObject("requestedPermissions")), 15, TEAL, true), matchWrap());
+            row.addView(text("申请：" + permissionSummary(request.optJSONObject("requestedPermissions")), 15, ACCENT, true), matchWrap());
             row.addView(text("当前：" + permissionSummary(request.optJSONObject("currentPermissions")), 14, SECONDARY, true), matchWrap());
-            row.addView(text(userIdentity(user), 14, TEAL, true), matchWrap());
+            row.addView(text(userIdentity(user), 14, ACCENT, true), matchWrap());
             if (!pending) addReviewerDetails(row, request);
             if (pending) addReviewButtons(row, () -> reviewPermission(album, request, true), () -> reviewPermission(album, request, false));
             panel.addView(row, matchWrap());
@@ -3037,7 +3491,7 @@ public class MainActivity extends Activity {
             if (!message.isEmpty()) row.addView(text(message, 14, SECONDARY, false), matchWrap());
             JSONObject actor = record.optJSONObject("actor");
             String actorName = actor == null ? record.optString("actorName", "") : displayUserName(actor);
-            if (!actorName.isEmpty()) row.addView(text("操作人 · " + actorName, 13, TEAL, true), matchWrap());
+            if (!actorName.isEmpty()) row.addView(text("操作人 · " + actorName, 13, ACCENT, true), matchWrap());
             panel.addView(row, matchWrap());
         }
         showManagedAlbumPage(title, scroll);
@@ -3105,7 +3559,7 @@ public class MainActivity extends Activity {
             panel.addView(text("这次申请还在审批中，暂时不能重复提交新的申请。", 14, SECONDARY, false), matchWrap());
             spacer(panel, dp(18));
             Button cancel = outlineButton("撤销申请");
-            cancel.setTextColor(Color.rgb(230, 74, 83));
+            cancel.setTextColor(RED);
             cancel.setOnClickListener(v -> cancelPermissionRequest(album, latest));
             LinearLayout.LayoutParams cancelParams = matchWrap();
             cancelParams.height = dp(58);
@@ -4189,7 +4643,7 @@ public class MainActivity extends Activity {
         String title = actionable ? "需要授权" : "提示";
         texts.addView(text(title, 17, PRIMARY, true), matchWrap());
         if (owner != null) {
-            texts.addView(text("创建者：" + (ownerName == null || ownerName.isEmpty() ? "相册创建者" : ownerName), 13, TEAL, true), matchWrap());
+            texts.addView(text("创建者：" + (ownerName == null || ownerName.isEmpty() ? "相册创建者" : ownerName), 13, ACCENT, true), matchWrap());
         }
         TextView body = text(message == null ? "" : message, 13, SECONDARY, true);
         body.setMaxLines(3);
@@ -4285,7 +4739,7 @@ public class MainActivity extends Activity {
 
         LinearLayout contentFrame = vertical();
         contentFrame.setPadding(dp(4), 0, dp(4), 0);
-        contentFrame.setBackground(round(Color.argb(225, 255, 255, 255), dp(24), Color.rgb(218, 246, 241), dp(1)));
+        contentFrame.setBackground(round(Color.argb(225, 255, 255, 255), dp(24), HAIRLINE, dp(1)));
         contentFrame.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         page.addView(contentFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
@@ -4304,7 +4758,7 @@ public class MainActivity extends Activity {
         if (window != null) {
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setStatusBarColor(Color.rgb(249, 251, 246));
+            window.setStatusBarColor(APP_BG);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
             }
@@ -4317,14 +4771,14 @@ public class MainActivity extends Activity {
         // 仿 iOS：图标在上、文字在下的轻量卡片按钮（square.and.arrow.up / person.2 等）。
         LinearLayout button = vertical();
         button.setGravity(Gravity.CENTER);
-        button.setBackground(round(Color.argb(220, 255, 255, 255), dp(18), Color.argb(46, 0, 128, 112), dp(1)));
+        button.setBackground(round(Color.argb(220, 255, 255, 255), dp(18), HAIRLINE, dp(1)));
         button.setOnClickListener(v -> action.run());
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         iconParams.setMargins(0, 0, 0, dp(6));
         button.addView(icon, iconParams);
-        TextView caption = text(label, 13, TEAL, true);
+        TextView caption = text(label, 13, ACCENT, true);
         caption.setGravity(Gravity.CENTER);
         button.addView(caption, matchWrap());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(78), 1);
@@ -4338,7 +4792,7 @@ public class MainActivity extends Activity {
         yes.setTextSize(16);
         yes.setOnClickListener(v -> approve.run());
         Button no = ghostButton("拒绝");
-        no.setTextColor(Color.rgb(230, 74, 83));
+        no.setTextColor(RED);
         no.setOnClickListener(v -> reject.run());
         actions.addView(yes, new LinearLayout.LayoutParams(0, dp(46), 1));
         actions.addView(no, new LinearLayout.LayoutParams(0, dp(46), 1));
@@ -4615,7 +5069,7 @@ public class MainActivity extends Activity {
         editText.setTextSize(17);
         editText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         editText.setPadding(dp(22), dp(10), dp(22), dp(10));
-        editText.setBackground(round(Color.argb(242, 255, 255, 255), dp(22), Color.rgb(215, 232, 235), dp(1)));
+        editText.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
         if (password) editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         LinearLayout.LayoutParams params = matchWrap();
         params.setMargins(0, dp(12), 0, dp(12));
@@ -4623,32 +5077,55 @@ public class MainActivity extends Activity {
         return editText;
     }
 
+    // 带前导图标的输入行：把已构造的 EditText 包进水平容器，左侧放 dp(20) 图标（SECONDARY）。
+    // 陷阱：水平行里有 weight 兄弟时，EditText 用 weight、宽 0；图标用 WRAP_CONTENT。
+    // iconRes<=0 时直接返回原 EditText，不加图标。
+    private View field(EditText editText, int iconRes) {
+        if (iconRes <= 0) return editText;
+        LinearLayout row = horizontal();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        row.setPadding(dp(18), 0, dp(10), 0);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(SECONDARY);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(20), dp(20));
+        iconParams.setMargins(0, 0, dp(10), 0);
+        row.addView(icon, iconParams);
+        // 外层容器已有白底+边框，EditText 去掉自身背景，避免双层圆角。
+        editText.setBackground(null);
+        editText.setPadding(0, dp(10), 0, dp(10));
+        row.addView(editText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        return row;
+    }
+
     private Button primaryButton(String label) {
         Button button = new Button(this);
         button.setText(label);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(20);
+        button.setTextSize(17);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setAllCaps(false);
-        button.setBackground(round(TEAL, dp(28), TEAL, 0));
+        button.setBackground(accentGradient(dp(16)));
+        button.setElevation(dp(4));
         return button;
     }
 
     private Button outlineButton(String label) {
         Button button = new Button(this);
         button.setText(label);
-        button.setTextColor(AQUA);
+        button.setTextColor(ACCENT);
         button.setTextSize(18);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setAllCaps(false);
-        button.setBackground(round(Color.argb(235, 255, 255, 255), dp(28), AQUA, dp(2)));
+        button.setBackground(round(Color.argb(235, 255, 255, 255), dp(28), ACCENT, dp(2)));
         return button;
     }
 
     private Button ghostButton(String label) {
         Button button = new Button(this);
         button.setText(label);
-        button.setTextColor(TEAL);
+        button.setTextColor(ACCENT);
         button.setAllCaps(false);
         button.setBackground(round(Color.WHITE, dp(20), Color.TRANSPARENT, 0));
         return button;
@@ -4665,8 +5142,8 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams params = matchWrap();
         params.setMargins(0, dp(12), 0, dp(12));
         layout.setLayoutParams(params);
-        layout.setBackground(round(Color.argb(238, 255, 255, 255), dp(24), Color.rgb(218, 246, 241), dp(1)));
-        layout.setElevation(dp(2));
+        layout.setBackground(round(Color.WHITE, dp(20), HAIRLINE, dp(1)));
+        layout.setElevation(dp(3));
         return layout;
     }
 
@@ -4690,7 +5167,7 @@ public class MainActivity extends Activity {
         LinearLayout brand = horizontal();
         brand.setGravity(Gravity.CENTER);
         brand.addView(text("识我", titleSp, PRIMARY, true));
-        brand.addView(text(" PicMe", titleSp, Color.rgb(98, 132, 220), true));
+        brand.addView(text(" PicMe", titleSp, ACCENT, true));
         parent.addView(brand, matchWrap());
 
         TextView subtitle = text("自动找到属于你的旅行照片", subtitleSp, SECONDARY, true);
@@ -4704,34 +5181,51 @@ public class MainActivity extends Activity {
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER);
         View left = new View(this);
-        left.setBackgroundColor(Color.rgb(225, 227, 221));
+        left.setBackgroundColor(Color.rgb(0xE3, 0xE6, 0xEC));
         row.addView(left, new LinearLayout.LayoutParams(0, dp(1), 1));
         TextView middle = text(label, 17, SECONDARY, true);
         middle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT);
         row.addView(middle, textParams);
         View right = new View(this);
-        right.setBackgroundColor(Color.rgb(225, 227, 221));
+        right.setBackgroundColor(Color.rgb(0xE3, 0xE6, 0xEC));
         row.addView(right, new LinearLayout.LayoutParams(0, dp(1), 1));
         return row;
     }
 
     private LinearLayout.LayoutParams fieldParams() {
         LinearLayout.LayoutParams params = matchWrap();
-        params.height = dp(72);
-        params.setMargins(0, 0, 0, dp(18));
+        params.height = dp(56);
+        params.setMargins(0, 0, 0, dp(16));
         return params;
     }
 
     private GradientDrawable placeholderDrawable() {
-        return round(Color.rgb(229, 241, 242), dp(32), Color.WHITE, dp(2));
+        return round(Color.rgb(0xE6, 0xEA, 0xF2), dp(32), Color.WHITE, dp(2));
     }
 
     private GradientDrawable softBackground() {
+        // 冷色中性背景：贴合设计稿浅色底（#F2F4F7），上浅下略冷，给液态玻璃留出可模糊的层次。
         return new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.rgb(255, 251, 240), Color.rgb(235, 250, 248), Color.rgb(255, 242, 226)}
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.rgb(0xF7, 0xF9, 0xFC), Color.rgb(0xEC, 0xEF, 0xF6)}
         );
+    }
+
+    // 蓝→紫主色渐变（圆角胶囊 / 卡片用）。
+    private GradientDrawable accentGradient(int radius) {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{ACCENT, ACCENT2}
+        );
+        drawable.setCornerRadius(radius);
+        return drawable;
+    }
+
+    // 液态玻璃面板：半透明近白 + 高光描边。Android（minSdk 23）无法廉价做真实背景模糊，
+    // 用高透明度白底 + 细描边 + 阴影近似 iOS 26 的玻璃质感。
+    private GradientDrawable glass(int radius) {
+        return round(Color.argb(0xD8, 255, 255, 255), radius, Color.argb(0x70, 255, 255, 255), dp(1));
     }
 
     private GradientDrawable round(int color, int radius, int strokeColor, int strokeWidth) {
