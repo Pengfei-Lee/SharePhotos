@@ -142,6 +142,10 @@ public class MainActivity extends Activity {
     private String myPhotosSubTab = "photos"; // 我的照片页：photos | albums
     private boolean myPhotosFavOnly = false;  // 我的照片页：仅看喜欢
     private String transferFilter = "all";    // 传输页：all | upload | download
+    // 传输任务中心：每个任务 {id,type(upload/download),album,total,done,status(running/failed/done/cancelled),error,cancel}
+    private final java.util.List<JSONObject> transferTasks = new java.util.ArrayList<>();
+    private int transferTaskSeq = 0;
+    private JSONObject uploadTask;
     private boolean photoSelectionMode = false;
     private boolean livePhotoPlaying = false;
     private PhotoDiskCache diskCache;
@@ -620,42 +624,19 @@ public class MainActivity extends Activity {
         panel.addView(filters, matchWrap());
         spacer(panel, dp(12));
 
-        boolean showUpload = isUploading && !"download".equals(transferFilter);
-        if (showUpload) {
-            LinearLayout secHead = horizontal();
-            secHead.setGravity(Gravity.CENTER_VERTICAL);
-            secHead.addView(text("进行中", 16, PRIMARY, true),
-                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            TextView cnt = text(" 1", 13, ACCENT, true);
-            secHead.addView(cnt, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            LinearLayout.LayoutParams secHeadP = matchWrap();
-            secHeadP.setMargins(0, 0, 0, dp(10));
-            panel.addView(secHead, secHeadP);
-
-            JSONObject album = findAlbumById(activeUploadAlbumId);
-            String name = album != null ? album.optString("name", "相册") : "相册";
-            LinearLayout cardv = vertical();
-            cardv.setPadding(dp(14), dp(14), dp(14), dp(14));
-            cardv.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
-            cardv.setElevation(dp(2));
-            cardv.addView(text("正在上传到「" + name + "」", 15, PRIMARY, true), matchWrap());
-            String sub = uploadProgressText == null || uploadProgressText.isEmpty()
-                    ? (uploadUploadedCount + " / " + uploadSelectedCount + " 张 · AI 识别同步进行")
-                    : uploadProgressText;
-            TextView subView = text(sub, 13, SECONDARY, false);
-            subView.setPadding(0, dp(2), 0, dp(10));
-            cardv.addView(subView, matchWrap());
-            // 进度条（两段加权填充）。
-            int pct = Math.max(0, Math.min(100, uploadProgressPercent()));
-            LinearLayout track = horizontal();
-            track.setBackground(round(Color.argb(18, 0x0F, 0x11, 0x15), dp(4), Color.TRANSPARENT, 0));
-            View fill = new View(this);
-            fill.setBackground(accentGradient(dp(4)));
-            track.addView(fill, new LinearLayout.LayoutParams(0, dp(8), Math.max(1, pct)));
-            track.addView(new View(this), new LinearLayout.LayoutParams(0, dp(8), Math.max(0, 100 - pct)));
-            panel.addView(track, matchWrap());
-            panel.addView(cardv, matchWrap());
-        } else {
+        java.util.List<JSONObject> snap;
+        synchronized (transferTasks) { snap = new java.util.ArrayList<>(transferTasks); }
+        java.util.List<JSONObject> running = new java.util.ArrayList<>();
+        java.util.List<JSONObject> failed = new java.util.ArrayList<>();
+        java.util.List<JSONObject> done = new java.util.ArrayList<>();
+        for (JSONObject t : snap) {
+            if (!"all".equals(transferFilter) && !transferFilter.equals(t.optString("type"))) continue;
+            String s = t.optString("status");
+            if ("running".equals(s)) running.add(t);
+            else if ("failed".equals(s)) failed.add(t);
+            else done.add(t);
+        }
+        if (running.isEmpty() && failed.isEmpty() && done.isEmpty()) {
             LinearLayout empty = vertical();
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(24), dp(70), dp(24), dp(40));
@@ -668,14 +649,108 @@ public class MainActivity extends Activity {
             TextView t1 = text(dl ? "暂无下载任务" : "暂无传输任务", 18, PRIMARY, true);
             t1.setGravity(Gravity.CENTER);
             empty.addView(t1, matchWrap());
-            TextView t2 = text(dl ? "下载的照片会直接保存到系统相册" : "上传照片时，任务会在这里后台进行，你可以随时回来查看", 14, SECONDARY, false);
+            TextView t2 = text(dl ? "下载的照片会直接保存到系统相册" : "上传或下载照片时，任务会在这里后台进行，可随时回来查看", 14, SECONDARY, false);
             t2.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams t2p = matchWrap();
             t2p.setMargins(0, dp(8), 0, 0);
             empty.addView(t2, t2p);
             panel.addView(empty, matchWrap());
+        } else {
+            if (!running.isEmpty()) {
+                addTransferSection(panel, "进行中", running.size(), false);
+                for (JSONObject t : running) panel.addView(transferTaskCard(t), matchWrap());
+            }
+            if (!failed.isEmpty()) {
+                addTransferSection(panel, "失败 · 需重试", failed.size(), true);
+                for (JSONObject t : failed) panel.addView(transferTaskCard(t), matchWrap());
+            }
+            if (!done.isEmpty()) {
+                addTransferSection(panel, "已完成", done.size(), false);
+                for (JSONObject t : done) panel.addView(transferTaskCard(t), matchWrap());
+            }
         }
         showManagedAlbumPage("传输", scroll);
+    }
+
+    private void addTransferSection(LinearLayout panel, String title, int count, boolean danger) {
+        LinearLayout head = horizontal();
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(text(title, 16, PRIMARY, true),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView cnt = text(String.valueOf(count), 11, danger ? Color.WHITE : SECONDARY, true);
+        cnt.setGravity(Gravity.CENTER);
+        cnt.setMinWidth(dp(18));
+        cnt.setPadding(dp(5), dp(1), dp(5), dp(1));
+        cnt.setBackground(round(danger ? RED : Color.argb(20, 0x0F, 0x11, 0x15), dp(9), Color.TRANSPARENT, 0));
+        LinearLayout.LayoutParams cntP = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cntP.setMargins(dp(8), 0, 0, 0);
+        head.addView(cnt, cntP);
+        LinearLayout.LayoutParams hp = matchWrap();
+        hp.setMargins(0, dp(6), 0, dp(10));
+        panel.addView(head, hp);
+    }
+
+    private View transferTaskCard(final JSONObject t) {
+        boolean upload = "upload".equals(t.optString("type"));
+        int total = t.optInt("total");
+        int done = t.optInt("done");
+        String status = t.optString("status");
+        int tint = upload ? ACCENT : GREEN;
+        LinearLayout card = vertical();
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackground(round(Color.WHITE, dp(16), HAIRLINE, dp(1)));
+        card.setElevation(dp(2));
+        LinearLayout.LayoutParams cardP = matchWrap();
+        cardP.setMargins(0, 0, 0, dp(10));
+        card.setLayoutParams(cardP);
+
+        LinearLayout top = horizontal();
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout iconBox = new FrameLayout(this);
+        iconBox.setBackground(round(Color.argb(28, Color.red(tint), Color.green(tint), Color.blue(tint)), dp(11), Color.TRANSPARENT, 0));
+        ImageView ic = new ImageView(this);
+        ic.setImageResource(upload ? R.drawable.ic_upload : R.drawable.ic_download);
+        ic.setColorFilter(tint);
+        iconBox.addView(ic, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
+        LinearLayout.LayoutParams ibP = new LinearLayout.LayoutParams(dp(40), dp(40));
+        ibP.setMargins(0, 0, dp(12), 0);
+        top.addView(iconBox, ibP);
+
+        LinearLayout col = vertical();
+        col.addView(text((upload ? "上传到" : "下载自") + "「" + t.optString("album", "相册") + "」", 14, PRIMARY, true), matchWrap());
+        String sub;
+        if ("done".equals(status)) sub = "已完成 " + total + " 张";
+        else if ("cancelled".equals(status)) sub = "已取消 · " + done + "/" + total;
+        else if ("failed".equals(status)) sub = t.optString("error", "失败，请重试");
+        else sub = upload ? (done < total ? "上传中 · AI 识别同步进行" : "AI 识别中") : ("下载中 " + done + "/" + total);
+        col.addView(text(sub, 12, "failed".equals(status) ? RED : SECONDARY, false), matchWrap());
+        top.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        final boolean running = "running".equals(status);
+        TextView act = text(running ? "取消" : "清除", 12, running ? RED : SECONDARY, false);
+        act.setPadding(dp(10), dp(6), dp(2), dp(6));
+        act.setOnClickListener(v -> {
+            if (running) { try { t.put("cancel", true); t.put("status", "cancelled"); } catch (org.json.JSONException ignored) {} }
+            else { synchronized (transferTasks) { transferTasks.remove(t); } }
+            showTransferPage();
+        });
+        top.addView(act, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        card.addView(top, matchWrap());
+
+        if (!"done".equals(status) && !"cancelled".equals(status)) {
+            int pct = total > 0 ? Math.round(done * 100f / total) : 0;
+            pct = Math.max(0, Math.min(100, pct));
+            LinearLayout trk = horizontal();
+            trk.setBackground(round(Color.argb(18, 0x0F, 0x11, 0x15), dp(4), Color.TRANSPARENT, 0));
+            View fill = new View(this);
+            fill.setBackground("failed".equals(status) ? round(RED, dp(4), Color.TRANSPARENT, 0) : accentGradient(dp(4)));
+            trk.addView(fill, new LinearLayout.LayoutParams(0, dp(7), Math.max(1, pct)));
+            trk.addView(new View(this), new LinearLayout.LayoutParams(0, dp(7), Math.max(0, 100 - pct)));
+            LinearLayout.LayoutParams trkP = matchWrap();
+            trkP.setMargins(dp(52), dp(8), 0, 0);
+            card.addView(trk, trkP);
+        }
+        return card;
     }
 
     private View transferFilterPill(String label, final String key) {
@@ -688,6 +763,29 @@ public class MainActivity extends Activity {
         pill.setLayoutParams(p);
         pill.setOnClickListener(v -> { transferFilter = key; showTransferPage(); });
         return pill;
+    }
+
+    private JSONObject addTransferTask(String type, String album, int total) {
+        JSONObject t = new JSONObject();
+        try {
+            t.put("id", ++transferTaskSeq);
+            t.put("type", type);
+            t.put("album", album == null ? "" : album);
+            t.put("total", Math.max(total, 0));
+            t.put("done", 0);
+            t.put("status", "running");
+        } catch (org.json.JSONException ignored) {}
+        synchronized (transferTasks) { transferTasks.add(0, t); }
+        return t;
+    }
+
+    private void updateTransferTask(JSONObject t, int done, String status, String err) {
+        if (t == null) return;
+        try {
+            if (done >= 0) t.put("done", done);
+            if (status != null) t.put("status", status);
+            if (err != null) t.put("error", err);
+        } catch (org.json.JSONException ignored) {}
     }
 
     private void renderAlbums() {
@@ -1474,14 +1572,19 @@ public class MainActivity extends Activity {
             addSettingsRow(g, R.drawable.ic_pencil, "编辑昵称",
                     currentUser == null ? "" : currentUser.optString("nickname", ""), true, false, false, this::promptEditNickname);
             addSettingsRow(g, R.drawable.ic_user, "登录账号",
-                    currentUser == null ? "-" : "@" + currentUser.optString("username", "-"), false, true, false, null);
+                    currentUser == null ? "-" : "@" + currentUser.optString("username", "-"), false, false, false, null);
+            addSettingsRow(g, R.drawable.ic_lock, "修改密码", "", true, true, false, this::promptChangePassword);
         } else if ("privacy".equals(cat)) {
             title = "隐私与人脸识别";
+            boolean faceMatch = currentUser == null || currentUser.optBoolean("faceMatchEnabled", true);
+            addSettingsRow(g, R.drawable.ic_user, "在共享相册中识别我", faceMatch ? "已开启" : "已关闭", true, false, false, this::toggleFaceMatch);
             addSettingsRow(g, R.drawable.ic_person_add, "更换头像 / 人脸照", "", true, false, false, this::pickAvatar);
             addSettingsRow(g, R.drawable.ic_sparkle, "我的照片推荐", hasFace ? "已识别" : "待上传", false, true, false, null);
         } else if ("general".equals(cat)) {
             title = "通用";
             addSettingsRow(g, R.drawable.ic_bell, "开启消息通知", "", true, false, false, this::enableMessageNotifications);
+            addSettingsRow(g, R.drawable.ic_download, "下载画质",
+                    prefs.getBoolean("download.original", true) ? "原图" : "高清", true, false, false, this::toggleDownloadQuality);
             addSettingsRow(g, R.drawable.ic_image, "清理缓存", "", true, true, false, this::clearAppCache);
         } else {
             title = "帮助与关于";
@@ -1497,6 +1600,71 @@ public class MainActivity extends Activity {
         imageCache.evictAll();
         try { diskCache().clear(); } catch (Exception ignored) {}
         toast("缓存已清理");
+    }
+
+    private void promptChangePassword() {
+        final EditText oldP = new EditText(this);
+        oldP.setHint("当前密码");
+        oldP.setSingleLine(true);
+        oldP.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        oldP.setTextColor(PRIMARY);
+        final EditText newP = new EditText(this);
+        newP.setHint("新密码（6-20 位）");
+        newP.setSingleLine(true);
+        newP.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        newP.setTextColor(PRIMARY);
+        LinearLayout box = vertical();
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(oldP, matchWrap());
+        box.addView(newP, matchWrap());
+        new AlertDialog.Builder(this)
+                .setTitle("修改密码")
+                .setView(box)
+                .setPositiveButton("保存", (d, w) -> {
+                    final String op = oldP.getText().toString();
+                    final String np = newP.getText().toString();
+                    if (op.isEmpty() || np.isEmpty()) { toast("请输入当前密码和新密码"); return; }
+                    new Thread(() -> {
+                        try {
+                            JSONObject body = new JSONObject();
+                            body.put("oldPassword", op);
+                            body.put("newPassword", np);
+                            requestJson("POST", "/api/me/password", body, true, true);
+                            runOnUiThread(() -> toast("密码已修改"));
+                        } catch (final Exception e) {
+                            showError("修改密码失败", e);
+                        }
+                    }).start();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void toggleFaceMatch() {
+        final boolean next = !(currentUser != null && currentUser.optBoolean("faceMatchEnabled", true));
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("faceMatchEnabled", next);
+                JSONObject resp = requestJson("POST", "/api/me/privacy", body, true, true);
+                final JSONObject u = resp.optJSONObject("user");
+                runOnUiThread(() -> {
+                    if (u != null) { currentUser = u; cacheCurrentUser(); }
+                    toast(next ? "已开启：会在共享相册中识别你" : "已关闭：不再识别你");
+                    showProfileCategory("privacy");
+                    loadAlbums();
+                });
+            } catch (final Exception e) {
+                showError("设置失败", e);
+            }
+        }).start();
+    }
+
+    private void toggleDownloadQuality() {
+        boolean cur = prefs.getBoolean("download.original", true);
+        prefs.edit().putBoolean("download.original", !cur).apply();
+        toast(!cur ? "下载画质：原图" : "下载画质：高清");
+        showProfileCategory("general");
     }
 
     // 设计稿 PGroup：白色圆角卡容器。
@@ -1903,19 +2071,26 @@ public class MainActivity extends Activity {
     private void downloadFolder(final JSONObject album, final JSONObject folder) {
         statusText.setText("正在下载小相册...");
         new Thread(() -> {
+            final JSONObject[] dlTask = {null};
             try {
                 JSONObject manifest = requestJson("GET", "/api/albums/" + album.optString("id") + "/folders/" + folder.optString("id") + "/download", null, true, true);
                 JSONArray files = manifest.optJSONArray("files");
                 if (files == null || files.length() == 0) throw new IllegalStateException("没有可下载的照片");
+                final JSONObject task = addTransferTask("download", album.optString("name", "相册"), files.length());
+                dlTask[0] = task;
                 for (int i = 0; i < files.length(); i++) {
+                    if (task.optBoolean("cancel", false)) { updateTransferTask(task, i, "cancelled", null); break; }
                     JSONObject file = files.optJSONObject(i);
                     if (file == null) continue;
                     final int index = i + 1;
                     runOnUiThread(() -> statusText.setText("正在保存第 " + index + "/" + files.length() + " 个文件"));
                     saveUrlToMediaStore(file.optString("url", ""), file.optString("name", "picme-" + index), file.optString("mimeType", "application/octet-stream"));
+                    updateTransferTask(task, index, "running", null);
                 }
+                if (!task.optBoolean("cancel", false)) updateTransferTask(task, files.length(), "done", null);
                 runOnUiThread(() -> statusText.setText("小相册已保存到系统相册/下载目录"));
             } catch (final Exception error) {
+                if (dlTask[0] != null) updateTransferTask(dlTask[0], -1, "failed", error.getMessage());
                 showError("下载失败", error);
             }
         }).start();
@@ -2575,7 +2750,11 @@ public class MainActivity extends Activity {
     }
 
     private void savePhotoResourceSync(final JSONObject photo) throws Exception {
-        String url = photo.optString("downloadImageUrl", "");
+        // 下载画质偏好（通用设置）：原图=downloadImageUrl，高清=压缩预览图 previewUrl。
+        boolean wantOriginal = prefs.getBoolean("download.original", true);
+        String url = wantOriginal
+                ? photo.optString("downloadImageUrl", "")
+                : photo.optString("previewUrl", photo.optString("downloadImageUrl", ""));
         String mimeType = "image/jpeg";
         String filename = photo.optString("originalName", "picme-" + System.currentTimeMillis() + ".jpg");
         if (url.isEmpty()) url = photo.optString("imageUrl", photo.optString("previewUrl", bestPhotoURL(photo)));
@@ -2626,6 +2805,7 @@ public class MainActivity extends Activity {
     private void downloadSelectedPhotos(final JSONObject album, final JSONArray photos) {
         statusText.setText("正在准备所选照片包...");
         new Thread(() -> {
+            final JSONObject[] dlTask = {null};
             try {
                 JSONArray ids = new JSONArray();
                 for (int i = 0; i < photos.length(); i++) {
@@ -2637,13 +2817,18 @@ public class MainActivity extends Activity {
                 JSONObject manifest = requestJson("POST", "/api/albums/" + album.optString("id") + "/photos/download-selected", body, true, true);
                 JSONArray files = manifest.optJSONArray("files");
                 if (files == null || files.length() == 0) throw new IllegalStateException("没有可下载的照片");
+                final JSONObject task = addTransferTask("download", album.optString("name", "相册"), files.length());
+                dlTask[0] = task;
                 for (int i = 0; i < files.length(); i++) {
+                    if (task.optBoolean("cancel", false)) { updateTransferTask(task, i, "cancelled", null); break; }
                     JSONObject file = files.optJSONObject(i);
                     if (file == null) continue;
                     final int index = i + 1;
                     runOnUiThread(() -> statusText.setText("正在保存照片包第 " + index + "/" + files.length() + " 个文件"));
                     saveUrlToMediaStore(file.optString("url", ""), file.optString("name", "picme-selected-" + index), file.optString("mimeType", "application/octet-stream"));
+                    updateTransferTask(task, index, "running", null);
                 }
+                if (!task.optBoolean("cancel", false)) updateTransferTask(task, files.length(), "done", null);
                 runOnUiThread(() -> {
                     clearPhotoSelection();
                     statusText.setText("所选照片包已保存");
@@ -2651,6 +2836,7 @@ public class MainActivity extends Activity {
                 });
                 toast("所选照片包已保存到系统相册");
             } catch (final Exception error) {
+                if (dlTask[0] != null) updateTransferTask(dlTask[0], -1, "failed", error.getMessage());
                 showError("下载失败", error);
             }
         }).start();
@@ -4280,12 +4466,16 @@ public class MainActivity extends Activity {
         uploadCreatedPhotoIds.clear();
         JSONObject album = findAlbumById(activeUploadAlbumId);
         if (album != null) uploadBaselinePhotoIds.addAll(photoIds(album));
+        uploadTask = addTransferTask("upload", album != null ? album.optString("name", "相册") : "相册", count);
         uploadProgressText = "正在准备 " + count + " 个文件，点击底部进度可取消";
         statusText.setText(uploadProgressText);
         refreshCurrentAlbumView();
     }
 
     private void finishUploadState(String message) {
+        boolean cancelled = uploadCancelRequested;
+        updateTransferTask(uploadTask, uploadSelectedCount, cancelled ? "cancelled" : "done", null);
+        uploadTask = null;
         isUploading = false;
         activeUploadAlbumId = "";
         uploadCancelRequested = false;
@@ -4302,6 +4492,7 @@ public class MainActivity extends Activity {
 
     private void updateUploadProgress(String message, int done, int total) {
         uploadUploadedCount = Math.max(uploadUploadedCount, done);
+        updateTransferTask(uploadTask, uploadUploadedCount, "running", null);
         uploadProgressText = message;
         runOnUiThread(() -> {
             if (statusText != null) statusText.setText(message);

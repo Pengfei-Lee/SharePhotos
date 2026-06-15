@@ -1394,6 +1394,7 @@ def public_user(user, origin=""):
         "avatarUrl": avatar_url,
         "hasFaceProfile": bool(user.get("hasFaceProfile")),
         "faceProfileStatus": user.get("faceProfileStatus") or ("ready" if user.get("hasFaceProfile") else "missing"),
+        "faceMatchEnabled": bool(user.get("faceMatchEnabled", True)),
     }
 
 
@@ -3502,6 +3503,9 @@ def enrich_album_match_photo_state(album, match):
 
 
 def resolve_user_album_match(album, current_user, allow_compute=True):
+    # 隐私：用户关闭"在共享相册中识别我"后，不返回任何匹配（"我的照片"为空）。
+    if current_user and not current_user.get("faceMatchEnabled", True):
+        return None
     stored = stored_user_album_match(album, current_user)
     if stored or not allow_compute:
         return stored
@@ -5278,6 +5282,10 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/me/profile":
             return self.update_profile_request(current_user)
+        if path == "/api/me/password":
+            return self.change_password_request(current_user)
+        if path == "/api/me/privacy":
+            return self.update_privacy_request(current_user)
         if path == "/api/me/avatar":
             return self.update_avatar_request(current_user)
         if path == "/api/devices/apns":
@@ -5577,6 +5585,53 @@ class AppHandler(BaseHTTPRequestHandler):
             save_db(db)
         self._current_user = user
         LOGGER.info("user_id=%s nickname=%s", user.get("id"), nickname, extra={"event": "user.profile_update"})
+        return self.send_json({"user": public_user(user, self.request_origin())})
+
+    def change_password_request(self, current_user):
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        old_password = payload.get("oldPassword") or ""
+        new_password = payload.get("newPassword") or ""
+        with LOCK:
+            db = load_db()
+            user = find_user_by_id(db, current_user.get("id"))
+            if not user:
+                return self.send_error_json("请先登录", 401)
+            if not verify_password(old_password, user.get("passwordHash")):
+                return self.send_error_json("当前密码不正确", 401)
+            if not validate_password_format(new_password):
+                return self.send_error_json("新密码需为 6-20 位，只能使用数字、字母和英文符号")
+            if verify_password(new_password, user.get("passwordHash")):
+                return self.send_error_json("新密码不能与当前密码相同")
+            user["passwordHash"] = hash_password(new_password)
+            upsert_user(db, user)
+            save_db(db)
+        self._current_user = user
+        LOGGER.info("user_id=%s", user.get("id"), extra={"event": "user.password_change"})
+        return self.send_json({"ok": True})
+
+    def update_privacy_request(self, current_user):
+        # 隐私：允许在共享相册中识别我（faceMatchEnabled）。关闭后不再为该用户做人脸匹配。
+        payload, error = self.read_json_body()
+        if error:
+            return self.send_error_json(error)
+        if "faceMatchEnabled" not in payload:
+            return self.send_error_json("缺少 faceMatchEnabled")
+        enabled = bool(payload.get("faceMatchEnabled"))
+        with LOCK:
+            db = load_db()
+            user = find_user_by_id(db, current_user.get("id"))
+            if not user:
+                return self.send_error_json("请先登录", 401)
+            user["faceMatchEnabled"] = enabled
+            if not enabled:
+                # 关闭即清除已存的"我的照片"匹配，停止后续匹配。
+                user["avatarAlbumMatches"] = {}
+            upsert_user(db, user)
+            save_db(db)
+        self._current_user = user
+        LOGGER.info("user_id=%s faceMatchEnabled=%s", user.get("id"), enabled, extra={"event": "user.privacy_update"})
         return self.send_json({"user": public_user(user, self.request_origin())})
 
     def update_avatar_request(self, current_user):
