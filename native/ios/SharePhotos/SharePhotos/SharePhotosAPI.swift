@@ -106,8 +106,12 @@ final class SharePhotosAPI {
     }
 
     func fetchAlbums() async throws -> [Album] {
+        try await fetchAlbumsResponse().albums
+    }
+
+    func fetchAlbumsResponse() async throws -> AlbumsResponse {
         let data = try await request(path: "/api/albums")
-        return try JSONDecoder().decode(AlbumsResponse.self, from: data).albums
+        return try JSONDecoder().decode(AlbumsResponse.self, from: data)
     }
 
     func fetchAlbum(id: String) async throws -> Album {
@@ -421,8 +425,8 @@ final class SharePhotosAPI {
 
     private func downloadRemoteFile(_ remoteURL: URL, filename: String, cachePrefix: String, cacheId: String) async throws -> URL {
         let fallbackExtension = (filename as NSString).pathExtension.isEmpty ? "download" : (filename as NSString).pathExtension
-        let preferredExtension = await photoCache.preferredExtension(for: remoteURL, fallback: fallbackExtension)
-        let identifier = await cacheIdentifier(prefix: cachePrefix, photoId: cacheId, remoteURL: remoteURL)
+        let preferredExtension = photoCache.preferredExtension(for: remoteURL, fallback: fallbackExtension)
+        let identifier = cacheIdentifier(prefix: cachePrefix, photoId: cacheId, remoteURL: remoteURL)
         return try await photoCache.file(forIdentifier: identifier, preferredExtension: preferredExtension) {
             try await self.downloadRemoteUncached(remoteURL)
         }
@@ -479,8 +483,8 @@ final class SharePhotosAPI {
         return destination
     }
 
-    private func cacheIdentifier(prefix: String, photoId: String, remoteURL: URL) async -> String {
-        "\(prefix):\(photoId):\(await photoCache.stableIdentifier(for: remoteURL))"
+    private func cacheIdentifier(prefix: String, photoId: String, remoteURL: URL) -> String {
+        "\(prefix):\(photoId):\(photoCache.stableIdentifier(for: remoteURL))"
     }
 
     private func absoluteURL(path: String) -> URL {

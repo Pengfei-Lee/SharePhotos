@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>识我</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -12,22 +14,20 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleDisplayName</key>
-	<string>识我</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2026062104</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>需要使用相机扫描相册二维码，用于加入共享相册。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>需要写入系统相册，用于保存下载后的照片和实况照片。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>需要读取你的照片和实况照片，用于上传到共享相册。</string>
-	<key>NSCameraUsageDescription</key>
-	<string>需要使用相机扫描相册二维码，用于加入共享相册。</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

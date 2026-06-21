@@ -37,6 +37,7 @@ final class SharePhotosStore: ObservableObject {
     @Published private var pendingPermissionDeniedDraft: PermissionRequestDraft?
     @Published var avatarImageVersion = 0
     @Published var unreadMessageCount = 0
+    @Published var albumsSummary: AlbumsSummary?
 
     private var api: SharePhotosAPI
     private let exporter = PhotoKitLivePhotoExporter()
@@ -285,11 +286,16 @@ final class SharePhotosStore: ObservableObject {
     func loadAlbums() async {
         let tokenSnapshot = authToken
         do {
-            let loadedAlbums = try await api.fetchAlbums()
+            let response = try await api.fetchAlbumsResponse()
             guard tokenStillRepresentsCurrentSession(tokenSnapshot) else { return }
-            albums = loadedAlbums
+            albums = response.albums
+            albumsSummary = response.summary
+            if let unread = response.summary?.unreadMessageCount {
+                unreadMessageCount = unread
+            }
             reconcileSelectedAlbum()
             persistHomeSnapshot()
+            prewarmImages(for: response.albums, limitPerAlbum: 24)
             clearExpiredStatusIfNeeded()
             hideOperation(after: 0.6)
         } catch {
@@ -1183,6 +1189,7 @@ final class SharePhotosStore: ObservableObject {
         }
         selectedAlbumId = album.id
         persistHomeSnapshot()
+        prewarmImages(for: album, limit: 90)
     }
 
     private func reconcileSelectedAlbum() {
@@ -1291,6 +1298,7 @@ final class SharePhotosStore: ObservableObject {
     private func expireSession() {
         clearAuth()
         albums = []
+        albumsSummary = nil
         selectedAlbumId = nil
         statusText = APIError.unauthorized.localizedDescription
     }
@@ -1326,13 +1334,67 @@ final class SharePhotosStore: ObservableObject {
         }
     }
 
+    private func prewarmImages(for albums: [Album], limitPerAlbum: Int) {
+        prewarmImageURLs(albums.flatMap { imageURLs(for: $0, limit: limitPerAlbum) })
+    }
+
+    private func prewarmImages(for album: Album, limit: Int) {
+        prewarmImageURLs(imageURLs(for: album, limit: limit))
+    }
+
+    private func prewarmImageURLs(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for url in urls {
+                guard !Task.isCancelled else { return }
+                _ = try? await PhotoDiskCache.shared.dataImage(for: url)
+            }
+        }
+    }
+
+    private func imageURLs(for album: Album, limit: Int) -> [URL] {
+        var seen = Set<String>()
+        var urls: [URL] = []
+
+        func append(_ path: String?) {
+            guard let url = imageURL(path) else { return }
+            let key = PhotoDiskCache.shared.stableIdentifier(for: url)
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            urls.append(url)
+        }
+
+        append(album.myCoverUrl)
+        append(album.coverUrl)
+        append(album.heroUrl)
+        for folder in album.folders {
+            append(folder.coverUrl)
+        }
+        for group in album.displayPeopleGroups {
+            append(group.coverUrl)
+        }
+        for group in album.displayCoPhotoGroups {
+            append(group.coverUrl)
+        }
+        for photo in album.photos
+            .sorted(by: { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) })
+            .prefix(limit) {
+            append(photo.faceUrl)
+            append(photo.tinyUrl)
+            append(photo.thumbnailUrl)
+            append(photo.coverUrl)
+            append(photo.previewUrl)
+        }
+        return urls
+    }
+
     private func homeImageURLs() -> [URL] {
         var seen = Set<String>()
         var urls: [URL] = []
 
         func append(_ path: String?) {
             guard let url = imageURL(path) else { return }
-            let key = url.absoluteString
+            let key = PhotoDiskCache.shared.stableIdentifier(for: url)
             guard !seen.contains(key) else { return }
             seen.insert(key)
             urls.append(url)

@@ -9,9 +9,12 @@ data/
 **/xcuserdata/
 **/*.xcodeproj/project.pbxproj
 project.pbxproj
+**/build-codex/
+**/build-codex-run/
 
 remote-sharephotos/
 *.sh
+!native/ios/SharePhotos/scripts/upload-testflight.sh
 .understand-anything
 
 # Android 构建中间产物

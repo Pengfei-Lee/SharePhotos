@@ -7,12 +7,15 @@ actor PhotoDiskCache {
     private let directoryURL: URL
     private let maxBytes: Int64
     private var inFlight: [String: Task<URL, Error>] = [:]
+    private let memoryCache = NSCache<NSString, UIImage>()
 
     init(maxBytes: Int64 = 2 * 1024 * 1024 * 1024) {
         let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         self.directoryURL = cachesURL.appendingPathComponent("PicMePhotoCache", isDirectory: true)
         self.maxBytes = maxBytes
+        memoryCache.countLimit = 320
+        memoryCache.totalCostLimit = 180 * 1024 * 1024
     }
 
     func cachedFile(for remoteURL: URL, preferredExtension: String?) async -> URL? {
@@ -69,16 +72,38 @@ actor PhotoDiskCache {
     }
 
     func dataImage(for remoteURL: URL) async throws -> UIImage {
+        if let image = cachedImage(for: remoteURL) {
+            return image
+        }
         let preferredExtension = preferredExtension(for: remoteURL, fallback: "img")
         let fileURL = try await file(for: remoteURL, preferredExtension: preferredExtension) {
             try await Self.download(remoteURL)
         }
-        return try await Task.detached(priority: .userInitiated) {
+        let image = try await Task.detached(priority: .userInitiated) {
             guard let image = UIImage(contentsOfFile: fileURL.path) else {
                 throw PhotoDiskCacheError.invalidImage
             }
             return image
         }.value
+        storeInMemory(image, for: remoteURL)
+        return image
+    }
+
+    func cachedImage(for remoteURL: URL) -> UIImage? {
+        let identifier = stableIdentifier(for: remoteURL)
+        let key = cacheKey(for: identifier)
+        if let image = memoryCache.object(forKey: key as NSString) {
+            return image
+        }
+        let preferredExtension = preferredExtension(for: remoteURL, fallback: "img")
+        let destination = fileURL(for: identifier, preferredExtension: preferredExtension)
+        guard FileManager.default.fileExists(atPath: destination.path),
+              let image = UIImage(contentsOfFile: destination.path) else {
+            return nil
+        }
+        touch(destination)
+        storeInMemory(image, key: key)
+        return image
     }
 
     func removeCachedFile(for remoteURL: URL, preferredExtension: String? = nil) async {
@@ -86,6 +111,7 @@ actor PhotoDiskCache {
         let key = cacheKey(for: identifier)
         inFlight[key]?.cancel()
         inFlight[key] = nil
+        memoryCache.removeObject(forKey: key as NSString)
         if let preferredExtension {
             try? FileManager.default.removeItem(at: fileURL(for: identifier, preferredExtension: preferredExtension))
             return
@@ -99,7 +125,17 @@ actor PhotoDiskCache {
         }
     }
 
-    func stableIdentifier(for remoteURL: URL) -> String {
+    func clearAll() async {
+        for task in inFlight.values {
+            task.cancel()
+        }
+        inFlight.removeAll()
+        memoryCache.removeAllObjects()
+        try? FileManager.default.removeItem(at: directoryURL)
+        try? ensureDirectory()
+    }
+
+    nonisolated func stableIdentifier(for remoteURL: URL) -> String {
         if var components = URLComponents(url: remoteURL, resolvingAgainstBaseURL: false) {
             components.query = nil
             components.fragment = nil
@@ -110,7 +146,7 @@ actor PhotoDiskCache {
         return remoteURL.absoluteString
     }
 
-    func preferredExtension(for remoteURL: URL, fallback: String) -> String {
+    nonisolated func preferredExtension(for remoteURL: URL, fallback: String) -> String {
         let ext = remoteURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         return ext.isEmpty ? fallback : ext.lowercased()
     }
@@ -127,6 +163,15 @@ actor PhotoDiskCache {
         touch(destination)
         try markExcludedFromBackup(destination)
         Task { await self.trimIfNeeded() }
+    }
+
+    private func storeInMemory(_ image: UIImage, for remoteURL: URL) {
+        storeInMemory(image, key: cacheKey(for: stableIdentifier(for: remoteURL)))
+    }
+
+    private func storeInMemory(_ image: UIImage, key: String) {
+        let pixels = max(1, Int(image.size.width * image.scale * image.size.height * image.scale))
+        memoryCache.setObject(image, forKey: key as NSString, cost: pixels * 4)
     }
 
     private func ensureDirectory() throws {

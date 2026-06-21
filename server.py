@@ -2001,10 +2001,12 @@ def public_notification(notification):
         })
         data["isRead"] = bool(data.get("readAt"))
         flatten_notification_data(data)
+        enrich_notification_request_status(data)
         return data
     data = dict(notification or {})
     data["isRead"] = bool(data.get("readAt"))
     flatten_notification_data(data)
+    enrich_notification_request_status(data)
     return data
 
 
@@ -2014,6 +2016,28 @@ def flatten_notification_data(notification):
         value = nested.get(key)
         if value is not None and notification.get(key) in (None, ""):
             notification[key] = value
+    return notification
+
+
+def enrich_notification_request_status(notification):
+    request_id = notification.get("requestId")
+    notification_type = notification.get("type")
+    if not request_id or notification.get("status") or not sqlite_enabled():
+        return notification
+    table = None
+    if notification_type in {"album.join_request", "album.join_approved", "album.join_rejected", "album.join_submitted"}:
+        table = "album_join_requests"
+    elif notification_type in {"album.permission_request", "album.permission_approved", "album.permission_rejected", "album.permission_submitted"}:
+        table = "album_permission_requests"
+    if table is None:
+        return notification
+    try:
+        with sqlite_connect() as conn:
+            row = conn.execute("SELECT status FROM %s WHERE id = ?" % table, (request_id,)).fetchone()
+        if row and row["status"]:
+            notification["status"] = row["status"]
+    except Exception as error:
+        LOGGER.debug("request_id=%s error=%s", request_id, error, extra={"event": "notification.status_enrich_failed"})
     return notification
 
 
@@ -3329,7 +3353,110 @@ def public_album(album, current_user=None, origin=""):
                     new_mine += 1
     visible["neu"] = neu
     visible["newMine"] = new_mine
+    visible["newPhotoCount"] = neu
+    visible["newMyPhotoCount"] = new_mine
+    enrich_picme_album_payload(visible, album, current_user)
     return visible
+
+
+def enrich_picme_album_payload(visible, album, current_user):
+    photos = visible.get("photos", [])
+    folders = visible.get("folders", [])
+    contributors = [name for name in visible.get("contributors", []) if name]
+    cover_photo = next((photo for photo in photos if photo.get("coverUrl") or photo.get("thumbnailUrl") or photo.get("imageUrl")), None)
+    visible["coverUrl"] = visible.get("coverUrl") or (cover_photo or {}).get("coverUrl") or (cover_photo or {}).get("thumbnailUrl") or (cover_photo or {}).get("imageUrl") or visible.get("myCoverUrl") or ""
+    visible["heroUrl"] = visible.get("heroUrl") or (cover_photo or {}).get("previewUrl") or visible["coverUrl"]
+    visible["memberCount"] = max(len(contributors), 1 if visible.get("ownerUser") else 0)
+
+    people_groups = []
+    for folder in folders:
+        folder_id = folder.get("id") or ""
+        name = folder.get("name") or ""
+        if folder_id in {"group", "no-face"} or name in {"合照", "其他", "未识别人脸"}:
+            continue
+        photo_ids = folder.get("photoIds") or []
+        people_groups.append({
+            "id": folder_id,
+            "name": name or "人物",
+            "photoIds": photo_ids,
+            "photoCount": len(photo_ids),
+            "coverUrl": folder.get("coverUrl") or visible.get("coverUrl") or "",
+        })
+    visible["peopleGroups"] = people_groups
+    visible["peopleCount"] = len(people_groups)
+
+    group_folder = next((folder for folder in folders if folder.get("id") == "group" or folder.get("name") == "合照"), None)
+    if group_folder:
+        group_photo_ids = group_folder.get("photoIds") or []
+        visible["coPhotoGroups"] = [{
+            "id": group_folder.get("id") or "group",
+            "name": group_folder.get("name") or "合照",
+            "people": contributors,
+            "faces": max(len(contributors), 2),
+            "photoIds": group_photo_ids,
+            "photoCount": len(group_photo_ids),
+            "coverUrl": group_folder.get("coverUrl") or visible.get("coverUrl") or "",
+        }]
+    else:
+        visible["coPhotoGroups"] = []
+
+    ready_photos = [photo for photo in photos if (photo.get("status") or "ready") == "ready"]
+    processing_count = len([photo for photo in photos if (photo.get("status") or "") in {"queued", "preparing", "processing"}])
+    existing_new_photo_count = int(visible["newPhotoCount"]) if "newPhotoCount" in visible and visible.get("newPhotoCount") is not None else min(len(ready_photos), 12)
+    existing_new_my_photo_count = int(visible["newMyPhotoCount"]) if "newMyPhotoCount" in visible and visible.get("newMyPhotoCount") is not None else min(int(visible.get("myPhotoCount") or 0), 7)
+    visible["newPhotoCount"] = min(len(ready_photos), existing_new_photo_count)
+    visible["newMyPhotoCount"] = min(int(visible.get("myPhotoCount") or 0), existing_new_my_photo_count)
+    visible["recentActivity"] = {
+        "title": "最近更新",
+        "body": "新增 %d 张照片" % visible["newPhotoCount"],
+        "actorName": contributors[0] if contributors else "",
+        "createdAt": max([int(photo.get("createdAt") or 0) for photo in photos] or [0]),
+    }
+    visible["transferHints"] = [{
+        "id": "processing",
+        "type": "upload",
+        "title": "后台识别中" if processing_count else "照片已同步",
+        "body": "%d 张照片正在整理" % processing_count if processing_count else "可随时下载原图",
+        "count": processing_count,
+    }]
+
+
+def albums_summary_payload(albums, current_user):
+    photo_count = sum(len(album.get("photos", [])) for album in albums)
+    new_photo_count = sum(int(album.get("newPhotoCount") or 0) for album in albums)
+    new_my_photo_count = sum(int(album.get("newMyPhotoCount") or 0) for album in albums)
+    unread = 0
+    pending = 0
+    user_id = current_user.get("id") if current_user else ""
+    try:
+        with sqlite_connect() as conn:
+            unread = conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL",
+                (user_id,),
+            ).fetchone()[0]
+            allowed = [album.get("id") for album in albums if album.get("canAdmin")]
+            if allowed:
+                placeholders = ",".join("?" for _ in allowed)
+                pending_join = conn.execute(
+                    "SELECT COUNT(*) FROM album_join_requests WHERE status = 'pending' AND album_id IN (%s)" % placeholders,
+                    tuple(allowed),
+                ).fetchone()[0]
+                pending_permission = conn.execute(
+                    "SELECT COUNT(*) FROM album_permission_requests WHERE status = 'pending' AND album_id IN (%s)" % placeholders,
+                    tuple(allowed),
+                ).fetchone()[0]
+                pending = int(pending_join or 0) + int(pending_permission or 0)
+    except Exception:
+        unread = 0
+        pending = 0
+    return {
+        "albumCount": len(albums),
+        "photoCount": photo_count,
+        "recentNewPhotoCount": new_photo_count,
+        "recentNewMyPhotoCount": new_my_photo_count,
+        "unreadMessageCount": int(unread or 0),
+        "pendingApprovalCount": int(pending or 0),
+    }
 
 
 def apply_my_photo_recommendation(visible, album, current_user):
@@ -5170,7 +5297,8 @@ class AppHandler(BaseHTTPRequestHandler):
                         continue
                     if not stored_user_album_match(album, current_user):
                         enqueue_album_match_job(album.get("id"), current_user.get("id"))
-            return self.send_json({"albums": [public_album(album, current_user, self.request_origin()) for album in db["albums"] if album.get("id") in allowed_ids]})
+            public_albums = [public_album(album, current_user, self.request_origin()) for album in db["albums"] if album.get("id") in allowed_ids]
+            return self.send_json({"albums": public_albums, "summary": albums_summary_payload(public_albums, current_user)})
         match = re.match(r"^/api/invites/([A-Za-z0-9_-]+)/qr\.svg$", path)
         if match:
             return self.serve_invite_qr(match.group(1))

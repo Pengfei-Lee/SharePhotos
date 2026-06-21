@@ -12,8 +12,10 @@ struct AuthGateView: View {
 
     var body: some View {
         ZStack {
-            if store.canShowAuthenticatedShell {
-                ContentView()
+            if isPreviewMode {
+                previewScreen
+            } else if store.canShowAuthenticatedShell {
+                PicMeRootExperience()
             } else if store.isCheckingAuth {
                 AppBackground()
                 VStack(spacing: 16) {
@@ -48,6 +50,83 @@ struct AuthGateView: View {
         .preferredColorScheme(.light)
         .tint(.teal)
     }
+
+    private var isPreviewMode: Bool {
+        ProcessInfo.processInfo.environment["PICME_UI_PREVIEW_HOME"] == "1"
+            || ProcessInfo.processInfo.environment["PICME_UI_PREVIEW_SCREEN"] != nil
+    }
+
+    @ViewBuilder
+    private var previewScreen: some View {
+        if ProcessInfo.processInfo.environment["PICME_UI_PREVIEW_HOME"] == "1" {
+            PicMeRootExperience()
+        } else {
+            switch ProcessInfo.processInfo.environment["PICME_UI_PREVIEW_SCREEN"] {
+            case "album":
+                PicMeAlbumDetailPrototypeView()
+            case "login":
+                LoginView {}
+            case "preview":
+                PicMePhotoPreviewPrototypeView()
+            case "picker":
+                PicMePhotoPickerPrototypeView()
+            case "upload":
+                PicMeUploadFlowPrototypeView(initialPhase: .preview)
+            case "uploading":
+                PicMeUploadFlowPrototypeView(initialPhase: .uploading)
+            case "upload_done":
+                PicMeUploadFlowPrototypeView(initialPhase: .done)
+            case "share":
+                PicMeSharePrototypeView()
+            case "join":
+                PicMeJoinPrototypeView(submitted: false)
+            case "join_submitted":
+                PicMeJoinPrototypeView(submitted: true)
+            case "messages":
+                PicMeNotificationsPrototypeView(showDetail: false)
+            case "message_detail":
+                PicMeNotificationsPrototypeView(showDetail: true)
+            case "mine":
+                PicMeMyPhotosView()
+            case "mine_select":
+                PicMeMyPhotosPrototypeView(selectionMode: true)
+            case "download":
+                PicMeDownloadPrototypeView(phase: .preview)
+            case "download_progress":
+                PicMeDownloadPrototypeView(phase: .downloading)
+            case "download_done":
+                PicMeDownloadPrototypeView(phase: .done)
+            case "transfer":
+                PicMeTransferPrototypeView()
+            case "profile":
+                PicMeProfileDashboardView()
+            case "create":
+                PicMeCreateAlbumPrototypeView(created: false)
+            case "create_done":
+                PicMeCreateAlbumPrototypeView(created: true)
+            case "profile_edit":
+                PicMeProfileEditView()
+            case "profile_category":
+                PicMeProfileCategoryView()
+            case "member_permissions":
+                PicMeMemberPermissionsPrototypeView()
+            case "register":
+                PicMeRegisterPrototypeView(step: 1)
+            case "register_intro":
+                PicMeRegisterPrototypeView(step: 2)
+            case "face_upload":
+                PicMeRegisterPrototypeView(step: 3)
+            case "face_done":
+                PicMeRegisterPrototypeView(step: 4)
+            case "person":
+                PicMePersonPrototypeView()
+            case "group":
+                PicMeGroupPrototypeView()
+            default:
+                EmptyView()
+            }
+        }
+    }
 }
 
 private enum AuthMode {
@@ -67,101 +146,186 @@ private struct LoginView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 28) {
-                Spacer(minLength: 32)
+        ZStack {
+            Color(red: 0.06, green: 0.07, blue: 0.09).ignoresSafeArea()
+            loginBackdrop
+            LinearGradient(
+                colors: [.black.opacity(0.08), .black.opacity(0.46), .black.opacity(0.82)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-                VStack(spacing: 14) {
-                    PicMeLogo(size: 88)
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text("识我")
-                            .font(.system(size: 34, weight: .black))
-                            .foregroundColor(.primaryText)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 76)
+
+                    VStack(spacing: 12) {
+                        PicMeLogo(size: 82)
                         Text("PicMe")
-                            .font(.system(size: 30, weight: .bold))
-                            .foregroundStyle(LinearGradient(colors: [.picmeAqua, .picmeViolet], startPoint: .leading, endPoint: .trailing))
-                    }
-                    Text("自动找到属于你的旅行照片")
-                        .font(.headline)
-                        .foregroundColor(.secondaryText)
-                }
-                .padding(.top, 22)
-
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("登录")
-                        .font(.system(size: 32, weight: .black))
-                        .foregroundColor(.primaryText)
-
-                    AuthInputField(
-                        icon: "person",
-                        placeholder: "登录账号",
-                        text: $username,
-                        keyboardType: .asciiCapable,
-                        isSecure: false
-                    )
-
-                    AuthInputField(
-                        icon: "lock",
-                        placeholder: "密码",
-                        text: $password,
-                        keyboardType: .default,
-                        isSecure: !isPasswordVisible,
-                        trailingIcon: isPasswordVisible ? "eye.slash" : "eye"
-                    ) {
-                        isPasswordVisible.toggle()
-                    }
-
-                    Button("忘记密码？") {}
-                        .font(.subheadline.weight(.bold))
-                        .foregroundColor(.teal)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-
-                    Button {
-                        Task { await store.login(username: username, password: password) }
-                    } label: {
-                        Text(store.isBusy ? "登录中..." : "登录")
-                            .font(.title3.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 18)
-                            .background(primaryGradient, in: Capsule())
+                            .font(.system(size: 34, weight: .black))
                             .foregroundColor(.white)
-                            .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
+                        Text("找到别人镜头里的自己")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.78))
                     }
-                    .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.55)
-                    .padding(.top, 18)
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("欢迎回来")
+                            .font(.system(size: 24, weight: .black))
+                            .foregroundColor(.white)
+                        Text("登录后继续查看朋友共享给你的照片")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.68))
+
+                        darkInput(
+                            icon: "person",
+                            placeholder: "登录账号 / PicMe ID",
+                            text: $username,
+                            keyboardType: .asciiCapable,
+                            isSecure: false
+                        )
+                        .padding(.top, 8)
+
+                        darkInput(
+                            icon: "lock",
+                            placeholder: "密码",
+                            text: $password,
+                            keyboardType: .default,
+                            isSecure: !isPasswordVisible,
+                            trailingIcon: isPasswordVisible ? "eye.slash" : "eye",
+                            trailingAction: { isPasswordVisible.toggle() }
+                        )
+
+                        Button {
+                            Task { await store.login(username: username, password: password) }
+                        } label: {
+                            Text(store.isBusy ? "登录中..." : "登录")
+                                .font(.system(size: 17, weight: .black))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
+                                .background(loginGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .foregroundColor(.white)
+                                .shadow(color: Color(red: 0.31, green: 0.49, blue: 1.0).opacity(0.42), radius: 24, y: 10)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canSubmit)
+                        .opacity(canSubmit ? 1 : 0.55)
+                        .padding(.top, 4)
+
+                        Button(action: onCreateAccount) {
+                            Text("创建新账号")
+                                .font(.system(size: 15, weight: .bold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.18), lineWidth: 1))
+                                .foregroundColor(.white)
+                        }
+                        .buttonStyle(.plain)
+
+                        Text("登录即代表同意《用户协议》和《隐私政策》")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(.white.opacity(0.48))
+                            .frame(maxWidth: .infinity)
+
+                        AuthStatusText()
+                            .colorScheme(.dark)
+                    }
+                    .padding(18)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.18), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.28), radius: 34, y: 18)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 50)
+                    .padding(.bottom, 34)
                 }
-
-                HStack(spacing: 16) {
-                    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
-                    Text("还没有账号？")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.secondaryText)
-                    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
-                }
-                .padding(.top, 26)
-
-                Button(action: onCreateAccount) {
-                    Text("创建新账号")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 17)
-                        .background(.white.opacity(0.72), in: Capsule())
-                        .overlay(Capsule().stroke(Color.teal, lineWidth: 1.4))
-                        .foregroundColor(.teal)
-                }
-
-                Text("登录即代表同意《用户协议》和《隐私政策》")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(.secondaryText)
-                    .padding(.top, 12)
-
-                AuthStatusText()
             }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 32)
         }
-        .background(AppBackground())
+    }
+
+    private var loginGradient: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 0.31, green: 0.49, blue: 1.0), Color(red: 0.42, green: 0.36, blue: 1.0)],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    private var loginBackdrop: some View {
+        GeometryReader { proxy in
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 5), count: 3)
+            LazyVGrid(columns: columns, spacing: 5) {
+                ForEach(0..<21, id: \.self) { index in
+                    Rectangle()
+                        .fill(backdropColor(index))
+                        .overlay(
+                            LinearGradient(
+                                colors: [.white.opacity(0.16), .clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .aspectRatio(1, contentMode: .fit)
+                }
+            }
+            .frame(width: proxy.size.width)
+            .opacity(0.55)
+            .blur(radius: 0.2)
+        }
+        .ignoresSafeArea()
+    }
+
+    private func backdropColor(_ index: Int) -> Color {
+        let palette = [
+            Color(red: 0.50, green: 0.42, blue: 0.95),
+            Color(red: 0.33, green: 0.50, blue: 1.0),
+            Color(red: 0.95, green: 0.54, blue: 0.62),
+            Color(red: 0.20, green: 0.72, blue: 0.60),
+            Color(red: 0.93, green: 0.74, blue: 0.47)
+        ]
+        return palette[index % palette.count]
+    }
+
+    private func darkInput(
+        icon: String,
+        placeholder: String,
+        text: Binding<String>,
+        keyboardType: UIKeyboardType,
+        isSecure: Bool,
+        trailingIcon: String? = nil,
+        trailingAction: (() -> Void)? = nil
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white.opacity(0.55))
+                .frame(width: 22)
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: text)
+                } else {
+                    TextField(placeholder, text: text)
+                }
+            }
+            .keyboardType(keyboardType)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundColor(.white)
+
+            if let trailingIcon, let trailingAction {
+                Button(action: trailingAction) {
+                    Image(systemName: trailingIcon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+        }
+        .padding(.horizontal, 15)
+        .frame(height: 52)
+        .background(.white.opacity(0.11), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.14), lineWidth: 1))
     }
 }
 
@@ -281,32 +445,6 @@ private struct RegisterView: View {
                         .authHelpStyle(isWarning: !confirmPassword.isEmpty && password != confirmPassword)
                 }
 
-                Button {
-                    Task {
-                        let didRegister = await store.register(
-                            username: username,
-                            nickname: nickname,
-                            password: password,
-                            confirmPassword: confirmPassword,
-                            avatarData: avatarData
-                        )
-                        if didRegister {
-                            avatarPickerPresented = false
-                        }
-                    }
-                } label: {
-                    Text(store.isBusy ? "注册中..." : "注册")
-                        .font(.title3.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .background(primaryGradient, in: Capsule())
-                        .foregroundColor(.white)
-                        .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
-                }
-                .disabled(!canSubmit)
-                .opacity(canSubmit ? 1 : 0.55)
-                .padding(.top, 8)
-
                 Button(action: onLogin) {
                     HStack(spacing: 5) {
                         Text("已有账号？")
@@ -321,9 +459,16 @@ private struct RegisterView: View {
                 AuthStatusText()
             }
             .padding(.horizontal, 28)
-            .padding(.bottom, 34)
+            .padding(.bottom, 120)
         }
         .background(AppBackground())
+        .safeAreaInset(edge: .bottom) {
+            registerButton
+                .padding(.horizontal, 28)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+                .background(.ultraThinMaterial)
+        }
         .sheet(isPresented: $avatarPickerPresented) {
             AvatarImagePicker { image, data in
                 avatarImage = image
@@ -345,8 +490,36 @@ private struct RegisterView: View {
 
     private var confirmPasswordHelpText: String {
         guard !confirmPassword.isEmpty else { return "请再次输入密码" }
-        guard isValidPasswordFormat(confirmPassword) else { return "确认密码格式不正确" }
+        guard isValidPasswordFormat(confirmPassword) else { return "确认密码需为 6-20 位英文字符" }
         return password == confirmPassword ? "两次密码一致" : "两次输入的密码不一致"
+    }
+
+    private var registerButton: some View {
+        Button {
+            Task {
+                let didRegister = await store.register(
+                    username: username,
+                    nickname: nickname,
+                    password: password,
+                    confirmPassword: confirmPassword,
+                    avatarData: avatarData
+                )
+                if didRegister {
+                    avatarPickerPresented = false
+                }
+            }
+        } label: {
+            Text(store.isBusy ? "注册中..." : "注册")
+                .font(.title3.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(primaryGradient, in: Capsule())
+                .foregroundColor(.white)
+                .shadow(color: .teal.opacity(0.25), radius: 18, y: 8)
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSubmit)
+        .opacity(canSubmit ? 1 : 0.55)
     }
 
     private func isValidPasswordFormat(_ value: String) -> Bool {
@@ -4107,7 +4280,7 @@ private struct RemoteImage: View {
             state = .failure
             return
         }
-        if let cachedImage = await cachedImage(for: url) {
+        if let cachedImage = await PhotoDiskCache.shared.cachedImage(for: url) {
             guard !Task.isCancelled else { return }
             state = .success(cachedImage)
         } else if !state.isSuccess {
@@ -4123,16 +4296,6 @@ private struct RemoteImage: View {
                 state = .failure
             }
         }
-    }
-
-    private func cachedImage(for url: URL) async -> UIImage? {
-        let preferredExtension = await PhotoDiskCache.shared.preferredExtension(for: url, fallback: "img")
-        guard let fileURL = await PhotoDiskCache.shared.cachedFile(for: url, preferredExtension: preferredExtension) else {
-            return nil
-        }
-        return await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: fileURL.path)
-        }.value
     }
 }
 
