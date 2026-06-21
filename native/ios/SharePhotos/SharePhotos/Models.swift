@@ -48,7 +48,19 @@ struct Album: Identifiable, Codable, Hashable {
     let contributors: [String]
     let myPhotoIds: [String]?
     let myPhotoCount: Int?
+    let myMatchedFolderId: String?
+    let myMatchedFolderName: String?
     let myCoverUrl: String?
+    let coverUrl: String?
+    let heroUrl: String?
+    let memberCount: Int?
+    let peopleCount: Int?
+    let newPhotoCount: Int?
+    let newMyPhotoCount: Int?
+    let peopleGroups: [AlbumPeopleGroup]?
+    let coPhotoGroups: [AlbumCoPhotoGroup]?
+    let recentActivity: AlbumActivitySummary?
+    let transferHints: [AlbumTransferHint]?
     let currentUserRole: String?
     let canManage: Bool?
     let canAdmin: Bool?
@@ -62,6 +74,44 @@ struct Album: Identifiable, Codable, Hashable {
 
     var photoCount: Int { photos.count }
     var folderCount: Int { folders.count }
+    var displayMemberCount: Int { memberCount ?? max(contributors.count, ownerUser == nil ? 0 : 1) }
+    var displayPeopleCount: Int { peopleCount ?? displayPeopleGroups.count }
+    var displayNewPhotoCount: Int { newPhotoCount ?? 0 }
+    var displayNewMyPhotoCount: Int { newMyPhotoCount ?? 0 }
+    var displayPeopleGroups: [AlbumPeopleGroup] {
+        if let peopleGroups, !peopleGroups.isEmpty {
+            return peopleGroups
+        }
+        return folders
+            .filter { $0.id != "group" && $0.id != "no-face" && $0.name != "合照" && $0.name != "其他" }
+            .map { folder in
+                AlbumPeopleGroup(
+                    id: folder.id,
+                    name: folder.name,
+                    photoIds: folder.photoIds ?? [],
+                    photoCount: folder.count,
+                    coverUrl: folder.coverUrl
+                )
+            }
+    }
+    var displayCoPhotoGroups: [AlbumCoPhotoGroup] {
+        if let coPhotoGroups, !coPhotoGroups.isEmpty {
+            return coPhotoGroups
+        }
+        let groupFolder = folders.first { $0.id == "group" || $0.name == "合照" }
+        guard let groupFolder else { return [] }
+        return [
+            AlbumCoPhotoGroup(
+                id: groupFolder.id,
+                name: groupFolder.name,
+                people: contributors,
+                faces: max(contributors.count, 2),
+                photoIds: groupFolder.photoIds ?? [],
+                photoCount: groupFolder.count,
+                coverUrl: groupFolder.coverUrl
+            )
+        ]
+    }
     var isAdmin: Bool { canAdmin == true || ["owner", "admin"].contains(currentUserRole ?? "") }
     var effectivePermissions: AlbumPermissions { currentUserPermissions ?? .allAllowed }
     var memberPermissions: AlbumPermissions { currentUserMemberPermissions ?? effectivePermissions }
@@ -88,6 +138,44 @@ struct Album: Identifiable, Codable, Hashable {
     var ownerContactText: String {
         ownerDisplayName
     }
+}
+
+struct AlbumPeopleGroup: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let photoIds: [String]
+    let photoCount: Int?
+    let coverUrl: String?
+
+    var count: Int { photoCount ?? photoIds.count }
+}
+
+struct AlbumCoPhotoGroup: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let people: [String]
+    let faces: Int?
+    let photoIds: [String]
+    let photoCount: Int?
+    let coverUrl: String?
+
+    var count: Int { photoCount ?? photoIds.count }
+    var faceCount: Int { faces ?? people.count }
+}
+
+struct AlbumActivitySummary: Codable, Hashable {
+    let title: String?
+    let body: String?
+    let actorName: String?
+    let createdAt: Int?
+}
+
+struct AlbumTransferHint: Identifiable, Codable, Hashable {
+    let id: String
+    let type: String?
+    let title: String
+    let body: String?
+    let count: Int?
 }
 
 struct User: Identifiable, Codable, Hashable {
@@ -165,6 +253,16 @@ struct Photo: Identifiable, Codable, Hashable {
 
 struct AlbumsResponse: Codable {
     let albums: [Album]
+    let summary: AlbumsSummary?
+}
+
+struct AlbumsSummary: Codable, Hashable {
+    let albumCount: Int
+    let photoCount: Int
+    let recentNewPhotoCount: Int
+    let recentNewMyPhotoCount: Int
+    let unreadMessageCount: Int?
+    let pendingApprovalCount: Int?
 }
 
 struct AlbumResponse: Codable {
@@ -326,6 +424,8 @@ struct InboxMessage: Identifiable, Codable, Hashable {
     let body: String?
     let albumId: String?
     let albumName: String?
+    let requestId: String?
+    let status: String?
     let isRead: Bool
     let createdAt: Int?
 
@@ -336,6 +436,8 @@ struct InboxMessage: Identifiable, Codable, Hashable {
         case body
         case albumId
         case albumName
+        case requestId
+        case status
         case isRead
         case read
         case createdAt
@@ -349,6 +451,8 @@ struct InboxMessage: Identifiable, Codable, Hashable {
         body = try container.decodeIfPresent(String.self, forKey: .body)
         albumId = try container.decodeIfPresent(String.self, forKey: .albumId)
         albumName = try container.decodeIfPresent(String.self, forKey: .albumName)
+        requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
         isRead = try container.decodeIfPresent(Bool.self, forKey: .isRead)
             ?? container.decodeIfPresent(Bool.self, forKey: .read)
             ?? false
@@ -363,8 +467,20 @@ struct InboxMessage: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(body, forKey: .body)
         try container.encodeIfPresent(albumId, forKey: .albumId)
         try container.encodeIfPresent(albumName, forKey: .albumName)
+        try container.encodeIfPresent(requestId, forKey: .requestId)
+        try container.encodeIfPresent(status, forKey: .status)
         try container.encode(isRead, forKey: .isRead)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
+    }
+
+    var statusDisplayText: String? {
+        switch status {
+        case "pending": return "待处理"
+        case "approved": return "已通过"
+        case "rejected": return "已拒绝"
+        case "cancelled": return "已撤销"
+        default: return nil
+        }
     }
 }
 
